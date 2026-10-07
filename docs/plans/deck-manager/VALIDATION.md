@@ -5,7 +5,7 @@ Validated 2026-10-06 from the isolated `deck-manager` worktree.
 - Full Python suite: **797 passed**, one display-related skip, one prescribed
   environment-specific deselection and five passing subtests. Temporary HTTP
   server tests used loopback socket access; no live tracker was stopped.
-- UI suite: **151 passed** in 21 files. TypeScript, ESLint and production build
+- UI suite: **153 passed** in 21 files. TypeScript, ESLint and production build
   passed. Vite reports the existing single-bundle size warning above 500 kB;
   no build failure.
 - Browser checked with a separate demo SQLite database and a separate dashboard
@@ -22,6 +22,12 @@ Validated 2026-10-06 from the isolated `deck-manager` worktree.
   revision/card/binding cleanup with foreign keys enabled, rollback on failure,
   and preservation of another same-name deck and recorded game history. UI tests
   cover cancellation, failed deletion and disabled controls while deleting.
+- Move to Trash now has its own confirmation. Browser checks covered cancellation,
+  confirmation and recovery of a disposable demo deck, plus the yellow header Copy
+  for Arena button and red Trash button at desktop and 390 px mobile widths.
+  The mobile dialog has no horizontal overflow. `trash-actions.jpg` and
+  `trash-confirmation.jpg` record the updated UI. Tests cover cancellation with a
+  historical revision selected and retention of the deck when a Trash write fails.
 - Read-only Player.log smoke check archived into an **in-memory** SQLite database:
   five distinct observed decks, 18 immutable revisions, zero rejected lists and
   zero game rows. No names, IDs or raw payloads were copied into this report.

@@ -130,6 +130,8 @@ Primary code paths:
   The collection uses a full-page responsive tile grid; details/revision editing and
   new imports open native dialogs. CardLink previews portal into their containing
   dialog so the browser’s top layer does not obscure them.
+  Moving a deck to Trash opens a recoverable-action confirmation; Copy for Arena
+  appears as a yellow button in the deck dialog header beside Close.
   Migration 32 creates independent `managed_decks`, `managed_deck_revisions`,
   `managed_deck_cards` and reserved `managed_deck_bindings` tables. Library trash/reset
   never deletes Arena decks; gameplay reset preserves the library. Permanent local

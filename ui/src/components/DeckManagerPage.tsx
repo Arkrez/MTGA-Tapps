@@ -17,10 +17,10 @@ const sourceLabels: Record<string, string> = {
   arena_event_submission: 'Captured submitted list',
 };
 
-type ModalView = 'deck' | 'import' | 'revision' | 'delete';
+type ModalView = 'deck' | 'import' | 'revision' | 'delete' | 'trash';
 
-function DeckModal({ title, busy, onClose, returnFocus, children }: {
-  title: string; busy: boolean; onClose: () => void; returnFocus: HTMLElement | null; children: ReactNode;
+function DeckModal({ title, busy, onClose, returnFocus, headerActions, children }: {
+  title: string; busy: boolean; onClose: () => void; returnFocus: HTMLElement | null; headerActions?: ReactNode; children: ReactNode;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -52,9 +52,12 @@ function DeckModal({ title, busy, onClose, returnFocus, children }: {
     >
       <div className="deck-manager-modal-heading">
         <h3 id="deck-manager-modal-title" tabIndex={-1} autoFocus>{title}</h3>
-        <button type="button" className="deck-manager-close" aria-label="Close dialog" disabled={busy} onClick={onClose}>
-          <X size={20} />
-        </button>
+        <div className="deck-manager-heading-actions">
+          {headerActions}
+          <button type="button" className="deck-manager-close" aria-label="Close dialog" disabled={busy} onClick={onClose}>
+            <X size={20} />
+          </button>
+        </div>
       </div>
       {children}
     </dialog>
@@ -118,6 +121,10 @@ export function DeckManagerPage() {
 
   function closeModal() {
     setModal(null); setSelected(null); setRevision(undefined); setError('');
+  }
+
+  function cancelTrash() {
+    setModal('deck'); setError(''); setNotice('');
   }
 
   function choose(id: string) {
@@ -197,9 +204,23 @@ export function DeckManagerPage() {
       ) : null}
 
       {modal ? (
-        <DeckModal key={modal} title={modal === 'delete' ? `Delete ${activeDetail?.name ?? selectedDeck?.name ?? 'saved deck'}?` : modal === 'deck' ? activeDetail?.name ?? selectedDeck?.name ?? 'Saved deck' : editingRevision ? 'Save a new revision' : 'Add a deck'} busy={busy} onClose={closeModal} returnFocus={modalOpener}>
+        <DeckModal key={modal} title={modal === 'trash' ? `Move ${activeDetail?.name ?? selectedDeck?.name ?? 'saved deck'} to Trash?` : modal === 'delete' ? `Delete ${activeDetail?.name ?? selectedDeck?.name ?? 'saved deck'}?` : modal === 'deck' ? activeDetail?.name ?? selectedDeck?.name ?? 'Saved deck' : editingRevision ? 'Save a new revision' : 'Add a deck'} busy={busy} onClose={modal === 'trash' ? cancelTrash : closeModal} returnFocus={modalOpener}
+          headerActions={modal === 'deck' && activeDetail ? <button className="deck-manager-copy" disabled={busy} onClick={() => void action(() => exportDeck(false))}><Copy size={16} /> Copy for Arena</button> : null}>
           {feedback}
-          {modal === 'delete' ? (
+          {modal === 'trash' ? (
+            <div className="deck-manager-delete-confirmation">
+              <p>This moves the deck and its saved revisions out of your collection into Trash. You can restore it from the Trash tab.</p>
+              <div className="deck-manager-toolbar">
+                <button disabled={busy} onClick={cancelTrash}>Cancel</button>
+                <button className="deck-manager-delete" disabled={busy || !activeDetail || Boolean(activeDetail.trashed_at)} onClick={() => void action(async () => {
+                  if (!activeDetail) return;
+                  await updateManagedDeck(activeDetail.id, { trashed: true });
+                  setRefresh((value) => value + 1); closeModal();
+                  setNotice('Deck moved to Trash. You can restore it there.');
+                })}><Trash2 size={16} />{busy ? 'Moving…' : 'Move to trash'}</button>
+              </div>
+            </div>
+          ) : modal === 'delete' ? (
             <div className="deck-manager-delete-confirmation">
               <p>This permanently removes this deck and {activeDetail?.revisions.length === 1 ? 'its saved revision' : `all ${activeDetail?.revisions.length ?? 0} saved revisions`} from your collection. You cannot undo this from Trash.</p>
               <p className="deck-manager-description">Your deck in Arena and recorded game history are unchanged. Previously downloaded backups retain their copies.</p>
@@ -217,13 +238,15 @@ export function DeckManagerPage() {
             <div className="deck-manager-detail">
               <p className="deck-manager-description">{activeDetail.deck.format_name || 'Any format'} · {sourceLabels[activeDetail.deck.source] || 'Saved deck'}{activeDetail.deck.completeness === 'main_only' ? ' · Available piles only' : ''}</p>
               <div className="deck-manager-toolbar">
-                <button disabled={busy} onClick={() => void action(() => exportDeck(false))}><Copy size={16} /> Copy for Arena</button>
                 <button disabled={busy} onClick={() => void action(() => exportDeck(true))}><Download size={16} /> Download backup</button>
-                <button disabled={busy} onClick={() => void action(async () => {
-                  await updateManagedDeck(activeDetail.id, { trashed: !activeDetail.trashed_at });
-                  setRefresh((value) => value + 1); closeModal();
-                  setNotice(activeDetail.trashed_at ? 'Deck restored to your collection.' : 'Deck moved to Trash. You can restore it there.');
-                })}>{activeDetail.trashed_at ? <Undo2 size={16} /> : <Trash2 size={16} />}{activeDetail.trashed_at ? 'Restore from trash' : 'Move to trash'}</button>
+                <button className={activeDetail.trashed_at ? undefined : 'deck-manager-delete'} disabled={busy} onClick={() => {
+                  if (!activeDetail.trashed_at) { setModal('trash'); setError(''); setNotice(''); return; }
+                  void action(async () => {
+                    await updateManagedDeck(activeDetail.id, { trashed: false });
+                    setRefresh((value) => value + 1); closeModal();
+                    setNotice('Deck restored to your collection.');
+                  });
+                }}>{activeDetail.trashed_at ? <Undo2 size={16} /> : <Trash2 size={16} />}{activeDetail.trashed_at ? 'Restore from trash' : 'Move to trash'}</button>
                 {activeDetail.trashed_at ? <button className="deck-manager-delete" disabled={busy} onClick={() => { setModal('delete'); setError(''); setNotice(''); }}><Trash2 size={16} /> Delete permanently</button> : null}
               </div>
               <p className="deck-manager-description">{library?.capabilities.message}</p>

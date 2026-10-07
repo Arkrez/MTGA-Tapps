@@ -77,11 +77,46 @@ describe('Deck Manager', () => {
     vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [trashed], capabilities });
     vi.mocked(fetchManagedDeck).mockResolvedValue({ ...detail, trashed_at: '2026-10-06' });
     fireEvent.click(await screen.findByRole('button', { name: 'Move to trash' }));
+    expect(screen.getByRole('dialog', { name: `Move ${saved.name} to Trash?` })).toBeInTheDocument();
+    expect(updateManagedDeck).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Move to trash' }));
     await waitFor(() => expect(updateManagedDeck).toHaveBeenCalledWith('deck-a', { trashed: true }));
     fireEvent.click(screen.getByRole('button', { name: 'Trash' }));
     fireEvent.click(await screen.findByRole('button', { name: new RegExp(saved.name) }));
     fireEvent.click(await screen.findByRole('button', { name: 'Restore from trash' }));
     await waitFor(() => expect(updateManagedDeck).toHaveBeenCalledWith('deck-a', { trashed: false }));
+  });
+
+  it('cancels a move to Trash without changing the deck or the selected revision', async () => {
+    render(<DeckManagerPage />);
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(saved.name) }));
+    await screen.findByRole('button', { name: 'Copy for Arena' });
+    vi.mocked(fetchManagedDeck).mockResolvedValue({ ...detail, revision_id: 'old' });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Saved revision' }), { target: { value: 'old' } });
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Saved revision' })).toHaveValue('old'));
+    fireEvent.click(screen.getByRole('button', { name: 'Move to trash' }));
+    expect(screen.getByRole('dialog', { name: `Move ${saved.name} to Trash?` })).toHaveTextContent('You can restore it');
+    expect(screen.queryByRole('button', { name: 'Copy for Arena' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('combobox', { name: 'Saved revision' })).toHaveValue('old');
+    expect(updateManagedDeck).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Move to trash' }));
+    fireEvent(screen.getByRole('dialog'), new Event('cancel', { bubbles: false, cancelable: true }));
+    expect(screen.getByRole('dialog', { name: saved.name })).toBeInTheDocument();
+    expect(updateManagedDeck).not.toHaveBeenCalled();
+  });
+
+  it('retains the deck when a confirmed move to Trash fails', async () => {
+    vi.mocked(updateManagedDeck).mockRejectedValue(new Error('Unable to save the library.'));
+    render(<DeckManagerPage />);
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(saved.name) }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Move to trash' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Move to trash' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Unable to save');
+    expect(screen.getByRole('dialog', { name: `Move ${saved.name} to Trash?` })).toBeInTheDocument();
+    expect(fetchDeckLibrary).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('dialog', { name: saved.name })).toHaveTextContent('Forest');
   });
 
   it('requires confirmation before deleting a trashed deck and allows cancellation', async () => {

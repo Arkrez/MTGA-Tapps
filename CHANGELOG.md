@@ -4,6 +4,8 @@
 
 ### Features
 
+- Deck Manager asks for confirmation before moving a deck to Trash, with a red
+  action button. Copy for Arena is yellow and sits beside the dialog's close button.
 - Deck Manager can permanently delete a local deck from Trash after confirmation,
   removing all its saved revisions. Arena decks and game history are unaffected.
 - Deck Manager now focuses on a full-page responsive deck grid. Click a deck

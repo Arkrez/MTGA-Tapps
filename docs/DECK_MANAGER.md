@@ -36,7 +36,8 @@ starts from the selected list;
 earlier snapshots remain available. The dialog supports Escape/backdrop dismissal,
 keeps keyboard focus inside while open and returns focus on closing. Notes and
 tags belong to the library entry.
-**Move to trash** affects only this local entry; **Restore from trash** recovers
+The red **Move to trash** button asks for confirmation and affects only this local
+entry; **Restore from trash** recovers
 it. To remove it completely, open the **Trash** tab, click the deck and choose
 **Delete permanently**. The confirmation names the deck and counts its saved
 revisions. **Delete deck** removes that entry and all its revisions together;
@@ -49,7 +50,8 @@ existing online Scryfall image loader; saved lists remain readable offline.
 
 ## Restore and export
 
-**Copy for Arena** copies the selected revision. Open Arena's Decks screen and
+The yellow **Copy for Arena** button beside the dialog's close button copies the
+selected revision. Open Arena's Decks screen and
 click **Import** when an active slot is available. Slot availability and the
 import result are controlled by Arena; the tracker does not report them as known.
 To free a slot today, first save/check the outgoing backup, then use Arena's own
