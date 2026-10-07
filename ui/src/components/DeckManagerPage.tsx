@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Archive, Copy, Download, FolderOpen, Plus, RefreshCw, Trash2, Undo2, X } from 'lucide-react';
 import {
   captureArenaDecks, exportManagedDeck, fetchDeckLibrary, fetchManagedDeck,
-  importManagedDeck, updateManagedDeck, type DeckLibrary, type ManagedDeckDetail,
+  importManagedDeck, updateManagedDeck, deleteManagedDeck, type DeckLibrary, type ManagedDeckDetail,
 } from '../deckManagerApi';
 import { formatDateTime } from '../format';
 import { CardLink } from './CardLink';
@@ -17,7 +17,7 @@ const sourceLabels: Record<string, string> = {
   arena_event_submission: 'Captured submitted list',
 };
 
-type ModalView = 'deck' | 'import' | 'revision';
+type ModalView = 'deck' | 'import' | 'revision' | 'delete';
 
 function DeckModal({ title, busy, onClose, returnFocus, children }: {
   title: string; busy: boolean; onClose: () => void; returnFocus: HTMLElement | null; children: ReactNode;
@@ -197,9 +197,23 @@ export function DeckManagerPage() {
       ) : null}
 
       {modal ? (
-        <DeckModal key={modal} title={modal === 'deck' ? activeDetail?.name ?? selectedDeck?.name ?? 'Saved deck' : editingRevision ? 'Save a new revision' : 'Add a deck'} busy={busy} onClose={closeModal} returnFocus={modalOpener}>
+        <DeckModal key={modal} title={modal === 'delete' ? `Delete ${activeDetail?.name ?? selectedDeck?.name ?? 'saved deck'}?` : modal === 'deck' ? activeDetail?.name ?? selectedDeck?.name ?? 'Saved deck' : editingRevision ? 'Save a new revision' : 'Add a deck'} busy={busy} onClose={closeModal} returnFocus={modalOpener}>
           {feedback}
-          {modal === 'deck' ? activeDetail ? (
+          {modal === 'delete' ? (
+            <div className="deck-manager-delete-confirmation">
+              <p>This permanently removes this deck and {activeDetail?.revisions.length === 1 ? 'its saved revision' : `all ${activeDetail?.revisions.length ?? 0} saved revisions`} from your collection. You cannot undo this from Trash.</p>
+              <p className="deck-manager-description">Your deck in Arena and recorded game history are unchanged. Previously downloaded backups retain their copies.</p>
+              <div className="deck-manager-toolbar">
+                <button disabled={busy} onClick={() => { setModal('deck'); setError(''); }}>Cancel</button>
+                <button className="deck-manager-delete" disabled={busy || !activeDetail?.trashed_at} onClick={() => void action(async () => {
+                  if (!activeDetail) return;
+                  await deleteManagedDeck(activeDetail.id);
+                  setRefresh((value) => value + 1); closeModal();
+                  setNotice('Deck and all saved revisions permanently deleted from your collection.');
+                })}><Trash2 size={16} />{busy ? 'Deleting…' : 'Delete deck'}</button>
+              </div>
+            </div>
+          ) : modal === 'deck' ? activeDetail ? (
             <div className="deck-manager-detail">
               <p className="deck-manager-description">{activeDetail.deck.format_name || 'Any format'} · {sourceLabels[activeDetail.deck.source] || 'Saved deck'}{activeDetail.deck.completeness === 'main_only' ? ' · Available piles only' : ''}</p>
               <div className="deck-manager-toolbar">
@@ -210,6 +224,7 @@ export function DeckManagerPage() {
                   setRefresh((value) => value + 1); closeModal();
                   setNotice(activeDetail.trashed_at ? 'Deck restored to your collection.' : 'Deck moved to Trash. You can restore it there.');
                 })}>{activeDetail.trashed_at ? <Undo2 size={16} /> : <Trash2 size={16} />}{activeDetail.trashed_at ? 'Restore from trash' : 'Move to trash'}</button>
+                {activeDetail.trashed_at ? <button className="deck-manager-delete" disabled={busy} onClick={() => { setModal('delete'); setError(''); setNotice(''); }}><Trash2 size={16} /> Delete permanently</button> : null}
               </div>
               <p className="deck-manager-description">{library?.capabilities.message}</p>
               <label>Saved revision<select aria-label="Saved revision" value={activeDetail.revision_id} onChange={(e) => setRevision(e.target.value)}>

@@ -2,10 +2,10 @@
 
 Validated 2026-10-06 from the isolated `deck-manager` worktree.
 
-- Full Python suite: **793 passed**, one display-related skip, one prescribed
+- Full Python suite: **797 passed**, one display-related skip, one prescribed
   environment-specific deselection and five passing subtests. Temporary HTTP
   server tests used loopback socket access; no live tracker was stopped.
-- UI suite: **148 passed** in 21 files. TypeScript, ESLint and production build
+- UI suite: **151 passed** in 21 files. TypeScript, ESLint and production build
   passed. Vite reports the existing single-bundle size warning above 500 kB;
   no build failure.
 - Browser checked with a separate demo SQLite database and a separate dashboard
@@ -15,6 +15,13 @@ Validated 2026-10-06 from the isolated `deck-manager` worktree.
   with no horizontal overflow. Detail/import dialogs, import completion and
   return of focus/scrolling were checked. Preview, detail and mobile screenshots
   contain demo lists and are stored beside this report.
+- Permanent local deletion was checked on a separate demo dashboard on port
+  8877: open a disposable trashed deck, cancel confirmation, then confirm deletion.
+  Trash became empty and the other 104 saved decks remained. `delete.jpg` shows
+  the confirmation. Backend tests verify required Trash/confirmation, complete
+  revision/card/binding cleanup with foreign keys enabled, rollback on failure,
+  and preservation of another same-name deck and recorded game history. UI tests
+  cover cancellation, failed deletion and disabled controls while deleting.
 - Read-only Player.log smoke check archived into an **in-memory** SQLite database:
   five distinct observed decks, 18 immutable revisions, zero rejected lists and
   zero game rows. No names, IDs or raw payloads were copied into this report.

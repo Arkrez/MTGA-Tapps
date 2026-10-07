@@ -50,6 +50,7 @@ export const importManagedDeck = (text: string, name: string, format_name: strin
   request<ManagedDeckDetail>('/import', { text, name, format_name, deck_id });
 export const updateManagedDeck = (id: string, fields: { notes?: string; tags?: string[]; trashed?: boolean }) =>
   request<{ ok: boolean }>('/update', { id, ...fields });
+export const deleteManagedDeck = (id: string) => request<{ ok: boolean }>('/delete', { id, confirm: 'DELETE' });
 export const captureArenaDecks = () => request<{ captured: number; rejected: number; note: string }>('/capture', {});
 export const exportManagedDeck = (id: string, revision: string, format: 'backup' | 'arena') =>
   request<{ text: string; name: string; extension: string; note?: string }>(`/export?${new URLSearchParams({ id, revision, format })}`);

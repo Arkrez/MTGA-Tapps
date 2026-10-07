@@ -78,6 +78,7 @@ def handle_post(path, payload, db_path):
     if path not in (
         "/api/deck-manager/import",
         "/api/deck-manager/update",
+        "/api/deck-manager/delete",
         "/api/deck-manager/capture",
     ):
         return None
@@ -85,6 +86,15 @@ def handle_post(path, payload, db_path):
         return 400, {"error": "Expected a JSON object."}
     conn = None
     try:
+        if path.endswith("/delete"):
+            deck_id = payload.get("id")
+            if not isinstance(deck_id, str) or not deck_id.strip():
+                raise dm.DeckManagerError("A saved deck ID is required.")
+            if payload.get("confirm") != "DELETE":
+                raise dm.DeckManagerError("Confirm permanent deletion of this deck and all its revisions.")
+            conn = dm.library_connection(db_path)
+            dm.delete_deck(conn, deck_id)
+            return 200, {"ok": True}
         if path.endswith("/import"):
             text = payload.get("text")
             if not isinstance(text, str):

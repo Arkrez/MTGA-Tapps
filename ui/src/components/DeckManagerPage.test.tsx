@@ -1,14 +1,14 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  fetchDeckLibrary, fetchManagedDeck, importManagedDeck, updateManagedDeck, exportManagedDeck,
+  fetchDeckLibrary, fetchManagedDeck, importManagedDeck, updateManagedDeck, exportManagedDeck, deleteManagedDeck,
   type ManagedDeck, type ManagedDeckDetail,
 } from '../deckManagerApi';
 import { DeckManagerPage } from './DeckManagerPage';
 
 vi.mock('../deckManagerApi', () => ({
   fetchDeckLibrary: vi.fn(), fetchManagedDeck: vi.fn(), importManagedDeck: vi.fn(),
-  updateManagedDeck: vi.fn(), exportManagedDeck: vi.fn(), captureArenaDecks: vi.fn(),
+  updateManagedDeck: vi.fn(), exportManagedDeck: vi.fn(), captureArenaDecks: vi.fn(), deleteManagedDeck: vi.fn(),
 }));
 
 const saved: ManagedDeck = { id: 'deck-a', name: 'Any format deck', format_name: 'Standard',
@@ -35,6 +35,7 @@ beforeEach(() => {
   vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [saved], capabilities });
   vi.mocked(fetchManagedDeck).mockResolvedValue(detail);
   vi.mocked(updateManagedDeck).mockResolvedValue({ ok: true });
+  vi.mocked(deleteManagedDeck).mockResolvedValue({ ok: true });
   vi.mocked(importManagedDeck).mockResolvedValue(detail);
   vi.mocked(exportManagedDeck).mockResolvedValue({ text: 'Commander\n1 Atraxa\n\nDeck\n4 Forest (DMU) 281', name: saved.name, extension: '.txt' });
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn().mockResolvedValue(undefined) } });
@@ -72,6 +73,7 @@ describe('Deck Manager', () => {
     fireEvent.click(await screen.findByRole('button', { name: new RegExp(saved.name) }));
     await screen.findByRole('dialog', { name: saved.name });
     const trashed = { ...saved, trashed_at: '2026-10-06' };
+    expect(screen.queryByRole('button', { name: 'Delete permanently' })).not.toBeInTheDocument();
     vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [trashed], capabilities });
     vi.mocked(fetchManagedDeck).mockResolvedValue({ ...detail, trashed_at: '2026-10-06' });
     fireEvent.click(await screen.findByRole('button', { name: 'Move to trash' }));
@@ -80,6 +82,60 @@ describe('Deck Manager', () => {
     fireEvent.click(await screen.findByRole('button', { name: new RegExp(saved.name) }));
     fireEvent.click(await screen.findByRole('button', { name: 'Restore from trash' }));
     await waitFor(() => expect(updateManagedDeck).toHaveBeenCalledWith('deck-a', { trashed: false }));
+  });
+
+  it('requires confirmation before deleting a trashed deck and allows cancellation', async () => {
+    vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [{ ...saved, trashed_at: '2026-10-06' }], capabilities });
+    vi.mocked(fetchManagedDeck).mockResolvedValue({ ...detail, trashed_at: '2026-10-06' });
+    render(<DeckManagerPage />);
+    fireEvent.click(screen.getByRole('button', { name: 'Trash' }));
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(saved.name) }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete permanently' }));
+    expect(screen.getByRole('dialog', { name: `Delete ${saved.name}?` })).toHaveTextContent('all 2 saved revisions');
+    expect(deleteManagedDeck).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('dialog', { name: saved.name })).toBeInTheDocument();
+    expect(deleteManagedDeck).not.toHaveBeenCalled();
+    expect(updateManagedDeck).not.toHaveBeenCalled();
+  });
+
+  it('deletes only the confirmed deck and prevents repeat actions while deleting', async () => {
+    let finish!: (value: { ok: boolean }) => void;
+    vi.mocked(deleteManagedDeck).mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [{ ...saved, trashed_at: '2026-10-06' }], capabilities });
+    vi.mocked(fetchManagedDeck).mockResolvedValue({ ...detail, trashed_at: '2026-10-06' });
+    render(<DeckManagerPage />);
+    fireEvent.click(screen.getByRole('button', { name: 'Trash' }));
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(saved.name) }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete permanently' }));
+    vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [], capabilities });
+    fireEvent.click(screen.getByRole('button', { name: 'Delete deck' }));
+    expect(deleteManagedDeck).toHaveBeenCalledExactlyOnceWith(saved.id);
+    expect(screen.getByRole('button', { name: 'Deleting…' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    const dialog = screen.getByRole('dialog');
+    fireEvent(dialog, new Event('cancel', { bubbles: false, cancelable: true }));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    await act(async () => { finish({ ok: true }); });
+    expect(await screen.findByText('No decks in trash.')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('permanently deleted');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('keeps the confirmation and deck available when deletion fails', async () => {
+    vi.mocked(deleteManagedDeck).mockRejectedValue(new Error('The deck library could not be saved.'));
+    vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [{ ...saved, trashed_at: '2026-10-06' }], capabilities });
+    vi.mocked(fetchManagedDeck).mockResolvedValue({ ...detail, trashed_at: '2026-10-06' });
+    render(<DeckManagerPage />);
+    fireEvent.click(screen.getByRole('button', { name: 'Trash' }));
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(saved.name) }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete permanently' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete deck' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('could not be saved');
+    expect(screen.getByRole('dialog', { name: `Delete ${saved.name}?` })).toBeInTheDocument();
+    expect(fetchDeckLibrary).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('dialog', { name: saved.name })).toHaveTextContent('Forest');
   });
 
   it('retains input when saving fails', async () => {

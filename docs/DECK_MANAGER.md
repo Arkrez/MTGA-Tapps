@@ -37,7 +37,12 @@ earlier snapshots remain available. The dialog supports Escape/backdrop dismissa
 keeps keyboard focus inside while open and returns focus on closing. Notes and
 tags belong to the library entry.
 **Move to trash** affects only this local entry; **Restore from trash** recovers
-it. Neither action removes a deck from Arena or changes game history.
+it. To remove it completely, open the **Trash** tab, click the deck and choose
+**Delete permanently**. The confirmation names the deck and counts its saved
+revisions. **Delete deck** removes that entry and all its revisions together;
+it cannot be recovered from Trash. These actions do not remove a deck from Arena
+or change game history. Existing backup files retain their copies, and importing
+an old backup or capturing the deck again can add it back to the collection.
 
 The local library works with Arena closed. Card artwork uses the dashboard's
 existing online Scryfall image loader; saved lists remain readable offline.
@@ -48,7 +53,7 @@ existing online Scryfall image loader; saved lists remain readable offline.
 click **Import** when an active slot is available. Slot availability and the
 import result are controlled by Arena; the tracker does not report them as known.
 To free a slot today, first save/check the outgoing backup, then use Arena's own
-delete controls. Deck Manager does not automate deletion.
+delete controls. Deck Manager does not automate Arena deletion.
 
 Original imported text retains its section headings and printing suffixes exactly.
 A captured list without original portable text exports resolved card names;

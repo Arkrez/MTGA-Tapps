@@ -190,6 +190,82 @@ def test_merge_unions_revisions_preserves_newer_notes_and_rolls_back_corruption(
         assert len(dm.deck_detail(local, original["id"])["revisions"]) == 2
 
 
+def test_permanent_delete_removes_all_revisions_and_bindings_only_for_selected_deck(conn):
+    saved = dm.save_deck(conn, dm.parse_import(TEXT))
+    dm.save_deck(conn, dm.parse_import(TEXT.replace("4 Forest", "5 Forest")), deck_id=saved["id"])
+    other = dm.save_deck(conn, dm.parse_import(TEXT))
+    with conn:
+        conn.execute(
+            "INSERT INTO managed_deck_bindings (account_key, arena_deck_id, deck_id, observed_at) "
+            "VALUES ('account', 'arena-id', ?, '2026-10-06')", (saved["id"],)
+        )
+        conn.execute("INSERT INTO tracker_sessions (id, started_at) VALUES ('session', '2026-10-06')")
+        conn.execute("INSERT INTO matches (id, session_id) VALUES ('match', 'session')")
+        conn.execute("INSERT INTO games (id, session_id, match_id) VALUES ('game', 'session', 'match')")
+        conn.execute(
+            "INSERT INTO participants (id, game_id, role, deck_id, deck_name) "
+            "VALUES ('player', 'game', 'player', ?, 'Favorite deck')", (saved["id"],)
+        )
+    dm.update_metadata(conn, saved["id"], {"trashed": True})
+    dm.delete_deck(conn, saved["id"])
+    with pytest.raises(KeyError):
+        dm.deck_detail(conn, saved["id"])
+    assert dm.deck_detail(conn, other["id"])["deck"]["import_text"] == TEXT
+    assert conn.execute("SELECT COUNT(*) FROM managed_deck_revisions").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM managed_deck_cards").fetchone()[0] == 5
+    assert conn.execute("SELECT COUNT(*) FROM managed_deck_bindings").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM games").fetchone()[0] == 1
+    assert conn.execute("SELECT deck_id FROM participants WHERE id = 'player'").fetchone()[0] == saved["id"]
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_permanent_delete_requires_trash_even_after_restore(conn):
+    saved = dm.save_deck(conn, dm.parse_import(TEXT))
+    for restored in (False, True):
+        if restored:
+            dm.update_metadata(conn, saved["id"], {"trashed": True})
+            dm.update_metadata(conn, saved["id"], {"trashed": False})
+        with pytest.raises(dm.DeckManagerError, match="Trash"):
+            dm.delete_deck(conn, saved["id"])
+        assert dm.deck_detail(conn, saved["id"])["deck"]["import_text"] == TEXT
+    with pytest.raises(KeyError, match="not found"):
+        dm.delete_deck(conn, "missing")
+
+
+def test_permanent_delete_failure_rolls_back_children(conn):
+    saved = dm.save_deck(conn, dm.parse_import(TEXT))
+    dm.update_metadata(conn, saved["id"], {"trashed": True})
+    with conn:
+        conn.execute(
+            "INSERT INTO managed_deck_bindings (account_key, arena_deck_id, deck_id, observed_at) "
+            "VALUES ('account', 'arena-id', ?, '2026-10-06')", (saved["id"],)
+        )
+        conn.execute("CREATE TRIGGER fail_delete BEFORE DELETE ON managed_decks "
+                     "BEGIN SELECT RAISE(ABORT, 'Deletion failed'); END")
+    with pytest.raises(sqlite3.IntegrityError, match="Deletion failed"):
+        dm.delete_deck(conn, saved["id"])
+    assert dm.deck_detail(conn, saved["id"])["deck"]["import_text"] == TEXT
+    assert conn.execute("SELECT COUNT(*) FROM managed_deck_cards").fetchone()[0] == 5
+    assert conn.execute("SELECT COUNT(*) FROM managed_deck_bindings").fetchone()[0] == 1
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_delete_api_requires_confirmation_and_uses_selected_database(tmp_path):
+    selected = tmp_path / "chosen.db"
+    path = "/api/deck-manager/delete"
+    for invalid in ({"id": "deck"}, {"id": "", "confirm": "DELETE"},
+                    {"id": 1, "confirm": "DELETE"}, {"id": "deck", "confirm": True}, []):
+        assert api.handle_post(path, invalid, selected)[0] == 400
+        assert not selected.exists()
+    _, saved = api.handle_post("/api/deck-manager/import", {"text": TEXT}, selected)
+    payload = {"id": saved["id"], "confirm": "DELETE"}
+    assert api.handle_post(path, payload, selected)[0] == 400
+    assert api.handle_post("/api/deck-manager/update", {"id": saved["id"], "trashed": True}, selected)[0] == 200
+    assert api.handle_post(path, payload, selected) == (200, {"ok": True})
+    assert api.handle_get("/api/deck-manager", {}, selected)[1]["decks"] == []
+    assert api.handle_post(path, payload, selected)[0] == 404
+
+
 def test_read_only_library_and_selected_database(tmp_path):
     selected = tmp_path / "chosen.db"
     assert api.handle_get("/api/deck-manager", {}, selected)[1]["decks"] == []

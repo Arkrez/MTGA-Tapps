@@ -132,7 +132,9 @@ Primary code paths:
   dialog so the browser’s top layer does not obscure them.
   Migration 32 creates independent `managed_decks`, `managed_deck_revisions`,
   `managed_deck_cards` and reserved `managed_deck_bindings` tables. Library trash/reset
-  never deletes Arena decks; gameplay reset preserves the library. `.tappsbackup` carries
+  never deletes Arena decks; gameplay reset preserves the library. Permanent local
+  deletion requires a trashed entry and explicit confirmation, and removes its cards,
+  bindings and revisions in one transaction. `.tappsbackup` carries
   decks and revisions; merge unions verified snapshots and skips Arena bindings. Restore
   previews count deck/revision losses even when no games are lost.
 - `src/mtga_tracker/deck_capture.py`: the existing log-entry pipeline archives available

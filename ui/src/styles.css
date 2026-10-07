@@ -5743,6 +5743,9 @@ a.sidebar-deck-finder {
 }
 .deck-manager-toolbar .deck-manager-add { border-color: var(--deck-manager-button); background: var(--deck-manager-button); color: #241307; font-weight: 700; }
 .deck-manager-toolbar .deck-manager-add:hover:not(:disabled) { background: color-mix(in srgb, var(--deck-manager-button) 88%, white); }
+.deck-manager-toolbar .deck-manager-delete { border-color: var(--danger); color: var(--danger); background: var(--card-danger-bg); }
+.deck-manager-toolbar .deck-manager-delete:hover:not(:disabled), .deck-manager-toolbar .deck-manager-delete:focus-visible { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 18%, var(--surface)); }
+.deck-manager-delete-confirmation > p { line-height: 1.6; }
 .deck-manager-toolbar button:disabled, .deck-manager-close:disabled { opacity: 0.5; cursor: default; }
 .deck-manager-search, .deck-manager-modal input, .deck-manager-modal textarea, .deck-manager-modal select {
   box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;

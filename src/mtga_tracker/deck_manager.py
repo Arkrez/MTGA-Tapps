@@ -341,6 +341,29 @@ def update_metadata(conn: sqlite3.Connection, deck_id: str, payload: Dict[str, A
         )
 
 
+def delete_deck(conn: sqlite3.Connection, deck_id: str) -> None:
+    """Permanently remove a trashed archive and its children atomically."""
+    with conn:
+        # Take the write lock before checking Trash so a concurrent restore
+        # cannot race deletion. This update leaves the archive metadata intact.
+        locked = conn.execute(
+            "UPDATE managed_decks SET id = id WHERE id = ? AND trashed_at IS NOT NULL",
+            (deck_id,),
+        )
+        if not locked.rowcount:
+            if not conn.execute("SELECT 1 FROM managed_decks WHERE id = ?", (deck_id,)).fetchone():
+                raise KeyError("Saved deck not found.")
+            raise DeckManagerError("Move this deck to Trash before deleting it permanently.")
+        conn.execute(
+            "DELETE FROM managed_deck_cards WHERE revision_id IN "
+            "(SELECT id FROM managed_deck_revisions WHERE deck_id = ?)",
+            (deck_id,),
+        )
+        conn.execute("DELETE FROM managed_deck_bindings WHERE deck_id = ?", (deck_id,))
+        conn.execute("DELETE FROM managed_deck_revisions WHERE deck_id = ?", (deck_id,))
+        conn.execute("DELETE FROM managed_decks WHERE id = ?", (deck_id,))
+
+
 def merge_library(conn: sqlite3.Connection) -> Dict[str, int]:
     """Merge independent archives inside backup's existing transaction.
 

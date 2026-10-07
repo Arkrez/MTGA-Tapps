@@ -4,6 +4,8 @@
 
 ### Features
 
+- Deck Manager can permanently delete a local deck from Trash after confirmation,
+  removing all its saved revisions. Arena decks and game history are unaffected.
 - Deck Manager now focuses on a full-page responsive deck grid. Click a deck
   for its details, notes and revisions in a dialog; use the orange **+ Add deck**
   button to import. The sidebar has a distinct orange Deck Manager link and no
