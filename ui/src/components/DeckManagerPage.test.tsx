@@ -12,7 +12,7 @@ vi.mock('../deckManagerApi', () => ({
 }));
 
 const saved: ManagedDeck = { id: 'deck-a', name: 'Any format deck', format_name: 'Standard',
-  notes: '', tags: [], current_revision_id: 'new', trashed_at: null, saved_at: '2026-10-06T12:00:00Z',
+  notes: '', tags: [], current_revision_id: 'new', trashed_at: null, saved_at: '2026-10-06T12:00:00Z', updated_at: '2026-10-06T12:00:00Z',
   source: 'import', completeness: 'text', main_count: 60, art_card: null };
 const detail: ManagedDeckDetail = { ...saved, revision_id: 'new',
   deck: { name: saved.name, format_name: 'Standard', source: 'import', completeness: 'text',

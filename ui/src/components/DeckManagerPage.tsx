@@ -187,7 +187,7 @@ export function DeckManagerPage() {
             <span className="deck-manager-tile-text">
               <strong>{deck.name}</strong>
               <small>{deck.format_name || 'Format not specified'} · {deck.main_count} cards</small>
-              <small>{deck.tags.join(' · ') || sourceLabels[deck.source] || 'Saved deck'}</small>
+              <small>Updated: <time dateTime={deck.updated_at} title={formatDateTime(deck.updated_at)}>{new Date(deck.updated_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</time></small>
             </span>
           </button>
         ))}

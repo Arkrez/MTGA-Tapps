@@ -29,7 +29,8 @@ Unresolved card IDs are preserved and shown as `Card #ID`.
 
 Search names, formats and tags in the full-page deck grid. It shows four columns
 on wide screens, three at medium widths, and fewer on narrow screens, with all
-rows available through normal page scrolling. Click a tile to open a dialog with
+rows available through normal page scrolling. Each tile shows its latest update
+date; hover the date for its full timestamp. Click a tile to open a dialog with
 the deck’s sections, notes and saved revisions. **Save an edited revision…**
 starts from the selected list;
 earlier snapshots remain available. The dialog supports Escape/backdrop dismissal,

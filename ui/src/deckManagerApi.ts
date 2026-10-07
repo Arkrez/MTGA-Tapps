@@ -16,6 +16,7 @@ export interface ManagedDeck {
   current_revision_id: string;
   trashed_at: string | null;
   saved_at: string;
+  updated_at: string;
   source: string;
   completeness: string;
   main_count: number;
