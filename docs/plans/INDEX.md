@@ -7,6 +7,7 @@ or operational documentation only.
 | Plan | Current status | Remaining work |
 | --- | --- | --- |
 | [Backups and carrying history between computers](BACKUP_AND_SYNC.md) | Phases 1–2 shipped: `.tappsbackup` export/restore/merge, synced-folder picks, previews with confirmation, undo, delete and open-location (Settings → Backup & restore) | Automatic post-session backups; Google Drive by API only if the folder route proves insufficient |
+| [Deck Manager](DECK_MANAGER.md) | General local library implemented on `deck-manager`; [current behavior](../DECK_MANAGER.md) | Current-build native feasibility, authenticated account/roster discovery, durable transfer journal, verified store/restore/swap, and Arena collection section |
 | [Linux support](linux_implementation.md) | Not implemented as a supported distribution | Prefix discovery/rotation, tray-free controller, overlay, packaging and desktop validation |
 | [Install discovery](MTGA_INSTALL_DISCOVERY.md) | Unity-header discovery and Settings path display implemented | Editable overrides/validation; evidence-driven platform fallbacks |
 | [Surveil and scry validation](SCRY_TRACKING.md) | Scry implemented, migration 29 present | Surveil log capture/handler/UI and real opponent-scry validation |

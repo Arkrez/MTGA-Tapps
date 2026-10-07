@@ -4,6 +4,16 @@
 
 ### Features
 
+- Added a general **Deck Manager** page and menu entry. Save any Arena decklist,
+  keep revisions, search names/formats/tags, add notes, recover local Trash and
+  download `.tappsdeck` backups. Deck Finder and deck-history pages can save lists
+  into this library. Available outgoing Arena save/submission lists are archived
+  independently of gameplay statistics. Restore currently uses clipboard text
+  and Arena's Import button; native Arena UI and direct transfers are pending.
+- Tracker backups carry the independent deck library. Merging retains revisions;
+  restore previews require confirmation for deck/revision loss, including old
+  backups that predate Deck Manager. Gameplay reset preserves saved decks.
+
 - Deck Finder now includes **youtube.com → Creators**, with Hello Good Game
   (HGG) and Sloth available by default. It checks the latest 15 video descriptions
   without a YouTube login or API key, using small metadata requests with a page

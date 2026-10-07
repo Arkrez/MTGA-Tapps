@@ -18,7 +18,11 @@ describe('detail route return context', () => {
     });
   });
 
-  it('rejects non-game return locations on card routes', () => {
+  it('round-trips a card back to Deck Manager', () => {
+    expect(parseCardRoute(cardRouteHash('Forest', '#/deck-manager'))?.returnHash).toBe('#/deck-manager');
+  });
+
+  it('rejects external return locations on card routes', () => {
     expect(parseCardRoute('#/card/Swamp?return=https%3A%2F%2Fexample.com')).toEqual({
       name: 'Swamp',
       returnHash: '#overview',

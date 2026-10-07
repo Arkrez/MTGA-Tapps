@@ -145,7 +145,7 @@ export function CardDetailPage({
   const [loadState, setLoadState] = useState<LoadState>({ status: 'loading' });
   const [failedImageCard, setFailedImageCard] = useState<string | null>(null);
   const [loadedImageCard, setLoadedImageCard] = useState<string | null>(null);
-  const backLabel = backHref.startsWith('#/game/') ? '← Back to game' : '← Back to dashboard';
+  const backLabel = backHref.startsWith('#/game/') ? '← Back to game' : backHref === '#/deck-manager' ? '← Back to collection' : '← Back to dashboard';
 
   useEffect(() => {
     window.scrollTo(0, 0);

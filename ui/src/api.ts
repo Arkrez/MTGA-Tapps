@@ -1732,6 +1732,8 @@ export async function fetchTrackerSettings(signal?: AbortSignal): Promise<Tracke
 // --- Backups ----------------------------------------------------------------
 
 export interface BackupManifest {
+  managed_decks?: number;
+  managed_deck_revisions?: number;
   format: number;
   app_version: string;
   schema_version: number;
@@ -1756,6 +1758,8 @@ export interface BackupFile extends Partial<BackupManifest> {
 }
 
 export interface BackupSummary {
+  managed_decks?: number;
+  managed_deck_revisions?: number;
   schema_version: number;
   games: number;
   newest_game_at: string | null;
@@ -1780,6 +1784,10 @@ export interface BackupStatus {
 export type BackupVerdict = 'fresh' | 'same' | 'newer' | 'older' | 'diverged' | 'newer-schema';
 
 export interface BackupPreview {
+  deck_adds?: number;
+  deck_drops?: number;
+  revision_adds?: number;
+  revision_drops?: number;
   path: string;
   manifest: BackupManifest;
   local: BackupSummary;

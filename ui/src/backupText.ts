@@ -17,7 +17,7 @@ export function describePreview(preview: BackupPreview): { text: string; blocked
     case 'fresh':
       return { text: `This computer has no games yet. The backup's ${games} come in.`, blocked: false };
     case 'same':
-      return { text: `Same ${games} as here. Restoring only brings over the backup's settings.`, blocked: false };
+      return { text: `Same ${games} as here. Restoring brings over the backup's deck library and settings.`, blocked: false };
     case 'newer':
       return {
         text: `Adds ${plural(preview.adds, 'game')} this computer does not have. Nothing recorded here is lost.`,

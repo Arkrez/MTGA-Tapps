@@ -2,11 +2,122 @@
 
 import re
 import sqlite3
+import uuid
 from collections import Counter
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from .state import CardEvent
+
+
+def persist_managed_deck(
+    conn,
+    deck,
+    *,
+    deck_id=None,
+    account_key=None,
+    arena_deck_id=None,
+    observed_at=None,
+    create=False
+):
+    """Commit a verified immutable snapshot before any later Arena operation."""
+    from .deck_manager import content_hash, deck_detail, encoded, now
+
+    stamp = observed_at or now()
+    if deck_id is None and account_key and arena_deck_id:
+        binding = conn.execute(
+            "SELECT deck_id FROM managed_deck_bindings WHERE account_key = ? AND arena_deck_id = ?",
+            (account_key, arena_deck_id),
+        ).fetchone()
+        if binding:
+            deck_id = binding[0]
+    existing = (
+        conn.execute(
+            "SELECT current_revision_id, updated_at FROM managed_decks WHERE id = ?", (deck_id,)
+        ).fetchone()
+        if deck_id
+        else None
+    )
+    if deck_id and existing is None and not create:
+        raise KeyError("Saved deck not found.")
+    deck_id = deck_id or str(uuid.uuid4())
+    digest = content_hash(deck)
+    revision_id = str(uuid.uuid4())
+    with conn:
+        duplicate = conn.execute(
+            "SELECT id FROM managed_deck_revisions WHERE deck_id = ? AND content_hash = ?",
+            (deck_id, digest),
+        ).fetchone()
+        if duplicate:
+            revision_id = duplicate[0]
+        if existing:
+            replay = deck.get("source", "").startswith("arena_") and (
+                (observed_at and stamp <= existing[1])
+                or (not observed_at and duplicate is not None)
+            )
+            if not replay:
+                conn.execute(
+                    "UPDATE managed_decks SET name = ?, format_name = ?, current_revision_id = ?, updated_at = ? WHERE id = ?",
+                    (deck["name"], deck.get("format_name", ""), revision_id, stamp, deck_id),
+                )
+        else:
+            conn.execute(
+                "INSERT INTO managed_decks(id, account_key, name, format_name, current_revision_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    deck_id,
+                    account_key,
+                    deck["name"],
+                    deck.get("format_name", ""),
+                    revision_id,
+                    stamp,
+                    stamp,
+                ),
+            )
+        if not duplicate:
+            conn.execute(
+                "INSERT INTO managed_deck_revisions VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    revision_id,
+                    deck_id,
+                    existing[0] if existing else None,
+                    digest,
+                    encoded(deck),
+                    deck.get("source", "import"),
+                    deck.get("completeness", "text"),
+                    stamp,
+                ),
+            )
+            conn.executemany(
+                "INSERT INTO managed_deck_cards VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        revision_id,
+                        i,
+                        c["section"],
+                        c["quantity"],
+                        c["name"],
+                        c.get("arena_id"),
+                        c.get("set_code"),
+                        c.get("collector_number"),
+                    )
+                    for i, c in enumerate(deck["cards"])
+                ],
+            )
+        if account_key and arena_deck_id:
+            conn.execute(
+                """INSERT INTO managed_deck_bindings VALUES (?, ?, ?, ?, 'unknown')
+                ON CONFLICT(account_key, arena_deck_id) DO UPDATE SET
+                deck_id = excluded.deck_id, observed_at = excluded.observed_at""",
+                (account_key, arena_deck_id, deck_id, stamp),
+            )
+        stored = conn.execute(
+            "SELECT payload_json FROM managed_deck_revisions WHERE id = ?", (revision_id,)
+        ).fetchone()
+        import json
+
+        if stored is None or content_hash(json.loads(stored[0])) != digest:
+            raise ValueError("Deck backup verification failed.")
+    return deck_detail(conn, deck_id)
 
 
 def analytics_card_base_name(display_name: str) -> str:

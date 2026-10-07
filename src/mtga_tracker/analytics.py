@@ -719,6 +719,7 @@ class AnalyticsStore:
             (29, AnalyticsStore._migrate_v29_scry_stats),
             (30, AnalyticsStore._migrate_v30_repair_cube_formats),
             (31, AnalyticsStore._migrate_v31_repair_event_formats),
+            (32, AnalyticsStore._migrate_v32_managed_decks),
         )
         ran: list = []
         for version, migrate in migrations:
@@ -1384,6 +1385,37 @@ class AnalyticsStore:
             repaired += 1
         if repaired:
             print(f"Repaired {repaired} event match format(s) from queue metadata.")
+
+    @staticmethod
+    def _migrate_v32_managed_decks(conn: sqlite3.Connection) -> None:
+        """Independent local deck library; never linked to tracked-game retention."""
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS managed_decks (
+                id TEXT PRIMARY KEY, account_key TEXT, name TEXT NOT NULL,
+                format_name TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
+                tags_json TEXT NOT NULL DEFAULT '[]', current_revision_id TEXT NOT NULL,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL, trashed_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS managed_deck_revisions (
+                id TEXT PRIMARY KEY, deck_id TEXT NOT NULL REFERENCES managed_decks(id),
+                parent_revision_id TEXT, content_hash TEXT NOT NULL, payload_json TEXT NOT NULL,
+                source TEXT NOT NULL, completeness TEXT NOT NULL, created_at TEXT NOT NULL,
+                UNIQUE(deck_id, content_hash)
+            );
+            CREATE TABLE IF NOT EXISTS managed_deck_cards (
+                revision_id TEXT NOT NULL REFERENCES managed_deck_revisions(id),
+                position INTEGER NOT NULL, section TEXT NOT NULL, quantity INTEGER NOT NULL,
+                name TEXT NOT NULL, arena_id INTEGER, set_code TEXT, collector_number TEXT,
+                PRIMARY KEY(revision_id, position)
+            );
+            CREATE TABLE IF NOT EXISTS managed_deck_bindings (
+                account_key TEXT NOT NULL, arena_deck_id TEXT NOT NULL,
+                deck_id TEXT NOT NULL REFERENCES managed_decks(id),
+                observed_at TEXT NOT NULL, presence TEXT NOT NULL DEFAULT 'unknown',
+                PRIMARY KEY(account_key, arena_deck_id)
+            );
+            CREATE INDEX IF NOT EXISTS managed_deck_revisions_deck ON managed_deck_revisions(deck_id);
+        """)
 
     @staticmethod
     def _migrate_v15_purge_welcome_deck_duels(conn: sqlite3.Connection) -> None:

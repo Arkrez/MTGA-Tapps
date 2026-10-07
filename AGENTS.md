@@ -125,6 +125,20 @@ Primary code paths:
   startup behavior, overlay control, platform capabilities, and resolved tracker paths. The menu
   "Tracker Settings" action opens this dashboard page. `settings_dialog.py` retains
   the PyQt Deck AI settings implementation.
+- `src/mtga_tracker/deck_manager.py` / `deck_manager_api.py`: general local deck library,
+  `#/deck-manager` and `/api/deck-manager/*`, using the same selected `--db` as analytics.
+  Migration 32 creates independent `managed_decks`, `managed_deck_revisions`,
+  `managed_deck_cards` and reserved `managed_deck_bindings` tables. Library trash/reset
+  never deletes Arena decks; gameplay reset preserves the library. `.tappsbackup` carries
+  decks and revisions; merge unions verified snapshots and skips Arena bindings. Restore
+  previews count deck/revision losses even when no games are lost.
+- `src/mtga_tracker/deck_capture.py`: the existing log-entry pipeline archives available
+  `DeckUpsertDeckV3` / `EventSetDeckV3` outgoing lists for any format before game-exclusion
+  gates. They are unconfirmed observations, not a complete roster or successful save.
+  Replay must not move the current revision backward; unresolved IDs remain intact in
+  full backups. Do not infer slot usage/account/presence or enable native writes from logs.
+  See `docs/DECK_MANAGER.md`, `docs/plans/DECK_MANAGER.md`, `tests/test_deck_manager.py`
+  and `ui/src/components/DeckManagerPage.test.tsx`.
 - `src/mtga_tracker/deckfinder_api.py`: background jobs for the integrated dashboard Deck Finder.
 - `src/mtga_deck_downloader/providers/base.py`: constructs each scraper lazily
   on first use, under a per-provider lock. Site/source picker metadata must not

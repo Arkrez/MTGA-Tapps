@@ -283,6 +283,10 @@ class MenuBarController(QObject):
         self.deck_downloader_action.triggered.connect(self.open_deck_downloader)
         self.menu.addAction(self.deck_downloader_action)
 
+        self.deck_manager_action = QAction("Deck Manager", self)
+        self.deck_manager_action.triggered.connect(lambda: self.open_dashboard("/#/deck-manager"))
+        self.menu.addAction(self.deck_manager_action)
+
         self.open_data_action = QAction("Open Data Folder", self)
         self.open_data_action.triggered.connect(self.open_data_folder)
         self.menu.addAction(self.open_data_action)

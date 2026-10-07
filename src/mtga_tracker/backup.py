@@ -255,8 +255,17 @@ def database_summary(conn: sqlite3.Connection) -> Dict[str, Any]:
         game_ids = [str(r[0]) for r in conn.execute("SELECT id FROM games ORDER BY started_at, id")]
     except sqlite3.Error:
         game_ids = []
+    try:
+        deck_ids = [str(r[0]) for r in conn.execute("SELECT id FROM managed_decks")]
+        revision_ids = [str(r[0]) for r in conn.execute("SELECT id FROM managed_deck_revisions")]
+    except sqlite3.Error:
+        deck_ids, revision_ids = [], []
     return {
         "schema_version": int(scalar("SELECT MAX(version) FROM schema_migrations", 0) or 0),
+        "managed_decks": len(deck_ids),
+        "managed_deck_revisions": len(revision_ids),
+        "managed_deck_ids": deck_ids,
+        "managed_revision_ids": revision_ids,
         "games": len(game_ids),
         "game_ids": game_ids,
         "newest_game_at": scalar("SELECT MAX(started_at) FROM games"),
@@ -416,6 +425,7 @@ def export_backup(
             "include_keys": bool(include_keys),
             "tag": tag,
             "game_ids": summary["game_ids"],
+            **{key: summary[key] for key in ("managed_decks", "managed_deck_revisions", "managed_deck_ids", "managed_revision_ids")},
         }
 
         report("Compressing")
@@ -427,8 +437,7 @@ def export_backup(
                 archive.writestr(name, blob)
         os.replace(partial, target)
 
-    result = dict(manifest)
-    result.pop("game_ids", None)
+    result = _public(manifest)
     result["path"] = str(target)
     result["size"] = target.stat().st_size
     if record and not tag:
@@ -466,7 +475,8 @@ def read_manifest(path: Path) -> Dict[str, Any]:
 
 def _public(manifest: Dict[str, Any]) -> Dict[str, Any]:
     public = dict(manifest)
-    public.pop("game_ids", None)
+    for key in ("game_ids", "managed_deck_ids", "managed_revision_ids"):
+        public.pop(key, None)
     return public
 
 
@@ -543,6 +553,10 @@ def inspect_backup(path: Path, db_path: Path, *, settings_path: Optional[Path] =
     mine = set(local["game_ids"])
     adds = len(theirs - mine)
     drops = len(mine - theirs)
+    deck_adds = len(set(manifest.get("managed_deck_ids") or []) - set(local.get("managed_deck_ids") or []))
+    deck_drops = len(set(local.get("managed_deck_ids") or []) - set(manifest.get("managed_deck_ids") or []))
+    revision_adds = len(set(manifest.get("managed_revision_ids") or []) - set(local.get("managed_revision_ids") or []))
+    revision_drops = len(set(local.get("managed_revision_ids") or []) - set(manifest.get("managed_revision_ids") or []))
     supported = supported_schema_version()
     schema_ok = int(manifest.get("schema_version") or 0) <= supported
     if not schema_ok:
@@ -560,14 +574,18 @@ def inspect_backup(path: Path, db_path: Path, *, settings_path: Optional[Path] =
     return {
         "path": str(path),
         "manifest": _public(manifest),
-        "local": {k: v for k, v in local.items() if k != "game_ids"},
+        "local": _public(local),
         "adds": adds,
         "drops": drops,
+        "deck_adds": deck_adds,
+        "deck_drops": deck_drops,
+        "revision_adds": revision_adds,
+        "revision_drops": revision_drops,
         "same_install": manifest.get("install_id") == install_id(settings_path),
         "schema_ok": schema_ok,
         "supported_schema_version": supported,
         "verdict": verdict,
-        "requires_confirm": drops > 0,
+        "requires_confirm": drops > 0 or revision_drops > 0 or deck_drops > 0,
     }
 
 
@@ -728,7 +746,8 @@ def restore_backup(
         )
     if preview["requires_confirm"] and confirm != "REPLACE":
         raise BackupError(
-            f"Restoring would drop {preview['drops']} game(s) recorded here that the backup does not have; "
+            f"Restoring would drop {preview['drops']} game(s), {preview['deck_drops']} saved deck(s), "
+            f"and {preview['revision_drops']} deck revision(s) that the backup does not have; "
             'confirm with "REPLACE" to go ahead',
             "confirm-required",
         )
@@ -849,7 +868,8 @@ def restore_backup(
 
 #: Tables the merge never touches: this computer's live row and diagnostics,
 #: and SQLite's own bookkeeping.
-MERGE_SKIP_TABLES = {"live_status", "raw_game_payloads", "schema_migrations", "sqlite_sequence", "cards"}
+MERGE_SKIP_TABLES = {"live_status", "raw_game_payloads", "schema_migrations", "sqlite_sequence", "cards",
+                     "managed_decks", "managed_deck_revisions", "managed_deck_cards", "managed_deck_bindings"}
 
 
 def _columns(conn: sqlite3.Connection, schema: str, table: str) -> List[Tuple[str, bool]]:
@@ -940,6 +960,9 @@ def merge_snapshot_into(conn: sqlite3.Connection, snapshot_path: Path) -> Dict[s
             else:
                 continue
             copy(table, where)
+        from .deck_manager import merge_library
+
+        counts.update(merge_library(conn))
         conn.execute("COMMIT")
         for temp in ("card_map", "new_sessions", "new_games", "new_matches", "new_participants"):
             conn.execute(f"DROP TABLE IF EXISTS temp.{temp}")
@@ -1124,7 +1147,7 @@ def backup_status(db_path: Path, *, settings_path: Optional[Path] = None) -> Dic
         "last_restore": section.get("last_restore"),
         "last_merge": section.get("last_merge"),
         "backups": list_backups(folder),
-        "local": {k: v for k, v in local.items() if k != "game_ids"},
+        "local": _public(local),
         "tracker_active": tracker_active(db_path),
     }
 

@@ -36,6 +36,7 @@ import { FormatsTable } from './components/FormatsTable';
 import { GameDetailPage } from './components/GameDetailPage';
 import { GamesPage } from './components/GamesPage';
 import { DeckFinderPage } from './components/DeckFinderPage';
+import { DeckManagerPage } from './components/DeckManagerPage';
 import { LiveLogPage } from './components/LiveLogPage';
 import { SettingsPage } from './components/SettingsPage';
 import { MetricCard } from './components/MetricCard';
@@ -55,7 +56,7 @@ import { bestDeckMetric, formatPercent, metricCards } from './dashboardData';
 import type { MetricDefinition } from './dashboardData';
 import { formatCardName, formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone, shortFormatLabel } from './format';
 import { auditNavItems,
-  deckFinderNavItems, cardNavItems, deckNavItems, gameNavItems, gamesNavItems, opponentNavItems,
+  deckFinderNavItems, deckManagerNavItems, cardNavItems, deckNavItems, gameNavItems, gamesNavItems, opponentNavItems,
   opponentsNavItems, liveNavItems, settingsNavItems } from './nav';
 import { quickFilterPredicate } from './quickFilters';
 import { FormatQuickFilters } from './components/FormatQuickFilters';
@@ -69,6 +70,7 @@ import {
   OPPONENTS_ROUTE_HASH,
   parseAuditRoute,
   parseDeckFinderRoute,
+  parseDeckManagerRoute,
   parseLiveRoute,
   parseSettingsRoute,
   parseCardRoute,
@@ -817,6 +819,7 @@ export default function App() {
   const opponentRoute = useMemo(() => parseOpponentRoute(routeHash), [routeHash]);
   const auditRoute = useMemo(() => parseAuditRoute(routeHash), [routeHash]);
   const deckFinderRoute = useMemo(() => parseDeckFinderRoute(routeHash), [routeHash]);
+  const deckManagerRoute = useMemo(() => parseDeckManagerRoute(routeHash), [routeHash]);
   const settingsRoute = useMemo(() => parseSettingsRoute(routeHash), [routeHash]);
   const liveRoute = useMemo(() => parseLiveRoute(routeHash), [routeHash]);
   const gamesRoute = useMemo(() => parseGamesRoute(routeHash), [routeHash]);
@@ -852,7 +855,7 @@ export default function App() {
             item.id === 'back-to-dashboard'
               ? {
                   ...item,
-                  label: cardRoute.returnHash.startsWith('#/game/') ? '← Back to game' : '← Back to dashboard',
+                  label: cardRoute.returnHash.startsWith('#/game/') ? '← Back to game' : cardRoute.returnHash === '#/deck-manager' ? '← Back to collection' : '← Back to dashboard',
                   route: cardRoute.returnHash,
                 }
               : item,
@@ -911,6 +914,7 @@ export default function App() {
       || opponentRoute
       || auditRoute
       || deckFinderRoute
+      || deckManagerRoute
       || settingsRoute
       || liveRoute
       || gamesRoute
@@ -926,10 +930,10 @@ export default function App() {
     } else if (sectionId && !sectionId.startsWith('/')) {
       document.getElementById(sectionId)?.scrollIntoView?.({ block: 'start' });
     }
-  }, [auditRoute, cardRoute, deckFinderRoute, deckRoute, gameRoute, gamesRoute, liveRoute, loadState.status, opponentRoute, opponentsRoute, routeHash, settingsRoute]);
+  }, [auditRoute, cardRoute, deckFinderRoute, deckManagerRoute, deckRoute, gameRoute, gamesRoute, liveRoute, loadState.status, opponentRoute, opponentsRoute, routeHash, settingsRoute]);
 
   useEffect(() => {
-    document.title = deckRoute
+    document.title = deckManagerRoute ? pageTitle('Deck Manager') : deckRoute
       ? pageTitle(deckRoute.name)
       : gameRoute
         ? pageTitle('Game')
@@ -944,10 +948,10 @@ export default function App() {
                 : opponentsRoute
                   ? pageTitle('Opponents')
                   : pageTitle('Overview');
-  }, [auditRoute, deckRoute, gameRoute, gamesRoute, cardRoute, opponentRoute, opponentsRoute]);
+  }, [deckManagerRoute, auditRoute, deckRoute, gameRoute, gamesRoute, cardRoute, opponentRoute, opponentsRoute]);
 
   useEffect(() => {
-    if (deckName || gameId || cardName || opponentRoute || auditRoute || gamesRoute || opponentsRoute) {
+    if (deckManagerRoute || deckName || gameId || cardName || opponentRoute || auditRoute || gamesRoute || opponentsRoute) {
       return;
     }
     let ignore = false;
@@ -985,7 +989,7 @@ export default function App() {
       activeController?.abort();
       window.clearInterval(refreshId);
     };
-  }, [filters, trendRange, deckName, gameId, cardName, opponentRoute, auditRoute, gamesRoute, opponentsRoute]);
+  }, [deckManagerRoute, filters, trendRange, deckName, gameId, cardName, opponentRoute, auditRoute, gamesRoute, opponentsRoute]);
 
   const playerName =
     loadState.status === 'loaded' ? loadState.snapshot.summary.player_name : undefined;
@@ -1024,6 +1028,8 @@ export default function App() {
             ? gamesNavItems
           : auditRoute
             ? auditNavItems
+          : deckManagerRoute
+            ? deckManagerNavItems
           : deckFinderRoute
             ? deckFinderNavItems
           : settingsRoute
@@ -1040,7 +1046,7 @@ export default function App() {
                   ? opponentNavItems
                   : undefined
         }
-        heading={opponentsRoute ? 'Opponents' : gamesRoute ? 'All Games' : auditRoute ? 'Database Health' : deckFinderRoute ? 'Deck Finder' : settingsRoute ? 'Settings' : liveRoute ? 'Live Scoreboard' : cardName ? formatCardName(cardName) : gameRoute ? 'Game Detail' : deckName ? 'Deck Details' : (opponentRoute ? 'Opponent Information' : dashboardTitle)}
+        heading={opponentsRoute ? 'Opponents' : gamesRoute ? 'All Games' : auditRoute ? 'Database Health' : deckManagerRoute ? 'Deck Manager' : deckFinderRoute ? 'Deck Finder' : settingsRoute ? 'Settings' : liveRoute ? 'Live Scoreboard' : cardName ? formatCardName(cardName) : gameRoute ? 'Game Detail' : deckName ? 'Deck Details' : (opponentRoute ? 'Opponent Information' : dashboardTitle)}
         mainClassName={liveRoute ? 'live-page-main' : undefined}
       >
         {opponentsRoute ? (
@@ -1054,6 +1060,8 @@ export default function App() {
           />
         ) : auditRoute ? (
           <AuditPage />
+        ) : deckManagerRoute ? (
+          <DeckManagerPage />
         ) : deckFinderRoute ? (
           <DeckFinderPage />
         ) : settingsRoute ? (

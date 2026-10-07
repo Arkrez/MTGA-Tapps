@@ -12,6 +12,7 @@ import {
   Clock,
   Database,
   FileText,
+  FolderOpen,
   GitBranch,
   Hand,
   Heart,
@@ -111,6 +112,8 @@ const NAV_ICONS: Record<string, LucideIcon> = {
   'opponent-summary': FileText,
   'opponent-games': History,
   'deck-finder-browse': Search,
+  'deck-manager-library': Layers,
+  'deck-manager-import': FolderOpen,
   'live-scoreboard': Activity,
   'settings-tracker': Info,
   'settings-deck-ai': Bot,
@@ -400,6 +403,7 @@ export function AppShell({
           })}
         </nav>
         {collapsed ? (
+          <>
           <a
             aria-label="Deck Finder"
             className="sidebar-deck-finder sidebar-deck-finder-mini"
@@ -408,6 +412,10 @@ export function AppShell({
           >
             <Search aria-hidden="true" />
           </a>
+          <a aria-label="Deck Manager" className="sidebar-deck-finder sidebar-deck-finder-mini" href="#/deck-manager" title="Deck Manager">
+            <Layers aria-hidden="true" />
+          </a>
+          </>
         ) : (
           <div className="sidebar-bottom">
             {update ? (
@@ -424,6 +432,10 @@ export function AppShell({
             <a className="sidebar-deck-finder" href="#/deck-finder" title="Browse top decks inside the dashboard">
               <Search aria-hidden="true" />
               <span className="sidebar-nav-label">Deck Finder</span>
+            </a>
+            <a className="sidebar-deck-finder" href="#/deck-manager" title="Back up and restore your decks">
+              <Layers aria-hidden="true" />
+              <span className="sidebar-nav-label">Deck Manager</span>
             </a>
             {version ? (
               <span aria-label={`Tracker version ${version}`} className="sidebar-version">

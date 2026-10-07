@@ -256,6 +256,18 @@ class TrackerLifecycleMixin:
         read_entries = getattr(self.parser, "read_new_entries", None)
         if callable(read_entries):
             for entry in read_entries():
+                # Deck preservation is independent of tracked-match eligibility.
+                # Keep the GRE loop cheap: only full deck requests open this path.
+                if "==> DeckUpsertDeckV3" in entry.body or "==> EventSetDeckV3" in entry.body:
+                    try:
+                        from .deck_capture import DeckCapture
+
+                        conn = self.analytics.connect()
+                        if conn is not None:
+                            DeckCapture(conn, self.card_db.get_card_name).consume(entry)
+                    except Exception:
+                        # A failed optional archive must never stop live tracking.
+                        self._append_parser_diagnostic_log("Deck Manager could not archive a submitted deck.")
                 routed = (
                     self.parser.route_entry(entry) if hasattr(self.parser, "route_entry") else None
                 )

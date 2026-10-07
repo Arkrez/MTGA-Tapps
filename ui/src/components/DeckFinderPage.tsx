@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, Copy, Dices, ExternalLink, RefreshCw } from 'lucide-react';
+import { Archive, Check, Copy, Dices, ExternalLink, RefreshCw } from 'lucide-react';
+import { importManagedDeck } from '../deckManagerApi';
 import {
   fetchDeckFinderJob,
   fetchDeckFinderProviders,
@@ -100,6 +101,9 @@ export function DeckFinderPage() {
   const [selectedDeck, setSelectedDeck] = useState<DeckFinderDeck | null>(null);
   const [hydrating, setHydrating] = useState(false);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
+  const [savedDeckId, setSavedDeckId] = useState<{ id: string; source: string } | null>(null);
+  const [saveError, setSaveError] = useState<{ message: string; source: string } | null>(null);
+  const [saving, setSaving] = useState(false);
   const requestSeq = useRef(0);
   // What produced the current results — reused by Refresh, variants context,
   // and "back to results" after a variants drill-down.
@@ -658,6 +662,13 @@ export function DeckFinderPage() {
               </p>
             </div>
             <div className="deckfinder-detail-actions">
+              <button className="deck-neutral-button" disabled={saving || !selectedDeck.deck_text} type="button" onClick={() => {
+                setSaving(true); setSaveError(null);
+                void importManagedDeck(formatArenaImportText(selectedDeck.deck_text) || '', selectedDeck.name, selectedDeck.format_label || '')
+                  .then((saved) => setSavedDeckId({ id: saved.id, source: selectedDeck.source_url + selectedDeck.name }))
+                  .catch((error: unknown) => setSaveError({ message: error instanceof Error ? error.message : 'Could not save this deck.', source: selectedDeck.source_url + selectedDeck.name }))
+                  .finally(() => setSaving(false));
+              }}><Archive aria-hidden="true" />{saving ? 'Saving…' : 'Save to collection'}</button>
               <button
                 className="deck-export-button"
                 disabled={!selectedDeck.deck_text}
@@ -681,6 +692,8 @@ export function DeckFinderPage() {
               </a>
             </div>
           </div>
+          {savedDeckId?.source === selectedDeck.source_url + selectedDeck.name ? <p role="status">Deck saved. <a href="#/deck-manager">Open Deck Manager</a></p> : null}
+          {saveError?.source === selectedDeck.source_url + selectedDeck.name ? <p role="alert">{saveError.message}</p> : null}
           {selectedDeck.deck_text ? (
             <pre className="deckfinder-decklist">{formatArenaImportText(selectedDeck.deck_text)}</pre>
           ) : hydrating ? (

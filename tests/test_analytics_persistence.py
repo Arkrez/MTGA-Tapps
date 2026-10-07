@@ -835,7 +835,7 @@ def test_raw_payload_archive_purges_client_chatter_and_keeps_30_days(tmp_path):
     from mtga_tracker.payload_codec import compress_payload, decode_payload
 
     db_path = tmp_path / "analytics.sqlite3"
-    now = datetime(2026, 9, 7, 12, 0, 0)
+    now = datetime.now()
     old = (now - timedelta(days=45)).isoformat()
     recent = (now - timedelta(days=2)).isoformat()
     rows = [
@@ -858,7 +858,7 @@ def test_raw_payload_archive_purges_client_chatter_and_keeps_30_days(tmp_path):
         )
         conn.execute("delete from schema_migrations where version = 28")
         AnalyticsStore.apply_pending_migrations(conn)
-        # The per-launch prune with a fixed clock, so the test is not date-bound.
+        # Reuse the fixture clock for pruning; migration also prunes at wall time.
         AnalyticsStore.prune_raw_payload_archive(conn, now=now)
 
     with sqlite3.connect(db_path) as check:

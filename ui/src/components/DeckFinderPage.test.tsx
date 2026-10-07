@@ -5,7 +5,10 @@ import {
   hydrateDeckFinderDeck, startDeckFinderFetch,
   type DeckFinderDeck, type DeckFinderJobStatus, type DeckFinderProvider, type DeckFinderView,
 } from '../api';
+import { importManagedDeck } from '../deckManagerApi';
 import { DeckFinderPage } from './DeckFinderPage';
+
+vi.mock('../deckManagerApi', () => ({ importManagedDeck: vi.fn() }));
 
 vi.mock('../api', () => ({
   fetchDeckFinderJob: vi.fn(), fetchDeckFinderProviders: vi.fn(),
@@ -129,4 +132,15 @@ describe('YouTube Deck Finder', () => {
     expect(screen.queryByRole('button', { name: deck.name })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sloth Deck' })).toBeInTheDocument();
   });
+});
+
+
+it('saves a selected Deck Finder list to the general library', async () => {
+  vi.mocked(importManagedDeck).mockResolvedValue({ id: 'saved-id' } as Awaited<ReturnType<typeof importManagedDeck>>);
+  render(<DeckFinderPage />);
+  await chooseCreator();
+  fireEvent.click(await screen.findByRole('button', { name: deck.name }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save to collection' }));
+  await waitFor(() => expect(importManagedDeck).toHaveBeenCalledWith(deck.deck_text, deck.name, 'Standard'));
+  expect(await screen.findByRole('link', { name: 'Open Deck Manager' })).toHaveAttribute('href', '#/deck-manager');
 });

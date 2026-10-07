@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { importManagedDeck } from '../deckManagerApi';
 import {
   ChartNoAxesCombined,
   Check,
@@ -611,6 +612,7 @@ export function DeckDetailPage({
 }) {
   const [loadState, setLoadState] = useState<LoadState>({ status: 'loading' });
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -777,6 +779,7 @@ export function DeckDetailPage({
 
   // Lives on the filter row (trailing slot), in line with Format/Period.
   const copyDeckButton = (
+    <>
     <button
       className="deck-export-button"
       disabled={!deckExport?.available}
@@ -791,6 +794,12 @@ export function DeckDetailPage({
       {copyStatus === 'copied' ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
       {copyStatus === 'copied' ? 'Copied' : copyStatus === 'error' ? 'Copy Failed' : 'Copy Arena Deck'}
     </button>
+    <button className="deck-neutral-button" disabled={!deckExport?.available || saveStatus === 'saving'} type="button" onClick={() => {
+      setSaveStatus('saving');
+      void importManagedDeck(deckExport.text || '', deckName, '')
+        .then(() => setSaveStatus('saved')).catch(() => setSaveStatus('error'));
+    }}>{saveStatus === 'saved' ? 'Saved to collection' : saveStatus === 'saving' ? 'Saving…' : saveStatus === 'error' ? 'Save failed — retry' : 'Save to collection'}</button>
+    </>
   );
 
   const metrics = [

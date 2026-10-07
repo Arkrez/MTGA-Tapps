@@ -5893,6 +5893,28 @@ class DashboardHandler(BaseHTTPRequestHandler):
         # Any write invalidates every memoized read body, whatever the fingerprint sees.
         clear_response_cache()
         parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/deck-manager/"):
+            from . import deck_manager_api
+            from .deck_manager import MAX_IMPORT_BYTES
+
+            # JSON writes require a preflight cross-origin; OPTIONS only permits
+            # the read-only overlay. Also reject external browser origins.
+            origin = urlparse(self.headers.get("Origin") or "")
+            if (origin.hostname and origin.hostname not in {"localhost", "127.0.0.1", "::1"}) or self.headers.get("Content-Type", "").split(";", 1)[0] != "application/json":
+                _send_bytes(self, 403, b'{"error":"Use the local dashboard to manage decks."}', "application/json")
+                return
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if not 0 < length <= MAX_IMPORT_BYTES + 65_536:
+                    raise ValueError("Invalid import size")
+                payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            except (ValueError, UnicodeError):
+                _send_bytes(self, 400, b'{"error":"Invalid JSON or oversized deck import."}', "application/json")
+                return
+            handled = deck_manager_api.handle_post(parsed.path, payload, self.db_path)
+            status, body = handled or (404, {"error": "Unknown Deck Manager action."})
+            _send_bytes(self, status, json.dumps(body).encode("utf-8"), "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            return
         if parsed.path.startswith("/api/deckfinder/"):
             # Deck Finder in the webapp: lazy import keeps the dashboard
             # stdlib-only until the page is actually opened.
@@ -6146,6 +6168,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - http.server API
         parsed = urlparse(self.path)
         request_path = parsed.path
+        if request_path == "/api/deck-manager" or request_path.startswith("/api/deck-manager/"):
+            from . import deck_manager_api
+
+            handled = deck_manager_api.handle_get(request_path, parse_qs(parsed.query), self.db_path)
+            status, body = handled or (404, {"error": "Unknown Deck Manager endpoint."})
+            _send_bytes(self, status, json.dumps(body).encode("utf-8"), "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            return
         if request_path.startswith("/api/deckfinder/"):
             from . import deckfinder_api
 

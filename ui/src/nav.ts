@@ -90,6 +90,12 @@ export const deckFinderNavItems: AppNavItem[] = [
   { id: 'deck-finder-browse', label: 'Browse Decks' },
 ];
 
+export const deckManagerNavItems: AppNavItem[] = [
+  { id: 'back-to-dashboard', label: '← Back to dashboard', route: '#overview' },
+  { id: 'deck-manager-library', label: 'Deck Collection' },
+  { id: 'deck-manager-import', label: 'Add a Deck' },
+];
+
 export const liveNavItems: AppNavItem[] = [
   { id: 'back-to-dashboard', label: '← Back to dashboard', route: '#overview' },
   { id: 'live-scoreboard', label: 'Scoreboard' },

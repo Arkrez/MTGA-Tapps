@@ -103,8 +103,15 @@ recognized from Arena's match format, never from deck size.
 AetherHub, TCGplayer, magic.gg, MTGO, Untapped, YouTube) right inside the dashboard and
 copy any list to your clipboard in Arena import format.
 
+**Deck Manager.** Save any deck beyond Arena's active-deck limit in a local
+library, with revisions, tags, notes and recoverable Trash. Save from Deck Finder
+or played-deck history, import a decklist, or capture lists available in Arena's
+log. Restore through **Copy for Arena** and Arena's Import button. Direct transfers
+and the collection section inside Arena are still pending. See the
+[Deck Manager guide](docs/DECK_MANAGER.md).
+
 **Backup & restore.** Everything the tracker knows — games, settings, Deck
-Finder creators, overlay preferences — in one `.tappsbackup` file, written
+Finder creators, saved deck library, overlay preferences — in one `.tappsbackup` file, written
 into any folder you choose. Point it at a folder your cloud client syncs and
 your history follows you to another computer; **Merge** brings two
 computers' games together.
@@ -412,6 +419,7 @@ passed for that run.
 | `#/games` | Every tracked game with deck picker, format pills, and period filter |
 | `#/opponents` | Everyone you've been paired against; `#/opponent/<name>` for one opponent |
 | `#/deckfinder` | Deck Finder: browse and export decklists from creators and sites |
+| `#/deck-manager` | Deck Manager: local deck backups, revisions, tags, notes and clipboard export |
 | `#/settings` | Startup, in-game overlay, backup/restore, Deck AI, Deck Finder creators, collection export, tracker status |
 | `#/audit` | Database health findings |
 

@@ -78,7 +78,7 @@ export function gameRouteHash(
 
 export function cardRouteHash(cardName: string, returnHash?: string): string {
   const params = new URLSearchParams();
-  if (returnHash && parseGameRoute(returnHash)) {
+  if (returnHash && (parseGameRoute(returnHash) || parseDeckManagerRoute(returnHash))) {
     params.set('return', returnHash);
   }
   const query = params.toString();
@@ -190,7 +190,7 @@ export function parseCardRoute(hash: string): CardRoute | null {
     return null;
   }
   const returnParam = new URLSearchParams(query).get('return');
-  const returnHash = returnParam && parseGameRoute(returnParam) ? returnParam : '#overview';
+  const returnHash = returnParam && (parseGameRoute(returnParam) || parseDeckManagerRoute(returnParam)) ? returnParam : '#overview';
   const filters = parseFilters(query, true);
   try {
     return { name: decodeURIComponent(encoded), returnHash, filters };
@@ -222,6 +222,10 @@ export function parseAuditRoute(hash: string): boolean {
 
 export function parseDeckFinderRoute(hash: string): boolean {
   return hash === '#/deck-finder' || hash.startsWith('#/deck-finder?');
+}
+
+export function parseDeckManagerRoute(hash: string): boolean {
+  return ['#/deck-manager', '#deck-manager-library', '#deck-manager-import'].includes(hash.split('?')[0]);
 }
 
 export function parseSettingsRoute(hash: string): boolean {

@@ -487,6 +487,10 @@ export function BackupCard() {
             {action === 'restore' ? (
               <>
                 <p>{described.text}</p>
+                {(preview.manifest.managed_decks || preview.local.managed_decks || preview.revision_drops) ? <p>
+                  Replaces the saved deck library with {plural(preview.manifest.managed_decks ?? 0, 'deck')} in this backup.
+                  {' '}Adds {plural(preview.deck_adds ?? 0, 'deck')} and drops {plural(preview.deck_drops ?? 0, 'deck')} and {plural(preview.revision_drops ?? 0, 'saved revision')} found only here.
+                </p> : null}
                 <p>
                   The tracker is paused for the swap and started again after. A copy of the current state
                   is saved first and can be put back from this card.
@@ -494,7 +498,7 @@ export function BackupCard() {
                 {preview.requires_confirm && !described.blocked ? (
                   <>
                     <label className="danger-modal-label" htmlFor="backup-confirm-input">
-                      Type <strong>REPLACE</strong> (all caps) to confirm losing those games:
+                      Type <strong>REPLACE</strong> (all caps) to confirm losing that saved data:
                     </label>
                     <input
                       autoFocus
@@ -514,8 +518,9 @@ export function BackupCard() {
                     ? described.text
                     : preview.adds > 0
                       ? `Adds ${plural(preview.adds, 'game')} from the backup to the ${plural(preview.local.games, 'game')} already here. Nothing here is removed or changed; settings are not touched.`
-                      : 'Every game in this backup is already here. Nothing would change.'}
+                      : (preview.revision_adds ?? 0) > 0 ? 'Every game in this backup is already here.' : 'Every game and deck revision in this backup is already here.'}
                 </p>
+                {(preview.revision_adds ?? 0) > 0 ? <p>Adds {plural(preview.deck_adds ?? 0, 'saved deck')} and {plural(preview.revision_adds ?? 0, 'deck revision')}. Existing deck revisions are retained; newer library notes and tags may be merged.</p> : null}
                 <p>
                   The tracker is paused while the games are added and started again after. A copy of the
                   current state is saved first and can be put back from this card.
@@ -543,11 +548,11 @@ export function BackupCard() {
               ) : (
                 <button
                   className="backup-merge-button backup-modal-button"
-                  disabled={restoring || described.blocked || preview.adds === 0}
+                  disabled={restoring || described.blocked || preview.adds === 0 && !(preview.revision_adds ?? 0)}
                   type="button"
                   onClick={() => void runMerge()}
                 >
-                  {restoring ? 'Merging…' : `Merge ${plural(preview.adds, 'game')}`}
+                  {restoring ? 'Merging…' : (preview.revision_adds ?? 0) > 0 ? 'Merge backup' : `Merge ${plural(preview.adds, 'game')}`}
                 </button>
               )}
             </div>

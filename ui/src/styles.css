@@ -5717,3 +5717,35 @@ a.sidebar-deck-finder {
 .backup-confirm {
   max-width: 320px;
 }
+#deck-manager-library > .section-heading { display: none; }
+.deck-manager-content { padding: 1.25rem; }
+/* Deck Manager shares the dashboard's surfaces and card previews. */
+.deck-manager-intro { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.deck-manager-intro h3, .deck-manager-intro p { margin: 0 0 .5rem; }
+.deck-manager-intro p, .deck-manager-tile small { color: var(--muted); }
+.deck-manager-layout { display: grid; grid-template-columns: minmax(240px, 2fr) minmax(0, 3fr); gap: 1.25rem; margin-top: 1.5rem; align-items: start; }
+.deck-manager-browser, .deck-manager-detail, .deck-manager-import { padding: 1.25rem; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); min-width: 0; }
+.deck-manager-toolbar { display: flex; flex-wrap: wrap; gap: .5rem; margin: .8rem 0; }
+.deck-manager-toolbar button, .deck-manager-intro button { display: inline-flex; align-items: center; gap: .5rem; padding: .6rem .8rem; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); cursor: pointer; }
+.deck-manager-toolbar button[aria-pressed="true"], .deck-manager-tile.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.deck-manager-toolbar button:disabled, .deck-manager-intro button:disabled { opacity: .5; cursor: default; }
+.deck-manager-layout input, .deck-manager-layout textarea, .deck-manager-layout select, .deck-manager-import input, .deck-manager-import textarea { display: block; width: 100%; box-sizing: border-box; margin: .5rem 0; padding: .7rem; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text); font: inherit; }
+.deck-manager-layout textarea, .deck-manager-import textarea { resize: vertical; }
+.deck-manager-import > label > textarea { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+.deck-manager-decks { display: grid; gap: .65rem; margin-top: 1rem; max-height: 680px; overflow-y: auto; }
+.deck-manager-tile { display: flex; align-items: center; gap: .9rem; padding: .7rem; text-align: left; width: 100%; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); cursor: pointer; }
+.deck-manager-tile > span { min-width: 0; }
+.deck-manager-tile strong, .deck-manager-tile small { display: block; overflow-wrap: anywhere; }
+.deck-manager-tile small { margin-top: .35rem; font-size: .8rem; }
+.deck-manager-card-section h4 { display: flex; justify-content: space-between; margin: 1.25rem 0 .6rem; }
+.deck-manager-card-section ul { list-style: none; margin: 0; padding: 0; }
+.deck-manager-card-section li { display: flex; align-items: baseline; gap: .65rem; padding: .35rem 0; border-bottom: 1px solid var(--border); }
+.deck-manager-card-section li small { margin-left: auto; color: var(--muted); }
+.deck-manager-quantity { min-width: 1.5rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.deck-manager-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem; }
+.deck-manager-import { margin-top: 1.5rem; }
+.deck-manager-file { display: none !important; }
+.deck-manager-notice, .deck-manager-error { padding: .8rem 1rem; border: 1px solid var(--border); border-radius: 7px; overflow-wrap: anywhere; }
+.deck-manager-notice { border-color: var(--accent); }
+.deck-manager-error { color: var(--danger); }
+@media (max-width: 850px) { .deck-manager-layout, .deck-manager-fields { grid-template-columns: 1fr; } .deck-manager-intro { align-items: start; flex-direction: column; } .deck-manager-decks { max-height: 420px; } }

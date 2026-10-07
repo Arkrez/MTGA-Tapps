@@ -271,3 +271,23 @@ describe('BackupCard', () => {
     expect(screen.getByText('No backups in this folder yet.')).toBeInTheDocument();
   });
 });
+
+it('allows a deck-only merge and names revisions that a replacement would lose', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input) === '/api/backup/inspect') return json(preview({
+      adds: 0, drops: 0, verdict: 'same', requires_confirm: true,
+      deck_adds: 1, deck_drops: 1, revision_adds: 2, revision_drops: 3,
+      manifest: { ...manifest, managed_decks: 4 },
+    }));
+    return json(status());
+  }));
+  const user = userEvent.setup();
+  render(<BackupCard />);
+  await user.click((await screen.findAllByRole('button', { name: 'Merge' }))[0]);
+  expect(await screen.findByRole('button', { name: 'Merge backup' })).toBeEnabled();
+  expect(screen.getByRole('dialog')).toHaveTextContent('Adds 1 saved deck and 2 deck revisions');
+  await user.click(screen.getByRole('button', { name: 'Cancel' }));
+  await user.click(screen.getAllByRole('button', { name: 'Restore' })[0]);
+  expect(await screen.findByRole('dialog')).toHaveTextContent('drops 1 deck and 3 saved revisions');
+  expect(screen.getByRole('button', { name: 'Restore this backup' })).toBeDisabled();
+});
