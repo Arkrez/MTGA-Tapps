@@ -12,7 +12,6 @@ import {
   Clock,
   Database,
   FileText,
-  FolderOpen,
   GitBranch,
   Hand,
   Heart,
@@ -112,8 +111,6 @@ const NAV_ICONS: Record<string, LucideIcon> = {
   'opponent-summary': FileText,
   'opponent-games': History,
   'deck-finder-browse': Search,
-  'deck-manager-library': Layers,
-  'deck-manager-import': FolderOpen,
   'live-scoreboard': Activity,
   'settings-tracker': Info,
   'settings-deck-ai': Bot,
@@ -412,7 +409,7 @@ export function AppShell({
           >
             <Search aria-hidden="true" />
           </a>
-          <a aria-label="Deck Manager" className="sidebar-deck-finder sidebar-deck-finder-mini" href="#/deck-manager" title="Deck Manager">
+          <a aria-label="Deck Manager" className="sidebar-deck-finder sidebar-deck-manager sidebar-deck-finder-mini" href="#/deck-manager" title="Deck Manager">
             <Layers aria-hidden="true" />
           </a>
           </>
@@ -433,7 +430,7 @@ export function AppShell({
               <Search aria-hidden="true" />
               <span className="sidebar-nav-label">Deck Finder</span>
             </a>
-            <a className="sidebar-deck-finder" href="#/deck-manager" title="Back up and restore your decks">
+            <a className="sidebar-deck-finder sidebar-deck-manager" href="#/deck-manager" title="Back up and restore your decks">
               <Layers aria-hidden="true" />
               <span className="sidebar-nav-label">Deck Manager</span>
             </a>

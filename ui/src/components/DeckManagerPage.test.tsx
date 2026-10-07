@@ -28,6 +28,10 @@ const capabilities = { arena_transfers: false, native_section: false, capacity: 
 
 beforeEach(() => {
   vi.resetAllMocks();
+  Object.defineProperties(HTMLDialogElement.prototype, {
+    showModal: { configurable: true, value: function (this: HTMLDialogElement) { this.setAttribute('open', ''); } },
+    close: { configurable: true, value: function (this: HTMLDialogElement) { this.removeAttribute('open'); } },
+  });
   vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [saved], capabilities });
   vi.mocked(fetchManagedDeck).mockResolvedValue(detail);
   vi.mocked(updateManagedDeck).mockResolvedValue({ ok: true });
@@ -39,8 +43,8 @@ beforeEach(() => {
 describe('Deck Manager', () => {
   it('shows any deck and preserves the raw text and optional format on save', async () => {
     render(<DeckManagerPage />);
-    expect(await screen.findByRole('heading', { name: saved.name })).toBeInTheDocument();
-    expect(screen.getByText(capabilities.message)).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: 'Add deck' }));
+    expect(screen.getByRole('dialog', { name: 'Add a deck' })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Deck name'), { target: { value: 'Another deck' } });
     fireEvent.change(screen.getByLabelText('Format'), { target: { value: 'Historic Brawl' } });
     const text = 'Commander\n1 Atraxa\n\nDeck\n4 Forest (DMU) 281';
@@ -51,7 +55,9 @@ describe('Deck Manager', () => {
 
   it('copies the selected historical revision with its sections and printings', async () => {
     render(<DeckManagerPage />);
-    await screen.findByRole('heading', { name: saved.name });
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(saved.name) }));
+    await screen.findByRole('dialog', { name: saved.name });
+    await screen.findByRole('button', { name: 'Copy for Arena' });
     vi.mocked(fetchManagedDeck).mockResolvedValue({ ...detail, revision_id: 'old' });
     fireEvent.change(screen.getByRole('combobox', { name: 'Saved revision' }), { target: { value: 'old' } });
     await waitFor(() => expect(fetchManagedDeck).toHaveBeenLastCalledWith('deck-a', 'old', expect.any(AbortSignal)));
@@ -63,13 +69,15 @@ describe('Deck Manager', () => {
 
   it('moves only the local archive to trash and offers restore', async () => {
     render(<DeckManagerPage />);
-    await screen.findByRole('heading', { name: saved.name });
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(saved.name) }));
+    await screen.findByRole('dialog', { name: saved.name });
     const trashed = { ...saved, trashed_at: '2026-10-06' };
     vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [trashed], capabilities });
     vi.mocked(fetchManagedDeck).mockResolvedValue({ ...detail, trashed_at: '2026-10-06' });
-    fireEvent.click(screen.getByRole('button', { name: 'Move to trash' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Move to trash' }));
     await waitFor(() => expect(updateManagedDeck).toHaveBeenCalledWith('deck-a', { trashed: true }));
     fireEvent.click(screen.getByRole('button', { name: 'Trash' }));
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(saved.name) }));
     fireEvent.click(await screen.findByRole('button', { name: 'Restore from trash' }));
     await waitFor(() => expect(updateManagedDeck).toHaveBeenCalledWith('deck-a', { trashed: false }));
   });
@@ -77,6 +85,7 @@ describe('Deck Manager', () => {
   it('retains input when saving fails', async () => {
     vi.mocked(importManagedDeck).mockRejectedValue(new Error('Unrecognized card on line 2.'));
     render(<DeckManagerPage />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add deck' }));
     const text = 'Deck\ninvalid';
     fireEvent.change(screen.getByLabelText('Decklist or backup'), { target: { value: text } });
     fireEvent.click(screen.getByRole('button', { name: 'Save deck' }));
@@ -91,10 +100,53 @@ describe('Deck Manager', () => {
     vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [saved, other], capabilities });
     vi.mocked(fetchManagedDeck).mockResolvedValue({ ...detail, ...other });
     render(<DeckManagerPage />);
-    fireEvent.click(await screen.findByRole('button', { name: /Second deck/ }));
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(saved.name) }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close dialog' }));
+    fireEvent.click(screen.getByRole('button', { name: /Second deck/ }));
     await screen.findByRole('heading', { name: 'Second deck' });
     await act(async () => { finish(detail); });
     expect(screen.getByRole('heading', { name: 'Second deck' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: saved.name })).not.toBeInTheDocument();
   });
+});
+
+
+it('shows a large collection without opening or fetching details until a deck is clicked', async () => {
+  vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: Array.from({ length: 104 }, (_, i) => ({ ...saved, id: `deck-${i}`, name: `Saved list ${i}` })), capabilities });
+  render(<DeckManagerPage />);
+  expect(await screen.findByRole('button', { name: 'Saved (104)' })).toBeInTheDocument();
+  expect(screen.getAllByRole('button', { name: /Saved list/ })).toHaveLength(104);
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(fetchManagedDeck).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByRole('searchbox', { name: 'Search saved decks' }), { target: { value: 'Saved list 103' } });
+  expect(screen.getAllByRole('button', { name: /Saved list/ })).toHaveLength(1);
+});
+
+it('closes on Escape and restores focus and scrolling to the collection', async () => {
+  render(<DeckManagerPage />);
+  const tile = await screen.findByRole('button', { name: new RegExp(saved.name) });
+  tile.focus();
+  fireEvent.click(tile);
+  const dialog = await screen.findByRole('dialog', { name: saved.name });
+  expect(document.body.style.overflow).toBe('hidden');
+  fireEvent(dialog, new Event('cancel', { bubbles: false, cancelable: true }));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(tile).toHaveFocus();
+  expect(document.body.style.overflow).toBe('');
+});
+
+it('edits a revision in a dialog bound to the opened deck', async () => {
+  render(<DeckManagerPage />);
+  const tile = await screen.findByRole('button', { name: new RegExp(saved.name) });
+  tile.focus();
+  fireEvent.click(tile);
+  fireEvent.click(await screen.findByRole('button', { name: 'Save an edited revision…' }));
+  expect(await screen.findByRole('dialog', { name: 'Save a new revision' })).toBeInTheDocument();
+  const text = 'Deck\n5 Forest';
+  fireEvent.change(screen.getByLabelText('Decklist or backup'), { target: { value: text } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save revision' }));
+  await waitFor(() => expect(importManagedDeck).toHaveBeenCalledWith(text, saved.name, 'Standard', saved.id));
+  expect(await screen.findByRole('dialog', { name: saved.name })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Close dialog' }));
+  expect(tile).toHaveFocus();
 });

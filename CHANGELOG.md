@@ -4,6 +4,10 @@
 
 ### Features
 
+- Deck Manager now focuses on a full-page responsive deck grid. Click a deck
+  for its details, notes and revisions in a dialog; use the orange **+ Add deck**
+  button to import. The sidebar has a distinct orange Deck Manager link and no
+  collection subnavigation.
 - Added a general **Deck Manager** page and menu entry. Save any Arena decklist,
   keep revisions, search names/formats/tags, add notes, recover local Trash and
   download `.tappsdeck` backups. Deck Finder and deck-history pages can save lists

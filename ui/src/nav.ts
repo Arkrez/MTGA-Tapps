@@ -92,8 +92,6 @@ export const deckFinderNavItems: AppNavItem[] = [
 
 export const deckManagerNavItems: AppNavItem[] = [
   { id: 'back-to-dashboard', label: '← Back to dashboard', route: '#overview' },
-  { id: 'deck-manager-library', label: 'Deck Collection' },
-  { id: 'deck-manager-import', label: 'Add a Deck' },
 ];
 
 export const liveNavItems: AppNavItem[] = [

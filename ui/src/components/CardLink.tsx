@@ -43,6 +43,7 @@ function CardLinkPreview({
   const [orientation, setOrientation] = useState(() => cachedCardPreviewOrientation(cardName));
   const {
     context,
+    elements,
     floatingStyles,
     refs: { setFloating, setReference },
   } = useFloating({
@@ -92,7 +93,7 @@ function CardLinkPreview({
         {children ?? displayName}
       </a>
       {open ? (
-        <FloatingPortal>
+        <FloatingPortal root={elements.reference instanceof HTMLElement ? elements.reference.closest<HTMLDialogElement>('dialog') ?? undefined : undefined}>
           <div
             ref={setFloating}
             className={orientation === 'landscape' ? 'card-preview card-preview-landscape' : 'card-preview'}

@@ -17,6 +17,9 @@ it('opens Deck Manager as a separate page without fetching overview history', as
   expect(screen.getByRole('heading', { name: 'Deck Manager' })).toBeInTheDocument();
   await waitFor(() => expect(document.title).toContain('Deck Manager'));
   expect(fetchDashboardSnapshot).not.toHaveBeenCalled();
+  expect(screen.queryByRole('link', { name: 'Add a Deck' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: 'Deck Collection' })).not.toBeInTheDocument();
+  expect(screen.getByRole('link', { name: 'Deck Manager' })).toHaveClass('sidebar-deck-manager');
 });
 
 

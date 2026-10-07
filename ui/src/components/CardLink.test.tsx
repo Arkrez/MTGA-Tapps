@@ -115,3 +115,12 @@ describe('CardLink', () => {
     vi.unstubAllGlobals();
   });
 });
+
+
+it('keeps hover previews inside native dialogs so they stay visible above the backdrop', async () => {
+  const user = userEvent.setup();
+  render(<dialog open aria-label="Deck"><CardLink cardName="Forest" /></dialog>);
+  await user.hover(screen.getByRole('link', { name: 'Forest' }));
+  const preview = await screen.findByRole('tooltip');
+  expect(screen.getByRole('dialog')).toContainElement(preview);
+});

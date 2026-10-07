@@ -5,13 +5,16 @@ Validated 2026-10-06 from the isolated `deck-manager` worktree.
 - Full Python suite: **793 passed**, one display-related skip, one prescribed
   environment-specific deselection and five passing subtests. Temporary HTTP
   server tests used loopback socket access; no live tracker was stopped.
-- UI suite: **144 passed** in 21 files. TypeScript, ESLint and production build
+- UI suite: **148 passed** in 21 files. TypeScript, ESLint and production build
   passed. Vite reports the existing single-bundle size warning above 500 kB;
   no build failure.
 - Browser checked with a separate demo SQLite database and a separate dashboard
   on port 8876: arbitrary deck import, sideboard/printing display, local trash,
-  recovery, revision save and section navigation. The screenshot contains demo
-  lists and is stored beside this report.
+  recovery and revision save. The redesigned collection was checked with 104
+  demo decks, four columns at desktop width, three at 1360 px and one at 390 px,
+  with no horizontal overflow. Detail/import dialogs, import completion and
+  return of focus/scrolling were checked. Preview, detail and mobile screenshots
+  contain demo lists and are stored beside this report.
 - Read-only Player.log smoke check archived into an **in-memory** SQLite database:
   five distinct observed decks, 18 immutable revisions, zero rejected lists and
   zero game rows. No names, IDs or raw payloads were copied into this report.

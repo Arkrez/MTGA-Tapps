@@ -10,12 +10,13 @@ native work and platform evidence are in [the implementation plan](plans/DECK_MA
 
 ## Save and view
 
-- Paste an Arena decklist or open a `.txt` / `.tappsdeck` file and click **Save deck**.
+- Use the orange **+ Add deck** button at the top right to open the import dialog.
+  Paste an Arena decklist or open a `.txt` / `.tappsdeck` file and click **Save deck**.
   Names and formats are optional; duplicate names are allowed.
 - Click **Save to collection** in Deck Finder or on a played deck's detail page.
   Historical lists represent submitted snapshots, rather than the complete current
   Arena roster. They may lack printing/cosmetic metadata.
-- **Capture available Arena lists** rescans the resolved Player.log. The tracker
+- **Capture Arena lists** rescans the resolved Player.log. The tracker
   also captures new outgoing `DeckUpsertDeckV3` and `EventSetDeckV3` lists while
   running, independently of gameplay persistence. This includes any format.
 
@@ -26,9 +27,14 @@ available piles are kept, including main, sideboard, commanders and companions,
 plus raw deck-specific metadata. Missing piles are labelled **Available piles only**.
 Unresolved card IDs are preserved and shown as `Card #ID`.
 
-Search names, formats and tags. Select a deck to view its sections, notes and
-saved revisions. **Save an edited revision…** starts from the selected list;
-earlier snapshots remain available. Notes and tags belong to the library entry.
+Search names, formats and tags in the full-page deck grid. It shows four columns
+on wide screens, three at medium widths, and fewer on narrow screens, with all
+rows available through normal page scrolling. Click a tile to open a dialog with
+the deck’s sections, notes and saved revisions. **Save an edited revision…**
+starts from the selected list;
+earlier snapshots remain available. The dialog supports Escape/backdrop dismissal,
+keeps keyboard focus inside while open and returns focus on closing. Notes and
+tags belong to the library entry.
 **Move to trash** affects only this local entry; **Restore from trash** recovers
 it. Neither action removes a deck from Arena or changes game history.
 
