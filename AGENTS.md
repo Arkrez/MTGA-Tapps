@@ -146,6 +146,18 @@ Primary code paths:
   full backups. Do not infer slot usage/account/presence or enable native writes from logs.
   See `docs/DECK_MANAGER.md`, `docs/plans/DECK_MANAGER.md`, `tests/test_deck_manager.py`
   and `ui/src/components/DeckManagerPage.test.tsx`.
+- `deck-manager-bridge/poc/`: explicit development-only Frida/IL2CPP experiment,
+  never auto-loaded or packaged. Mac Unity 6 native folder and bulk cache capture
+  are demonstrated; native writes and disk-to-Arena restoration are unverified.
+  Attach to an explicit running PID; never restart Arena or modify its installation.
+  Reports contain private decks and belong outside git. Capture targets a new,
+  separate database only. Temporary UI tests require an agreed out-of-match Decks
+  session; `disposable_copy.py --execute` requires approval for its specific account
+  create/delete test. It may delete only its new verified test copy after durable
+  read-back, never the source. Unknown outcomes stop without retry. See its README
+  and `docs/plans/deck-manager/NATIVE_POC.md`; offline checks:
+  `PYTHONPATH=src venv/bin/python -m pytest tests/test_native_deck_poc.py -q`
+  and `node --check deck-manager-bridge/poc/probe.js`.
 - `src/mtga_tracker/deckfinder_api.py`: background jobs for the integrated dashboard Deck Finder.
 - `src/mtga_deck_downloader/providers/base.py`: constructs each scraper lazily
   on first use, under a per-provider lock. Site/source picker metadata must not

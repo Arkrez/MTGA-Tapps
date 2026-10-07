@@ -2,15 +2,17 @@
 
 Status: partially implemented on branch `deck-manager`. The general-purpose
 local library, dashboard/menu entry, text/full backups, revisions, passive
-capture, trash and backup merging are implemented. Native Arena integration and
-automatic transfers remain unimplemented and unproven on the current Mac client.
+capture, trash and backup merging are implemented. An explicit Mac IL2CPP proof
+now demonstrates bulk cache capture and an empty native section below Starter
+Decks. Automatic transfers and production native integration remain unproven.
+See [live experiment results](deck-manager/NATIVE_POC.md) and
+[reproduction commands](../../deck-manager-bridge/poc/README.md).
 See [implemented behavior](../DECK_MANAGER.md) and the [demo screenshot](deck-manager/preview.png).
 
 All decks are in scope. Midweek Magic and draft are examples, not eligibility
 rules. Saving, viewing and managing local backups work with Arena closed;
 changing Arena's roster will require a live, authenticated native adapter.
-Researched 2026-10-06 against current source, public projects, and a read-only
-inspection of the local macOS Steam Arena installation and Player.log.
+Initially researched 2026-10-06; live attach-only Mac tests followed on 2026-10-07.
 
 ## Recommendation
 
@@ -24,14 +26,19 @@ The desired native section below **Starter Decks** is technically credible:
 an existing Windows mod implements a very similar feature. However, the local
 macOS Arena uses IL2CPP, while that mod uses Mono. Start with a bounded
 compatibility experiment before promising seamless integration on both OSes.
-The archive and dashboard remain useful if a particular Arena build cannot
-support the native integration.
+The user considers the manual clipboard path insufficient. Native transfer
+feasibility is now the gate for continuing this feature; do not pursue the
+clipboard library as an accepted substitute for the requested workflow.
 
-**Next native deliverable:** a platform feasibility report with current-build evidence
-for complete deck enumeration, exact capture, and the native section. A
-controlled save/delete/restore round trip follows only in a user-approved test
-session. This research did not modify Arena, read process memory, delete decks,
-or stop the game or tracker.
+**Current native evidence:** the running Mac client exposed 187 loaded cached
+decks, including 94 non-net decks archived in one pass. `GetFullDeck` succeeded.
+The user confirmed the temporary collection section appeared after Starter Decks;
+it was removed and its absence verified. No saved decks changed, and Arena and
+the tracker stayed running. Cache coverage is not authenticated roster coverage.
+
+**Next gate:** the prepared disposable-copy service test needs approval to create
+and remove only a new test duplicate. Actual reconstruction from a disk archive
+and exact restoration follow as a separate gate before production transfers.
 
 ## Findings and confidence
 
@@ -368,24 +375,24 @@ merely to force installation.
 
 | Phase | Work | Exit evidence |
 | --- | --- | --- |
-| 0 — Current-build feasibility | Inspect platform/backend; capture scrubbed catalog/full-deck fixtures; test read-only enumeration; test a minimal native folder on Windows and macOS in a scheduled session. Compare an IL2CPP adapter with a reader plus assisted transfer on Mac. | Document all-user-deck coverage, missing fields, runtime capacity, account isolation, loader/relaunch requirements and platform results. Native support is promised only where demonstrated. |
+| 0 — Current-build feasibility | Mac arm64 POC demonstrates cache enumeration, one GetFullDeck call, bulk archival and an empty native section. Disposable-copy writes, disk-to-Arena reconstruction, cold-cache coverage and Windows remain pending. | Document authenticated roster coverage, missing fields, capacity, account isolation and production loader/permission requirements. Native support is promised only where demonstrated. |
 | 1 — Durable library | Implemented: migration 32, immutable revisions, general text/file import/export, dashboard/menu, capture of available save/submission lists, backup merge, trash and Deck Finder/history save actions. Account-authenticated observations, full roster reads and native writes are pending. | Python/UI tests and demo browser checks pass. Exact portable-text and full-JSON round trips, backup restore/merge and no gameplay rows from capture are tested. Log coverage is explicitly incomplete. |
 | 2 — Controlled transfers | Native client-service adapter, journal, single-deck store/restore, fresh verification, full-slot swap and recovery. | Approved disposable-deck tests establish round-trip fidelity and interruption recovery. No deletion before durable verification. |
 | 3 — Native collection section | Folder after Starter Decks, native tiles, transfer actions, disabled queue selection, dashboard/native consistency. | The same library and transfer state appear in both UIs; unsupported builds retain dashboard/manual access. |
 | 4 — Convenience | Bulk selection, revision comparisons, opt-in event backups, Deck Finder “Save to collection”; native local editing only after separate validation. | Each feature preserves card fidelity and recovery behavior under account switches and client updates. |
 
-Windows is the strongest candidate for the first native proof. Mac feasibility
-must still be tested early, since it is the locally observed platform. A successful
-Windows demo is not a substitute for the Mac experiment. If the Mac UI adapter
-fails, document that result and offer the dashboard/read-only-reader/manual path;
-do not present that fallback as fulfilling the requested native category.
+Mac section/capture feasibility has been demonstrated through the explicit
+Frida experiment. Windows remains untested. Neither result establishes a
+packaged production loader or reliable native transfers. If native transfers
+fail the remaining gates, reassess the feature with the user rather than
+presenting the manual path as fulfilling this request.
 
 Wizards' current [terms, including the Arena EULA](https://company.wizards.com/en/legal/terms)
 restrict unauthorized modifications, connections and reverse engineering. The
 existence of a mod does not establish permission to distribute this integration.
 Resolve that specific release question before distributing the optional adapter;
-the supported clipboard library can proceed independently. This research does
-not establish Wizards approval or predict account enforcement.
+the local prototype is not approval to distribute an Arena adapter. This research
+does not establish Wizards approval or predict account enforcement.
 
 ## Remaining native validation
 
@@ -409,8 +416,8 @@ not establish Wizards approval or predict account enforcement.
 
 ## Remaining questions for the first experiment
 
-1. Which current Mac IL2CPP loader/interop path can render the section and invoke
-   deck services without destabilizing Arena or requiring unacceptable setup?
+1. How can the demonstrated Mac Frida/IL2CPP path be packaged with acceptable
+   install permissions, startup behavior and client-update compatibility?
 2. Can every user deck be fetched completely, even if never opened this session?
 3. Which roster read proves freshness and which deck classes consume capacity?
 4. Do current import/create paths preserve unowned cards, printings, all piles
