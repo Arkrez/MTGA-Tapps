@@ -72,3 +72,14 @@ test('native text preparation requires Decks before touching import providers',a
   await assert.rejects(vm.runInContext("prepareImport('fixture','Deck\\n4 Forest','Test','12345678-1234-1234-1234-123456789abc')",context),/outside a match/);
   assert.deepEqual(calls,['il2cpp_gchandle_get_target']);
 });
+
+test('snapshot verification survives sorted persisted keys and still rejects changed cards',()=>{
+  const {context}=runtime();
+  context.original={name:'Offline fixture',arena_id:'id',summary:{Name:'Offline fixture',Description:null},piles:[{pile:1,entries:[{id:123,quantity:60}]}],skins:[]};
+  const sorted=item=>Array.isArray(item)?item.map(sorted):item&&typeof item==='object'?Object.fromEntries(Object.keys(item).sort().map(key=>[key,sorted(item[key])])):item;
+  context.saved=sorted(context.original);context.saved.summary.Description='';
+  assert.notEqual(JSON.stringify(context.original),JSON.stringify(context.saved));
+  assert.equal(vm.runInContext('sameSourceSnapshot(original,saved)',context),true);
+  context.saved.piles[0].entries[0].quantity=59;
+  assert.equal(vm.runInContext('sameSourceSnapshot(original,saved)',context),false);
+});

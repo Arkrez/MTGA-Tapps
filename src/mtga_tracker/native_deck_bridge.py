@@ -52,6 +52,17 @@ class ArenaBridge:
     def create(self, archive, arena_id):
         return self.exports.create(self.account_id, archive, arena_id)
 
+    def prepare_create(self, archive, arena_id):
+        try:
+            return self.exports.preparecreate(self.account_id, archive, arena_id)
+        except Exception as exc:
+            raise DeckManagerError(
+                "Arena could not prepare this backup. No deck was created; your saved deck remains."
+            ) from exc
+
+    def create_prepared(self, arena_id):
+        return self.exports.createprepared(self.account_id, arena_id)
+
     def prepare_import(self, text, name, arena_id):
         return self.exports.prepareimport(self.account_id, text, name, arena_id)
 

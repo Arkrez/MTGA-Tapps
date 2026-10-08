@@ -194,6 +194,7 @@ def library_connection(path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(path, timeout=10)
     conn.execute("PRAGMA busy_timeout = 10000")
     AnalyticsStore.ensure_schema(conn)
+    conn.execute("PRAGMA foreign_keys=ON")
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -206,6 +207,8 @@ def save_deck(
     account_key: Optional[str] = None,
     arena_deck_id: Optional[str] = None,
     observed_at: Optional[str] = None,
+    collection_id: Optional[str] = None,
+    assign_collection: bool = False,
 ) -> Dict[str, Any]:
     from .analytics_persistence import persist_managed_deck
 
@@ -216,6 +219,8 @@ def save_deck(
         account_key=account_key,
         arena_deck_id=arena_deck_id,
         observed_at=observed_at,
+        collection_id=collection_id,
+        assign_collection=assign_collection,
     )
 
 
@@ -423,7 +428,12 @@ def merge_library(conn: sqlite3.Connection) -> Dict[str, int]:
     conn.row_factory = sqlite3.Row
     try:
         added_decks = added_revisions = 0
-        incoming_decks = list(conn.execute("SELECT * FROM src.managed_decks"))
+        from .deck_collections import merge_collections
+
+        collection_map = merge_collections(conn)
+        incoming_decks = [dict(row) for row in conn.execute("SELECT * FROM src.managed_decks")]
+        for deck in incoming_decks:
+            deck["collection_id"] = collection_map.get(deck.get("collection_id"))
         for deck in incoming_decks:
             existing = conn.execute(
                 "SELECT * FROM main.managed_decks WHERE id = ?", (deck["id"],)
@@ -434,7 +444,7 @@ def merge_library(conn: sqlite3.Connection) -> Dict[str, int]:
                 fields = list(deck.keys())
                 conn.execute(
                     f"INSERT INTO main.managed_decks ({', '.join(fields)}) VALUES ({', '.join('?' for _ in fields)})",
-                    tuple(deck),
+                    tuple(deck.values()),
                 )
                 added_decks += 1
         revision_map = {}
@@ -503,7 +513,7 @@ def merge_library(conn: sqlite3.Connection) -> Dict[str, int]:
                 if not revision_id:
                     raise DeckManagerError("A deck backup is missing its current revision.")
                 conn.execute(
-                    "UPDATE main.managed_decks SET name = ?, format_name = ?, notes = ?, tags_json = ?, current_revision_id = ?, updated_at = ?, trashed_at = ? WHERE id = ?",
+                    "UPDATE main.managed_decks SET name = ?, format_name = ?, notes = ?, tags_json = ?, current_revision_id = ?, updated_at = ?, trashed_at = ?, collection_id = ? WHERE id = ?",
                     (
                         deck["name"],
                         deck["format_name"],
@@ -512,6 +522,7 @@ def merge_library(conn: sqlite3.Connection) -> Dict[str, int]:
                         revision_id,
                         deck["updated_at"],
                         deck["trashed_at"],
+                        deck["collection_id"],
                         deck["id"],
                     ),
                 )

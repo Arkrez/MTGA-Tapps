@@ -149,3 +149,37 @@ flow is implemented and offline-tested but awaits a user-selected runtime test.
 Automated browser review of the new pill layout remains unavailable. Existing native
 move/restore, persistent native collection/tiles, Windows and installed-app validation
 remain as previously recorded; no additional Arena deck mutation was performed here.
+
+
+### Collections, transfer progress and failed-import recovery — 2026-10-08
+
+- A user-selected Finder list failed before CreateDeck because `sameSourceSnapshot`
+  compared JSON text to a key-sorted SQLite archive. A read-only native reconstruction
+  proved structural equivalence, JSON key-order inequality, an unchanged 94-deck roster
+  and absence of the failed restore ID. No Arena create/delete was invoked.
+- The comparison now canonicalizes object keys recursively, retaining array order and
+  checking all values. Native restore preparation is separate from dispatch; preparation
+  failures cancel safely, while a dispatched timeout still remains uncertain. An offline
+  regression proves a sorted backup matches and changed quantities are rejected.
+- SQLite online backup preserved the isolated preview DB before cancelling only this
+  demonstrated pre-create failure. All 96 saved entries/revisions were retained. The
+  active tracker database was read only, and Arena/tracker were not restarted.
+- Migration 34, collection CRUD/membership, backup merging and gameplay-reset retention
+  have regression coverage. Collection removal returns even trashed decks to Unsorted.
+  Finder Save then Add upgrades the same saved entry with a native revision.
+- Structured progress counts preparation/request/verification for transfers and reads /
+  verified commits for bulk backups. UI tests cover grouping, collapse, collection
+  confirmation, membership moves, Finder destination/identity and progress rendering.
+- Full Python suite: **867 passed, 1 skipped, 1 deselected, 5 subtests passed**.
+  Full UI suite: **172 passed**, 21 files. Native JavaScript: **8 passed**. TypeScript,
+  lint and production build passed. Browser visual review remains unavailable.
+- The shipped split preparation RPC also passed live for the failed deck, holding
+  only a transient rebuilt draft. A second refreshed roster was unchanged; connection
+  close released the draft without dispatching create or delete.
+- The idle dashboard-only preview was refreshed with its existing isolated library.
+  HTTP checks confirm 96 retained entries, 94 Arena decks, schema 34, no pending
+  transfer, current collection/progress assets and a clean foreign-key check. The
+  original tracker stayed running. No live native mutation was performed.
+- Full native create/move verification still requires a user-selected live action.
+  The persistent collection section inside Arena, Windows and installed-bundle validation
+  remain unfinished; dashboard collections do not claim to implement native folders.

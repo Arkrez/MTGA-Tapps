@@ -21,6 +21,7 @@ export interface ManagedDeck {
   completeness: string;
   main_count: number;
   art_card: string | null;
+  collection_id?: string | null;
   native_restorable?: boolean;
   native_arena_ids?: string[];
 }
@@ -31,7 +32,10 @@ export interface ManagedDeckDetail extends ManagedDeck {
   revisions: { id: string; created_at: string; source: string; content_hash: string }[];
 }
 
+export interface DeckCollection { id: string; name: string; }
+
 export interface DeckLibrary {
+  collections?: DeckCollection[];
   decks: ManagedDeck[];
   capabilities: { arena_transfers: boolean; native_section: boolean; capacity: number | null; message: string };
 }
@@ -48,8 +52,8 @@ async function request<T>(path: string, payload?: unknown, signal?: AbortSignal)
 export const fetchDeckLibrary = (signal?: AbortSignal) => request<DeckLibrary>('', undefined, signal);
 export const fetchManagedDeck = (id: string, revision?: string, signal?: AbortSignal) =>
   request<ManagedDeckDetail>(`/deck?${new URLSearchParams({ id, ...(revision ? { revision } : {}) })}`, undefined, signal);
-export const importManagedDeck = (text: string, name: string, format_name: string, deck_id?: string) =>
-  request<ManagedDeckDetail>('/import', { text, name, format_name, deck_id });
+export const importManagedDeck = (text: string, name: string, format_name: string, deck_id?: string, collection_id?: string | null) =>
+  request<ManagedDeckDetail>('/import', { text, name, format_name, deck_id, ...(collection_id !== undefined ? { collection_id } : {}) });
 export const updateManagedDeck = (id: string, fields: { notes?: string; tags?: string[]; trashed?: boolean }) =>
   request<{ ok: boolean }>('/update', { id, ...fields });
 export const deleteManagedDeck = (id: string) => request<{ ok: boolean }>('/delete', { id, confirm: 'DELETE' });
@@ -85,11 +89,19 @@ export type NativeDeckAction = 'connect' | 'backup' | 'store' | 'restore' | 'rec
 export interface NativeDeckJob {
   state: 'running' | 'done' | 'error';
   detail: string;
+  progress?: { completed: number; total: number | null };
   result?: { count: number; action: NativeDeckAction };
 }
 export const fetchNativeDeckStatus = (signal?: AbortSignal) => request<NativeDeckStatus>('/native', undefined, signal);
 export const startNativeDeckJob = (action: NativeDeckAction, decks: { id: string; revision?: string }[] = []) =>
   request<{ job_id: string }>('/native/run', { action, decks, request_id: crypto.randomUUID(), ...(action === 'store' ? { confirm: 'MOVE' } : {}) });
 export const fetchNativeDeckJob = (id: string, signal?: AbortSignal) => request<NativeDeckJob>(`/native/job?${new URLSearchParams({ id })}`, undefined, signal);
-export const addDeckToArena = (text: string, name: string, format_name: string) =>
-  request<{ job_id: string }>('/native/run', { action: 'add', decks: [], request_id: crypto.randomUUID(), import: { text, name, format_name } });
+export const addDeckToArena = (text: string, name: string, format_name: string, saved_deck_id?: string, collection_id?: string) =>
+  request<{ job_id: string }>('/native/run', { action: 'add', decks: [], request_id: crypto.randomUUID(), import: { text, name, format_name, ...(saved_deck_id ? { saved_deck_id } : {}), ...(collection_id ? { collection_id } : {}) } });
+
+export const saveDeckCollection = (name: string, id?: string) =>
+  request<DeckCollection>('/collections/save', { name, id });
+export const removeDeckCollection = (id: string) =>
+  request<{ ok: boolean; count: number }>('/collections/remove', { id, confirm: 'REMOVE' });
+export const moveDecksToCollection = (ids: string[], collection_id: string | null) =>
+  request<{ ok: boolean; count: number }>('/collections/move', { ids, collection_id });

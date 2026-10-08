@@ -469,3 +469,88 @@ def test_capture_keeps_trackers_connection_row_factory(conn):
     capture.consume(entry())
     assert conn.row_factory is None
     assert isinstance(conn.execute("SELECT id FROM managed_decks").fetchone(), tuple)
+
+
+def test_collection_moves_are_atomic_and_removal_retains_all_revisions(conn):
+    from mtga_tracker import deck_collections as dc
+
+    group = dc.save_collection(conn, "Control")
+    decks = [dm.save_deck(conn, dm.parse_import(TEXT)) for _ in range(2)]
+    ids = [d["id"] for d in decks]
+    with pytest.raises(dm.DeckManagerError):
+        dc.move_decks(conn, [ids[0], "missing"], group["id"])
+    assert dm.deck_detail(conn, ids[0])["collection_id"] is None
+    dc.move_decks(conn, ids, group["id"])
+    dm.update_metadata(conn, ids[1], {"trashed": True})
+    dc.save_collection(conn, "Control decks", group["id"])
+    with pytest.raises(dm.DeckManagerError, match="already exists"):
+        dc.save_collection(conn, "control decks")
+    assert dc.remove_collection(conn, group["id"]) == 2
+    assert not dc.list_collections(conn)
+    for deck_id in ids:
+        detail = dm.deck_detail(conn, deck_id)
+        assert detail["collection_id"] is None
+        assert len(detail["revisions"]) == 1
+        assert detail["deck"]["import_text"] == TEXT
+    assert dm.deck_detail(conn, ids[1])["trashed_at"]
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_collection_backup_merge_maps_names_and_preserves_membership(tmp_path):
+    from mtga_tracker import deck_collections as dc
+
+    local_path, source_path = tmp_path / "local.db", tmp_path / "source.db"
+    with dm.library_connection(local_path) as local, dm.library_connection(source_path) as source:
+        local_group = dc.save_collection(local, "Control")
+        source_group = dc.save_collection(source, "control")
+        original = dm.save_deck(source, dm.parse_import(TEXT), collection_id=source_group["id"])
+    with dm.library_connection(local_path) as local:
+        merge_snapshot_into(local, source_path)
+    with dm.library_connection(local_path) as local:
+        assert len(dc.list_collections(local)) == 1
+        assert dm.deck_detail(local, original["id"])["collection_id"] == local_group["id"]
+        assert local.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_collection_import_api_validates_destination_before_saving(tmp_path):
+    path = tmp_path / "api.db"
+    code, group = api.handle_post("/api/deck-manager/collections/save", {"name": "Green"}, path)
+    assert code == 200
+    code, saved = api.handle_post(
+        "/api/deck-manager/import", {"text": TEXT, "collection_id": group["id"]}, path
+    )
+    assert code == 200 and saved["collection_id"] == group["id"]
+    code, _ = api.handle_post(
+        "/api/deck-manager/import", {"text": TEXT, "collection_id": "missing"}, path
+    )
+    assert code == 400
+    code, library = api.handle_get("/api/deck-manager", {}, path)
+    assert code == 200 and len(library["decks"]) == 1
+    assert library["collections"][0]["id"] == group["id"]
+    code, _ = api.handle_post("/api/deck-manager/collections/remove", {"id": group["id"]}, path)
+    assert code == 400
+
+
+def test_gameplay_reset_preserves_collections_and_membership(tmp_path):
+    from mtga_tracker import deck_collections as dc
+    from mtga_tracker.dashboard import reset_database
+
+    path = tmp_path / "reset.db"
+    with dm.library_connection(path) as conn:
+        group = dc.save_collection(conn, "Control")
+        saved = dm.save_deck(conn, dm.parse_import(TEXT), collection_id=group["id"])
+    reset_database(path)
+    with dm.library_connection(path) as conn:
+        assert dc.list_collections(conn)[0]["id"] == group["id"]
+        assert dm.deck_detail(conn, saved["id"])["collection_id"] == group["id"]
+
+
+def test_saving_an_edited_revision_retains_membership_until_explicit_destination(conn):
+    from mtga_tracker import deck_collections as dc
+
+    group = dc.save_collection(conn, "Control")
+    saved = dm.save_deck(conn, dm.parse_import(TEXT), collection_id=group["id"])
+    dm.save_deck(conn, dm.parse_import(TEXT.replace("4 Forest", "5 Forest")), deck_id=saved["id"])
+    assert dm.deck_detail(conn, saved["id"])["collection_id"] == group["id"]
+    dm.save_deck(conn, dm.parse_import(TEXT), deck_id=saved["id"], assign_collection=True)
+    assert dm.deck_detail(conn, saved["id"])["collection_id"] is None

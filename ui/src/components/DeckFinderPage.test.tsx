@@ -5,10 +5,10 @@ import {
   hydrateDeckFinderDeck, startDeckFinderFetch,
   type DeckFinderDeck, type DeckFinderJobStatus, type DeckFinderProvider, type DeckFinderView,
 } from '../api';
-import { importManagedDeck, addDeckToArena, fetchNativeDeckStatus, fetchNativeDeckJob } from '../deckManagerApi';
+import { fetchDeckLibrary, importManagedDeck, addDeckToArena, fetchNativeDeckStatus, fetchNativeDeckJob } from '../deckManagerApi';
 import { DeckFinderPage } from './DeckFinderPage';
 
-vi.mock('../deckManagerApi', () => ({ importManagedDeck: vi.fn(), addDeckToArena: vi.fn(), fetchNativeDeckStatus: vi.fn(), fetchNativeDeckJob: vi.fn() }));
+vi.mock('../deckManagerApi', () => ({ fetchDeckLibrary: vi.fn().mockResolvedValue({ collections: [], decks: [] }), importManagedDeck: vi.fn(), addDeckToArena: vi.fn(), fetchNativeDeckStatus: vi.fn(), fetchNativeDeckJob: vi.fn() }));
 
 vi.mock('../api', () => ({
   fetchDeckFinderJob: vi.fn(), fetchDeckFinderProviders: vi.fn(),
@@ -43,6 +43,7 @@ const deck: DeckFinderDeck = {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.mocked(fetchDeckLibrary).mockResolvedValue({ collections: [], decks: [], capabilities: { arena_transfers: false, native_section: false, capacity: null, message: '' } });
   vi.mocked(fetchDeckFinderProviders).mockResolvedValue([youtube]);
   vi.mocked(fetchDeckFinderSources).mockResolvedValue(sources);
   vi.mocked(startDeckFinderFetch).mockResolvedValue({ done: true, decks: [deck], view });
@@ -143,7 +144,7 @@ it('saves a selected Deck Finder list to the general library', async () => {
   await chooseCreator();
   fireEvent.click(await screen.findByRole('button', { name: deck.name }));
   fireEvent.click(screen.getByRole('button', { name: 'Save to collection' }));
-  await waitFor(() => expect(importManagedDeck).toHaveBeenCalledWith(deck.deck_text, deck.name, 'Standard'));
+  await waitFor(() => expect(importManagedDeck).toHaveBeenCalledWith(deck.deck_text, deck.name, 'Standard', undefined, null));
   expect(await screen.findByRole('link', { name: 'Open Deck Manager' })).toHaveAttribute('href', '#/deck-manager');
 });
 
@@ -168,4 +169,22 @@ it.each([{ in_game: true }, { limit_reached: true }])('blocks direct adds while 
   fireEvent.click(await screen.findByRole('button', { name: deck.name }));
   expect(await screen.findByRole('button', { name: 'Add to Arena' })).toBeDisabled();
   expect(addDeckToArena).not.toHaveBeenCalled();
+});
+
+it('adds a previously saved deck using the same library entry and selected collection', async () => {
+  vi.mocked(fetchDeckLibrary).mockResolvedValue({ collections: [{ id: 'green', name: 'Green' }], decks: [], capabilities: { arena_transfers: false, native_section: false, capacity: null, message: '' } });
+  vi.mocked(fetchNativeDeckStatus).mockResolvedValue({ available: true, connected: false, busy: false, decks: [], limit: 100, limit_reached: false, deck_screen_open: true, message: '' });
+  vi.mocked(importManagedDeck).mockResolvedValue({ id: 'saved-id' } as Awaited<ReturnType<typeof importManagedDeck>>);
+  vi.mocked(addDeckToArena).mockResolvedValue({ job_id: 'add-job' });
+  vi.mocked(fetchNativeDeckJob).mockResolvedValue({ state: 'running', detail: 'Preparing…', progress: { completed: 0, total: 1 } });
+  render(<DeckFinderPage />);
+  await chooseCreator();
+  fireEvent.click(await screen.findByRole('button', { name: deck.name }));
+  fireEvent.change(screen.getByRole('combobox', { name: 'Save deck to collection' }), { target: { value: 'green' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save to collection' }));
+  await screen.findByText('Deck saved.');
+  expect(importManagedDeck).toHaveBeenCalledWith(deck.deck_text, deck.name, 'Standard', undefined, 'green');
+  fireEvent.click(screen.getByRole('button', { name: 'Add to Arena' }));
+  await waitFor(() => expect(addDeckToArena).toHaveBeenCalledExactlyOnceWith(deck.deck_text, deck.name, 'Standard', 'saved-id', 'green'));
+  expect(await screen.findByRole('progressbar')).toHaveAttribute('value', '0');
 });

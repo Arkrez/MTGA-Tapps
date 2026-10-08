@@ -48,7 +48,10 @@ connection before attachment, and native writes also require the live Decks scre
   check; the complete direct-add create step still needs user-selected live testing.
 
 Jobs run in the background, one transfer at a time, and stop on the first failure.
-Completed transfers stay completed. The dashboard monitors progress, refreshes
+The progress bar uses completed preparation, request and verification steps, reaching
+100% only after verification. Bulk backups count reads and verified disk saves.
+Connecting uses an indeterminate bar.
+Completed transfers stay completed. The dashboard shows a transfer progress bar, refreshes
 the library/roster afterward and can resume monitoring a running job after a page
 reload. Leaving Decks, changing accounts or losing the connection prevents further
 writes. The tracker/game is never launched, stopped or restarted by this adapter.
@@ -60,7 +63,11 @@ below; it is not silently substituted for an exact native restore. Editing a nat
 revision's cards/name/format without rebuilding its native model prevents restoring
 stale data; select its original native revision or back up the edited deck from Arena.
 
-Every move/restore has a committed SQLite intent before the native write. After an
+Every move/restore has a committed SQLite intent before the native write. Rebuilding
+and checking a restored deck is a separate preparation step; failures there cancel
+locally because no create call was dispatched. Snapshot comparisons ignore object
+key order while retaining all values, array order and the observed empty-description
+equivalence. After an
 interruption, use **Reconcile transfers**. This only reads Arena and checks the
 recorded identities/data; it never repeats create/delete. Confirmed outcomes are
 completed locally. An uncommitted removal is cancelled with both copies retained.
@@ -95,7 +102,9 @@ height and artwork size. Arena uses the matching saved artwork when available,
 or its roster's selected printing ID; the shared loader retains its fallback.
 Bottom-right colored pills identify **In Arena**, **Collection only**, **Not
 checked** or **In Trash**, and the backup type. Arena shows **Backed up** when a
-full native backup is present in Saved, otherwise **Not backed up**. Click a pill
+full native backup is present in Saved, otherwise **Not backed up**. **Full backup**
+means printing IDs and native metadata were saved; it does not mean the deck is in
+Arena. **Text backup** describes a saved text list. Click a pill
 or use the status selector to filter, alongside the existing text search.
 Click a saved tile to open a dialog with
 the deck’s sections, notes and saved revisions. **Save an edited revision…**
@@ -146,6 +155,20 @@ the selected real deck after backing it up, and restore recreates it from the te
 library. Keep that library for as long as you need its backups. The library remains
 usable with Arena closed; connecting and transfers require Decks outside a match.
 
+## Collections
+
+Use **New collection** to create a named group, such as Control, Brawl or Blue decks.
+Groups are collapsible; search and status filters work across them. Each saved deck
+belongs to one collection, with existing and unassigned decks in **Unsorted**.
+Select decks, choose a destination and click **Move decks**, or change **Collection**
+in a deck's dialog. Imports and Deck Finder can also choose a destination.
+
+The pencil renames a collection. Its remove button asks for confirmation, then moves
+all members to Unsorted, including decks currently in Trash. It retains every deck
+and revision and makes no Arena request. Collections remain usable with Arena closed.
+Saving a Deck Finder list and then adding it to Arena upgrades the same entry with
+a full native revision, preserving its collection, notes and earlier text revision.
+
 ## Restore and export
 
 For revisions without native backup data, the yellow **Copy for Arena** button
@@ -184,6 +207,8 @@ Migration 33 adds `managed_deck_transfers`, the durable native journal, with one
 pending operation per account. Native backups record authenticated bindings and
 verified presence observations. Full backups carry the journal; merging skips
 transfers and Arena bindings, since another machine's operation cannot be replayed.
+Migration 34 adds `managed_deck_collections` and nullable `managed_decks.collection_id`.
+Backup merge maps collection membership and combines collections with equal names.
 Gameplay reset preserves these tables. SQLite uses full synchronization for native
 archive and journal commits; no source deck is removed before archive read-back.
 

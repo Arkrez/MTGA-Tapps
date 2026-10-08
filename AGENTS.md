@@ -173,6 +173,14 @@ Primary code paths:
   Check the active-game row before attachment and between transfers, and check the
   live Decks controller, same native service and authenticated account for writes.
   Only AccountInformation.AccountID is read/hashed; never read credentials.
+  Migration 34 adds `managed_deck_collections` and nullable `managed_decks.collection_id`.
+  Saved decks belong to one named collection or Unsorted. Collection removal moves
+  all members (including Trash) to Unsorted; it never deletes decks/revisions.
+  `deck_collections.py` owns atomic moves and collection merge mapping; backup merge
+  combines equal collection names and gameplay reset preserves memberships.
+  Deck Finder passes the saved entry ID to native add so its full native revision
+  upgrades the same entry, retaining notes, collection and earlier text revisions.
+  Jobs expose verified step counts for progress bars; connecting stays indeterminate.
   Migration 33 adds `managed_deck_transfers` with one pending intent per account.
   Commit/read back exact native archives before any removal; write intents commit
   before single native calls. Interrupted outcomes stop; reconciliation is read-only,
@@ -180,7 +188,11 @@ Primary code paths:
   permanent deletion. Full backups carry journals; merge skips journals/bindings.
   Use all four piles and explicit native deserialization types; preserve Int64
   model JSON as text and exclude computed summary setters. Source/restore comparison
-  permits only null/empty-description equivalence. Native revisions with edited
+  ignores JSON object-key order and permits only null/empty-description equivalence;
+  array order and all values remain checked. Native preparation is a separate RPC
+  before write intent; preparation errors cancel locally with no create dispatched.
+  A dispatched timeout remains uncertain and cannot be cancelled from absence alone.
+  Native revisions with edited
   lists/name/format cannot restore stale model data. Native portable backups retain
   the hashed account provenance. No queue, crafting or gameplay calls are allowed.
   Tests: `tests/test_deck_transfers.py` and `node --test tests/native_decks.test.cjs`

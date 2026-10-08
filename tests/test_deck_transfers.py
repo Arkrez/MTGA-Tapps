@@ -79,6 +79,14 @@ class Arena:
         if self.after_write:
             self.after_write()
 
+    def prepare_create(self, saved, identity):
+        self.prepared = (saved, identity)
+
+    def create_prepared(self, identity):
+        saved, prepared_id = self.prepared
+        assert prepared_id == identity
+        return self.create(saved, identity)
+
     def create(self, saved, identity):
         self.calls.append("create")
         restored = copy.deepcopy(saved["source_snapshot"])
@@ -332,7 +340,7 @@ def test_background_bulk_backup_reads_actual_roster_without_deletes(tmp_path, mo
     path = tmp_path / "library.db"
     result = api.execute(path, "backup", [], str(uuid.uuid4()), lambda _: None)
     assert result["count"] == 2
-    assert arena.calls == ["archive"]
+    assert arena.calls == ["archive", "archive"]
     with dm.library_connection(path) as conn:
         assert len(dm.list_decks(conn)) == 2
         assert conn.execute("SELECT COUNT(*) FROM games").fetchone()[0] == 0
@@ -471,3 +479,79 @@ def test_public_arena_roster_exposes_art_without_another_native_call():
     del arena.source["summary"]["DeckArtId"]
     assert api._public_roster(arena.roster())["decks"][0]["art_card_id"] == 123
     assert arena.calls == []
+
+
+def test_failed_preparation_is_cancelled_without_creation_and_new_request_can_proceed(conn):
+    arena = Arena()
+    store(conn, arena)
+    prepare = arena.prepare_create
+
+    def failing(archive, arena_id):
+        assert dt.pending(conn)[0]["phase"] == "prepared"
+        raise dm.DeckManagerError("Rebuilt deck differs")
+
+    arena.prepare_create = failing
+    with pytest.raises(dm.DeckManagerError, match="Rebuilt"):
+        restore(conn, arena)
+    assert dt.pending(conn) == []
+    assert arena.calls.count("create") == 0
+    assert len(saved(conn)["revisions"]) == 1
+    assert (
+        conn.execute("SELECT phase FROM managed_deck_transfers WHERE action='restore'").fetchone()[
+            0
+        ]
+        == "cancelled"
+    )
+    arena.prepare_create = prepare
+    restore(conn, arena)
+    assert arena.calls.count("create") == 1
+
+
+def test_finder_add_upgrades_saved_entry_and_preserves_collection_notes_and_revision(conn):
+    from mtga_tracker import deck_collections as dc
+
+    arena = imported_arena()
+    collection = dc.save_collection(conn, "Green")
+    original = dm.save_deck(
+        conn,
+        dm.parse_import("Deck\n4 Forest", "Finder deck", "Standard"),
+        collection_id=collection["id"],
+    )
+    dm.update_metadata(conn, original["id"], {"notes": "Keep this note"})
+    dt.add_import(
+        conn,
+        arena,
+        {
+            "text": "Deck\n4 Forest",
+            "name": "Finder deck",
+            "format_name": "Standard",
+            "saved_deck_id": original["id"],
+        },
+        str(uuid.uuid4()),
+        arena.roster(),
+        lambda _: "Forest",
+    )
+    assert len(dm.list_decks(conn)) == 1
+    upgraded = dm.deck_detail(conn, original["id"])
+    assert upgraded["notes"] == "Keep this note"
+    assert upgraded["collection_id"] == collection["id"]
+    assert len(upgraded["revisions"]) == 2
+    assert na.revision_archive(upgraded["deck"])
+
+
+def test_backup_progress_counts_reads_and_verified_commits(tmp_path, monkeypatch):
+    arena = Arena()
+    other = deck()
+    arena.decks[other["arena_id"]] = other
+
+    @contextmanager
+    def attach():
+        yield arena
+
+    monkeypatch.setattr(api.nb, "attach", attach)
+    monkeypatch.setattr(api, "_resolve_names", lambda: lambda _: "Forest")
+    progress = []
+    api.execute(tmp_path / "progress.db", "backup", [], str(uuid.uuid4()), progress.append)
+    steps = [p for p in progress if isinstance(p, dict)]
+    assert [p["completed"] for p in steps] == [0, 1, 2, 3, 4]
+    assert all(p["total"] == 4 for p in steps)

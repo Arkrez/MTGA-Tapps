@@ -18,7 +18,9 @@ def persist_managed_deck(
     account_key=None,
     arena_deck_id=None,
     observed_at=None,
-    create=False
+    create=False,
+    collection_id=None,
+    assign_collection=False,
 ):
     """Commit a verified immutable snapshot before any later Arena operation."""
     from .deck_manager import content_hash, deck_detail, encoded, now
@@ -44,6 +46,10 @@ def persist_managed_deck(
     digest = content_hash(deck)
     revision_id = str(uuid.uuid4())
     with conn:
+        conn.execute("UPDATE managed_decks SET id=id WHERE id=?", (deck_id,))
+        from .deck_collections import validate_destination
+
+        validate_destination(conn, collection_id)
         duplicate = conn.execute(
             "SELECT id FROM managed_deck_revisions WHERE deck_id = ? AND content_hash = ?",
             (deck_id, digest),
@@ -62,7 +68,7 @@ def persist_managed_deck(
                 )
         else:
             conn.execute(
-                "INSERT INTO managed_decks(id, account_key, name, format_name, current_revision_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO managed_decks(id, account_key, name, format_name, current_revision_id, created_at, updated_at, collection_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     deck_id,
                     account_key,
@@ -71,7 +77,13 @@ def persist_managed_deck(
                     revision_id,
                     stamp,
                     stamp,
+                    collection_id,
                 ),
+            )
+        if existing and assign_collection:
+            conn.execute(
+                "UPDATE managed_decks SET collection_id=?,updated_at=? WHERE id=?",
+                (collection_id, stamp, deck_id),
             )
         if not duplicate:
             conn.execute(
@@ -145,9 +157,7 @@ def split_card_half_map(conn: sqlite3.Connection) -> Dict[str, str]:
     names from decklists and visible draws.
     """
     mapping: Dict[str, str] = {}
-    for (name,) in conn.execute(
-        "SELECT name FROM cards WHERE name LIKE '% // %'"
-    ):
+    for (name,) in conn.execute("SELECT name FROM cards WHERE name LIKE '% // %'"):
         full = analytics_card_base_name(name)
         if SPLIT_NAME_SEPARATOR not in full:
             continue
@@ -164,7 +174,7 @@ def canonical_split_display(display_name: str, half_map: Dict[str, str]) -> str:
     full = half_map.get(base)
     if not full or base == full:
         return display_name
-    suffix = display_name[len(base):] if display_name.startswith(base) else ""
+    suffix = display_name[len(base) :] if display_name.startswith(base) else ""
     return f"{full}{suffix}"
 
 

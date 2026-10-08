@@ -2,13 +2,13 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   fetchDeckLibrary, fetchManagedDeck, importManagedDeck, updateManagedDeck, exportManagedDeck, deleteManagedDeck, removeManagedDecks,
-  fetchNativeDeckStatus, startNativeDeckJob, fetchNativeDeckJob,
+  saveDeckCollection, removeDeckCollection, moveDecksToCollection, fetchNativeDeckStatus, startNativeDeckJob, fetchNativeDeckJob,
   type ManagedDeck, type ManagedDeckDetail,
 } from '../deckManagerApi';
 import { DeckManagerPage } from './DeckManagerPage';
 
 vi.mock('../deckManagerApi', () => ({
-  fetchDeckLibrary: vi.fn(), fetchManagedDeck: vi.fn(), importManagedDeck: vi.fn(),
+  saveDeckCollection: vi.fn(), removeDeckCollection: vi.fn(), moveDecksToCollection: vi.fn(), fetchDeckLibrary: vi.fn(), fetchManagedDeck: vi.fn(), importManagedDeck: vi.fn(),
   updateManagedDeck: vi.fn(), exportManagedDeck: vi.fn(), captureArenaDecks: vi.fn(), deleteManagedDeck: vi.fn(), removeManagedDecks: vi.fn(),
   fetchNativeDeckStatus: vi.fn(), startNativeDeckJob: vi.fn(), fetchNativeDeckJob: vi.fn(),
 }));
@@ -129,7 +129,7 @@ describe('Deck Manager', () => {
     const text = 'Commander\n1 Atraxa\n\nDeck\n4 Forest (DMU) 281';
     fireEvent.change(screen.getByLabelText('Decklist or backup'), { target: { value: text } });
     fireEvent.click(screen.getByRole('button', { name: 'Save deck' }));
-    await waitFor(() => expect(importManagedDeck).toHaveBeenCalledWith(text, 'Another deck', 'Historic Brawl', undefined));
+    await waitFor(() => expect(importManagedDeck).toHaveBeenCalledWith(text, 'Another deck', 'Historic Brawl', undefined, null));
   });
 
   it('copies the selected historical revision with its sections and printings', async () => {
@@ -314,7 +314,7 @@ it('edits a revision in a dialog bound to the opened deck', async () => {
   const text = 'Deck\n5 Forest';
   fireEvent.change(screen.getByLabelText('Decklist or backup'), { target: { value: text } });
   fireEvent.click(screen.getByRole('button', { name: 'Save revision' }));
-  await waitFor(() => expect(importManagedDeck).toHaveBeenCalledWith(text, saved.name, 'Standard', saved.id));
+  await waitFor(() => expect(importManagedDeck).toHaveBeenCalledWith(text, saved.name, 'Standard', saved.id, undefined));
   expect(await screen.findByRole('dialog', { name: saved.name })).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Close dialog' }));
   expect(tile).toHaveFocus();
@@ -412,4 +412,49 @@ it('filters saved presence and backup type through pills and clears hidden selec
   fireEvent.change(screen.getByRole('combobox', { name: 'Filter decks by status' }), { target: { value: 'text' } });
   expect(screen.getByRole('checkbox', { name: `Select ${saved.name}` })).toBeInTheDocument();
   expect(screen.queryByRole('checkbox', { name: `Select ${second.name}` })).not.toBeInTheDocument();
+});
+
+it('creates collections, collapses their decks and moves a selection to another collection', async () => {
+  const collection = { id: 'group-a', name: 'Control' };
+  vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [{ ...saved, collection_id: collection.id }], collections: [collection], capabilities });
+  vi.mocked(saveDeckCollection).mockResolvedValue({ id: 'group-b', name: 'Brawl' });
+  vi.mocked(moveDecksToCollection).mockResolvedValue({ ok: true, count: 1 });
+  render(<DeckManagerPage />);
+  const group = await screen.findByRole('region', { name: 'Control collection' });
+  const toggle = within(group).getByRole('button', { name: 'Control (1)' });
+  fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  expect(screen.queryByRole('checkbox', { name: `Select ${saved.name}` })).not.toBeInTheDocument();
+  fireEvent.click(toggle);
+  fireEvent.click(screen.getByRole('checkbox', { name: `Select ${saved.name}` }));
+  fireEvent.click(screen.getByRole('button', { name: 'Move decks' }));
+  await waitFor(() => expect(moveDecksToCollection).toHaveBeenCalledExactlyOnceWith([saved.id], null));
+  fireEvent.click(screen.getByRole('button', { name: 'New collection' }));
+  fireEvent.change(screen.getByLabelText('Collection name'), { target: { value: 'Brawl' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Create collection' }));
+  await waitFor(() => expect(saveDeckCollection).toHaveBeenCalledExactlyOnceWith('Brawl', undefined));
+});
+
+it('requires confirmation to remove a collection and explains that decks are retained', async () => {
+  const collection = { id: 'group-a', name: 'Control' };
+  vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [{ ...saved, collection_id: collection.id }], collections: [collection], capabilities });
+  vi.mocked(removeDeckCollection).mockResolvedValue({ ok: true, count: 1 });
+  render(<DeckManagerPage />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Remove Control collection' }));
+  const dialog = screen.getByRole('dialog', { name: 'Remove Control collection?' });
+  expect(dialog).toHaveTextContent('Unsorted');
+  expect(dialog).toHaveTextContent('saved revisions will be retained');
+  expect(removeDeckCollection).not.toHaveBeenCalled();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Remove collection' }));
+  await waitFor(() => expect(removeDeckCollection).toHaveBeenCalledExactlyOnceWith(collection.id));
+});
+
+it('shows verified transfer progress and leaves connecting progress indeterminate', async () => {
+  vi.mocked(fetchNativeDeckStatus).mockResolvedValue({ ...connected, active_job: 'running-job', busy: true });
+  vi.mocked(fetchNativeDeckJob).mockResolvedValue({ state: 'running', detail: 'Verified 1 of 4 transfers…', progress: { completed: 1, total: 4 } });
+  render(<DeckManagerPage />);
+  const bar = await screen.findByRole('progressbar', { name: 'Deck transfer progress' });
+  expect(bar).toHaveAttribute('max', '4');
+  expect(bar).toHaveAttribute('value', '1');
+  expect(screen.getByText('25%')).toBeInTheDocument();
 });

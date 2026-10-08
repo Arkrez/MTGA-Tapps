@@ -13,7 +13,7 @@ from . import native_deck_archive as na
 TERMINAL = ("complete", "cancelled")
 
 
-def add_import(conn, bridge, selection, request_id, report, resolve_name):
+def add_import(conn, bridge, selection, request_id, report, resolve_name, progress=None):
     """Prepare text with Arena's parser, reject dropped cards, then use journaled restore."""
     source_id = str(uuid.uuid5(uuid.UUID(request_id), "text-import-source"))
     bindings = conn.execute(
@@ -26,7 +26,7 @@ def add_import(conn, bridge, selection, request_id, report, resolve_name):
         if original != {key: selection[key] for key in ("text", "name", "format_name")}:
             raise dm.DeckManagerError("This import request ID already belongs to another decklist.")
         return transfer(
-            conn, bridge, "restore", {"id": bindings[0]}, request_id, report, resolve_name
+            conn, bridge, "restore", {"id": bindings[0]}, request_id, report, resolve_name, progress
         )
     if pending(conn, bridge.account_key):
         raise dm.DeckManagerError("Reconcile the interrupted transfer before adding another deck.")
@@ -59,18 +59,31 @@ def add_import(conn, bridge, selection, request_id, report, resolve_name):
             "Arena’s importer changed the card list, possibly because cards are missing. "
             "No deck was created. Use Arena’s text import to review missing cards."
         )
+    saved_id = selection.get("saved_deck_id")
+    if saved_id:
+        previous = dm.deck_detail(conn, saved_id)
+        if previous["trashed_at"] or quantities(previous["deck"]["cards"]) != quantities(
+            expected["cards"]
+        ):
+            raise dm.DeckManagerError("The saved deck changed. Refresh before adding it to Arena.")
+        if previous["account_key"] not in (None, bridge.account_key):
+            raise dm.DeckManagerError("This saved deck belongs to another Arena account.")
     saved = persist_archive(
         conn,
         archive,
         bridge.account_key,
         resolve_name,
+        deck_id=saved_id,
+        collection_id=selection.get("collection_id"),
         metadata={
             "native_import_request": {
                 key: selection[key] for key in ("text", "name", "format_name")
             }
         },
     )
-    return transfer(conn, bridge, "restore", {"id": saved["id"]}, request_id, report, resolve_name)
+    return transfer(
+        conn, bridge, "restore", {"id": saved["id"]}, request_id, report, resolve_name, progress
+    )
 
 
 def journal_phase(conn, transfer_id, phase, error=None):
@@ -115,7 +128,9 @@ def check_remaining(before, after, removed=None):
         )
 
 
-def persist_archive(conn, archive, account, resolve_name=None, *, metadata=None):
+def persist_archive(
+    conn, archive, account, resolve_name=None, *, metadata=None, deck_id=None, collection_id=None
+):
     deck = na.document(archive, resolve_name)
     deck["metadata"]["native_account_key"] = account
     deck["metadata"].update(metadata or {})
@@ -123,6 +138,8 @@ def persist_archive(conn, archive, account, resolve_name=None, *, metadata=None)
     saved = dm.save_deck(
         conn,
         deck,
+        deck_id=deck_id,
+        collection_id=collection_id,
         account_key=account,
         arena_deck_id=archive["source_snapshot"]["arena_id"],
         observed_at=dm.now(),
@@ -185,8 +202,9 @@ def begin(conn, transfer_id, account, saved, arena_id, action, baseline):
         )
 
 
-def transfer(conn, bridge, action, selection, request_id, report, resolve_name=None):
+def transfer(conn, bridge, action, selection, request_id, report, resolve_name=None, progress=None):
     """One deck at a time. Persist write intent before calling Arena exactly once."""
+    notify = progress or (lambda _step, _detail: None)
     account = bridge.account_key
     transfer_id = str(uuid.uuid5(uuid.UUID(request_id), action + ":" + selection["id"]))
     existing = conn.execute(
@@ -257,16 +275,30 @@ def transfer(conn, bridge, action, selection, request_id, report, resolve_name=N
     else:
         raise dm.DeckManagerError("Unknown native transfer.")
     begin(conn, transfer_id, account, saved, arena_id, action, baseline)
+    dispatched = False
     try:
+        if action == "restore":
+            notify(0, "Rebuilding the saved deck in Arena…")
+            bridge.prepare_create(archive, arena_id)
+        notify(
+            1,
+            (
+                "Removing the verified backup from Arena…"
+                if action == "store"
+                else "Creating the deck in Arena…"
+            ),
+        )
         journal_phase(conn, transfer_id, "write_started")
+        dispatched = True
         if action == "store":
             bridge.remove(archive["source_snapshot"])
         else:
-            actual = bridge.create(archive, arena_id)
+            actual = bridge.create_prepared(arena_id)
             if not na.equivalent(actual, archive["source_snapshot"], restored_id=arena_id):
                 raise dm.DeckManagerError(
                     "Arena’s restored deck differs from the backup. It was retained for review."
                 )
+        notify(2, "Checking Arena’s refreshed deck list…")
         journal_phase(conn, transfer_id, "verifying")
         after = bridge.roster()
         ids = roster_ids(after)
@@ -286,13 +318,18 @@ def transfer(conn, bridge, action, selection, request_id, report, resolve_name=N
             presence = "present"
         set_presence(conn, account, arena_id, saved["id"], presence)
         journal_phase(conn, transfer_id, "complete")
+        notify(3, "Transfer verified.")
         return after
     except Exception:
         journal_phase(
             conn,
             transfer_id,
-            "uncertain",
-            "The native outcome needs reconciliation. No request was repeated.",
+            "uncertain" if dispatched else "cancelled",
+            (
+                "The native outcome needs reconciliation. No request was repeated."
+                if dispatched
+                else "Preparation failed before any Arena write. The saved deck remains."
+            ),
         )
         raise
 

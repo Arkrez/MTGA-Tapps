@@ -4,6 +4,13 @@
 
 ### Features
 
+- Deck Manager supports named collapsible collections, renaming, bulk membership
+  moves and destination selection in imports/Deck Finder. Removing a collection
+  asks for confirmation and retains its decks in Unsorted. Migration 34 preserves
+  collection membership through full backups, merge and gameplay reset.
+- Deck transfers show progress from preparation through verified completion.
+  “Full backup” describes saved native data separately from “In Arena” location.
+
 - Saved and Arena deck tiles share artwork sizing and fixed tile heights. Colored
   bottom-right location/backup pills can be filtered by clicking or through the
   status selector. Arena artwork reuses library images or the roster's printing ID.
@@ -63,6 +70,13 @@
   loading message and Refresh for fresh lists.
 
 ### Fixes
+
+- Native restore compares snapshot values independently of JSON key order. Saving
+  a full backup no longer causes a false reconstruction mismatch. Preparation now
+  runs before write intent; failures before creation cancel without blocking future
+  transfers. Uncertain dispatched requests still require read-only reconciliation.
+- Deck Finder's Save to collection followed by Add to Arena upgrades the same saved
+  entry, retaining notes, collection and text revision instead of creating a duplicate.
 
 - Deck Finder's site picker loads metadata without importing scraper libraries
   or initializing HTTP clients. Scrapers load when a site is first used.

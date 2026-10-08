@@ -721,6 +721,7 @@ class AnalyticsStore:
             (31, AnalyticsStore._migrate_v31_repair_event_formats),
             (32, AnalyticsStore._migrate_v32_managed_decks),
             (33, AnalyticsStore._migrate_v33_native_deck_transfers),
+            (34, AnalyticsStore._migrate_v34_deck_collections),
         )
         ran: list = []
         for version, migrate in migrations:
@@ -1435,6 +1436,18 @@ class AnalyticsStore:
                 ON managed_deck_transfers(account_key)
                 WHERE phase NOT IN ('complete','cancelled');
         """)
+
+    @staticmethod
+    def _migrate_v34_deck_collections(conn: sqlite3.Connection) -> None:
+        conn.execute("CREATE TABLE IF NOT EXISTS managed_deck_collections ("
+                     "id TEXT PRIMARY KEY,name TEXT NOT NULL COLLATE NOCASE UNIQUE,"
+                     "created_at TEXT NOT NULL,updated_at TEXT NOT NULL)")
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(managed_decks)")}
+        if "collection_id" not in columns:
+            conn.execute("ALTER TABLE managed_decks ADD COLUMN collection_id TEXT "
+                         "REFERENCES managed_deck_collections(id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS managed_decks_collection "
+                     "ON managed_decks(collection_id)")
 
     @staticmethod
     def _migrate_v15_purge_welcome_deck_duels(conn: sqlite3.Connection) -> None:

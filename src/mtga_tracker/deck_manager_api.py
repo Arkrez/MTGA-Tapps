@@ -7,6 +7,7 @@ import sqlite3
 from pathlib import Path
 
 from . import deck_manager as dm
+from . import deck_collections as dc
 
 
 def _read_connection(path):
@@ -55,6 +56,7 @@ def handle_get(path, query, db_path):
             available, message = deck_native_api.nb.availability()
             return 200, {
                 "decks": decks,
+                "collections": dc.list_collections(conn) if conn else [],
                 "capabilities": {
                     "arena_transfers": available,
                     "native_section": False,
@@ -115,12 +117,27 @@ def handle_post(path, payload, db_path):
         "/api/deck-manager/delete",
         "/api/deck-manager/remove-selected",
         "/api/deck-manager/capture",
+        "/api/deck-manager/collections/save",
+        "/api/deck-manager/collections/remove",
+        "/api/deck-manager/collections/move",
     ):
         return None
     if not isinstance(payload, dict):
         return 400, {"error": "Expected a JSON object."}
     conn = None
     try:
+        if "/collections/" in path:
+            conn = dm.library_connection(db_path)
+            if path.endswith("/save"):
+                return 200, dc.save_collection(conn, payload.get("name"), payload.get("id"))
+            if path.endswith("/remove"):
+                if payload.get("confirm") != "REMOVE":
+                    raise dm.DeckManagerError("Confirm removal of this collection.")
+                return 200, {"ok": True, "count": dc.remove_collection(conn, payload.get("id"))}
+            return 200, {
+                "ok": True,
+                "count": dc.move_decks(conn, payload.get("ids"), payload.get("collection_id")),
+            }
         if path.endswith("/remove-selected"):
             action = payload.get("action")
             if action not in ("trash", "delete") or payload.get("confirm") != action.upper():
@@ -148,7 +165,14 @@ def handle_post(path, payload, db_path):
                     raise dm.DeckManagerError(f"Invalid {field}.")
             deck = dm.import_document(text, payload.get("name"), payload.get("format_name") or "")
             conn = dm.library_connection(db_path)
-            return 200, dm.save_deck(conn, deck, deck_id=payload.get("deck_id"))
+            dc.validate_destination(conn, payload.get("collection_id"))
+            return 200, dm.save_deck(
+                conn,
+                deck,
+                deck_id=payload.get("deck_id"),
+                collection_id=payload.get("collection_id"),
+                assign_collection="collection_id" in payload,
+            )
         if path.endswith("/update"):
             conn = dm.library_connection(db_path)
             deck_id = payload.get("id")

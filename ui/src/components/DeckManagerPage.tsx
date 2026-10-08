@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Archive, ArrowDownToLine, ArrowUpFromLine, Copy, Download, FolderOpen, Plus, RefreshCw, Trash2, Undo2, X } from 'lucide-react';
+import { ChevronDown, Pencil, Archive, ArrowDownToLine, ArrowUpFromLine, Copy, Download, FolderOpen, Plus, RefreshCw, Trash2, Undo2, X } from 'lucide-react';
 import {
+  saveDeckCollection, removeDeckCollection, moveDecksToCollection, type DeckCollection, type NativeDeckJob,
   captureArenaDecks, exportManagedDeck, fetchDeckLibrary, fetchManagedDeck,
   importManagedDeck, updateManagedDeck, deleteManagedDeck, removeManagedDecks, type DeckLibrary, type ManagedDeckDetail,
   fetchNativeDeckStatus, startNativeDeckJob, fetchNativeDeckJob, type NativeDeckStatus, type NativeDeckAction, type ManagedDeck,
@@ -8,6 +9,7 @@ import {
 import { formatDateTime } from '../format';
 import { CardLink } from './CardLink';
 import { DeckVisual } from './DeckVisual';
+import { DeckTransferProgress } from './DeckTransferProgress';
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Deck Manager could not complete this action.';
@@ -16,14 +18,14 @@ function errorMessage(error: unknown) {
 const sourceLabels: Record<string, string> = {
   import: 'Imported backup', arena_save_request: 'Captured save request',
   arena_event_submission: 'Captured submitted list',
-  arena_native: 'Arena backup',
+  arena_native: 'Full backup',
 };
 
-type ModalView = 'deck' | 'import' | 'revision' | 'delete' | 'trash' | 'store' | 'bulk-trash' | 'bulk-delete';
+type ModalView = 'deck' | 'import' | 'revision' | 'delete' | 'trash' | 'store' | 'bulk-trash' | 'bulk-delete' | 'collection' | 'remove-collection';
 
 const statusLabels = {
   arena: 'In Arena', collection: 'Collection only', unknown: 'Not checked', trash: 'In Trash',
-  native: 'Arena backup', text: 'Text backup', partial: 'Captured list',
+  native: 'Full backup', text: 'Text backup', partial: 'Captured list',
   backed: 'Backed up', unbacked: 'Not backed up',
 };
 type DeckStatus = keyof typeof statusLabels;
@@ -95,6 +97,12 @@ export function DeckManagerPage() {
   const [native, setNative] = useState<NativeDeckStatus | null>(null);
   const [nativeJob, setNativeJob] = useState<string | null>(null);
   const [nativeProgress, setNativeProgress] = useState('');
+  const [transferProgress, setTransferProgress] = useState<NativeDeckJob['progress']>();
+  const [collapsed, setCollapsed] = useState<string[]>([]);
+  const [destination, setDestination] = useState('');
+  const [importCollection, setImportCollection] = useState('');
+  const [collectionName, setCollectionName] = useState('');
+  const [editingCollection, setEditingCollection] = useState<DeckCollection | null>(null);
   const [checked, setChecked] = useState<string[]>([]);
   const busy = localBusy || Boolean(nativeJob) || Boolean(native?.busy);
   const [notice, setNotice] = useState('');
@@ -171,7 +179,7 @@ export function DeckManagerPage() {
       try {
         const job = await fetchNativeDeckJob(nativeJob!, controller.signal);
         if (controller.signal.aborted) return;
-        setNativeProgress(job.detail);
+        setNativeProgress(job.detail); setTransferProgress(job.progress);
         if (job.state === 'running') { timer = setTimeout(() => void poll(), 700); return; }
         setNativeJob(null); setNativeProgress('');
         if (job.state === 'error') { setError(job.detail); setChecked([]); setModal((value) => value === 'store' ? null : value); }
@@ -218,12 +226,12 @@ export function DeckManagerPage() {
     if (native?.in_game) throw new Error('Finish your current game before connecting Deck Manager to Arena.');
     const decks = ids.map((id) => ({ id, ...(kind === 'restore' && activeDetail?.id === id ? { revision: activeDetail.revision_id } : {}) }));
     const job = await startNativeDeckJob(kind, decks);
-    setNativeJob(job.job_id); setNativeProgress('Connecting to Arena…');
+    setNativeJob(job.job_id); setNativeProgress('Connecting to Arena…'); setTransferProgress(undefined);
   }
 
   function changeView(next: 'saved' | 'trash' | 'arena') { setView(next); setChecked([]); setStatusFilter('all'); setError(''); setNotice(''); }
 
-  function filterByStatus(status: DeckStatus | 'all') { setStatusFilter(status); setChecked([]); }
+  function filterByStatus(status: DeckStatus | 'all') { setStatusFilter(status); setChecked([]); setCollapsed([]); }
 
   function statusPills(statuses: DeckStatus[]) {
     return <div className="deck-manager-status-pills">{statuses.map((status) =>
@@ -259,7 +267,7 @@ export function DeckManagerPage() {
   }
 
   async function saveImport() {
-    const saved = await importManagedDeck(text, name, format, editingRevision ? selected ?? undefined : undefined);
+    const saved = await importManagedDeck(text, name, format, editingRevision ? selected ?? undefined : undefined, editingRevision ? undefined : importCollection || null);
     setRevision(undefined); setText(''); setName(''); setFormat('');
     if (editingRevision) { setSelected(saved.id); setModal('deck'); }
     else { setSelected(null); setModal(null); setView('saved'); setQuery(''); }
@@ -283,10 +291,43 @@ export function DeckManagerPage() {
     }
   }
 
+  const collectionGroups = [...(library?.collections ?? []), { id: '', name: 'Unsorted' }];
+
+  function openCollection(collection: DeckCollection | null = null) {
+    setModalOpener(document.activeElement instanceof HTMLElement ? document.activeElement : null);
+    setEditingCollection(collection); setCollectionName(collection?.name ?? '');
+    setError(''); setNotice(''); setModal('collection');
+  }
+
+  function collectionOptions() {
+    return <><option value="">Unsorted</option>{library?.collections?.map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</>;
+  }
+
+  function savedTile(deck: ManagedDeck) {
+    return (
+          <div className="deck-manager-tile-wrapper" key={deck.id}>
+          <label className="deck-manager-tile-select" title={`Select ${deck.name}`} onClick={(event) => event.stopPropagation()}>
+            <input className="deck-manager-tile-check" type="checkbox" aria-label={`Select ${deck.name}`} checked={checked.includes(deck.id)} disabled={busy} onChange={() => toggleChecked(deck.id)} />
+          </label>
+          <button key={deck.id} className="deck-manager-tile" onClick={() => choose(deck.id)} aria-haspopup="dialog" title={deck.name}>
+            <DeckVisual deckName={deck.name} visual={deckArt(deck.art_card)} />
+            <span className="deck-manager-tile-text">
+              <strong>{deck.name}</strong>
+              <small>{deck.format_name || 'Format not specified'} · {deck.main_count} cards</small>
+              <small>Updated: <time dateTime={deck.updated_at} title={formatDateTime(deck.updated_at)}>{new Date(deck.updated_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</time></small>
+            </span>
+          </button>
+          {statusPills(savedStatuses(deck))}
+          </div>
+
+    );
+  }
+
+
   const feedback = <>
     {error ? <p role="alert" className="deck-manager-error">{error}</p> : null}
     {notice ? <p role="status" className="deck-manager-notice">{notice}</p> : null}
-    {nativeProgress ? <p role="status" className="deck-manager-notice">{nativeProgress}</p> : null}
+    {nativeProgress ? <DeckTransferProgress detail={nativeProgress} progress={transferProgress} /> : null}
   </>;
 
   return (
@@ -299,7 +340,7 @@ export function DeckManagerPage() {
           <button aria-pressed={view === 'arena'} disabled={busy} onClick={() => changeView('arena')}><FolderOpen size={16} /> Arena{native?.connected ? ` (${native.decks.length})` : ''}</button>
           <button aria-pressed={view === 'trash'} disabled={busy} onClick={() => changeView('trash')}><Trash2 size={16} /> Trash</button>
         </div>
-        <input type="search" className="deck-manager-search" aria-label="Search saved decks" placeholder="Search names, formats or tags" value={query} disabled={busy} onChange={(e) => { setQuery(e.target.value); setChecked([]); }} />
+        <input type="search" className="deck-manager-search" aria-label="Search saved decks" placeholder="Search names, formats or tags" value={query} disabled={busy} onChange={(e) => { setQuery(e.target.value); setChecked([]); setCollapsed([]); }} />
         <select className="deck-manager-status-filter" aria-label="Filter decks by status" value={statusFilter} disabled={busy} onChange={(e) => filterByStatus(e.target.value as DeckStatus | 'all')}>
           <option value="all">All statuses</option>
           {filterStatuses.map((status) => <option key={status} value={status}>{statusLabels[status]}</option>)}
@@ -310,6 +351,7 @@ export function DeckManagerPage() {
             const result = await captureArenaDecks(); setRefresh((value) => value + 1);
             setNotice(`Captured ${result.captured} deck${result.captured === 1 ? '' : 's'}. ${result.note}${result.rejected ? ` ${result.rejected} malformed lists were skipped.` : ''}`);
           })}><RefreshCw size={16} /> Capture Arena lists</button> : null}
+          <button disabled={busy} onClick={() => openCollection()}><FolderOpen size={16} /> New collection</button>
           <button className="deck-manager-add" disabled={busy} onClick={openImport}><Plus size={18} /> Add deck</button>
         </div>
       </div>
@@ -325,10 +367,16 @@ export function DeckManagerPage() {
       </div> : <div className="deck-manager-toolbar deck-manager-native-bar">
         <label><input type="checkbox" aria-label="Select all visible saved decks" disabled={busy || !visible.length} checked={Boolean(visible.length) && visible.every((d) => checked.includes(d.id))} onChange={(e) => setChecked(e.target.checked ? visible.map((d) => d.id) : [])} /> Select all</label>
         <span>{checked.length} selected</span>
+        {view === 'saved' ? <><select aria-label="Move selected decks to collection" value={destination} disabled={busy || !checkedDecks.length} onChange={(event) => setDestination(event.target.value)}>{collectionOptions()}</select>
+          <button disabled={busy || !checkedDecks.length} onClick={() => void action(async () => {
+            const result = await moveDecksToCollection(checkedDecks.map((deck) => deck.id), destination || null);
+            setChecked([]); setRefresh((value) => value + 1); setCollapsed((value) => value.filter((id) => id !== destination));
+            setNotice(`Moved ${result.count} deck${result.count === 1 ? '' : 's'} to ${collectionGroups.find((group) => group.id === destination)?.name ?? 'Unsorted'}.`);
+          })}><FolderOpen size={16} /> Move decks</button></> : null}
         {view === 'saved' && native?.available ? <button className="deck-manager-copy" title={!canRestoreSelection && checked.length ? 'Select native backups that are not already in Arena to restore.' : undefined} disabled={busy || !canRestoreSelection || !native.connected || !native.deck_screen_open || native.limit_reached !== false || Boolean(native.pending_transfers?.length)} onClick={() => void action(() => nativeAction('restore'))}><ArrowUpFromLine size={16} /> Restore selected to Arena</button> : null}
         <button className="deck-manager-delete" disabled={busy || !checkedDecks.length} onClick={confirmRemoval}><Trash2 size={16} />{view === 'trash' ? 'Delete selected permanently' : 'Move selected to trash'}</button>
       </div>}
-      <div className="deck-manager-decks">
+      <div className={`deck-manager-decks${view === 'saved' ? ' deck-manager-collections-grid' : ''}`}>
         {view === 'arena' ? arenaDecks.map((deck) => <div key={deck.id} className="deck-manager-tile-wrapper">
           <label className="deck-manager-tile-select" title={`Select ${deck.name}`}><input className="deck-manager-tile-check" type="checkbox" aria-label={`Select ${deck.name}`} checked={checked.includes(deck.id)} disabled={busy} onChange={() => toggleChecked(deck.id)} /></label>
           <button type="button" className={`deck-manager-tile deck-manager-arena-tile${checked.includes(deck.id) ? ' deck-manager-tile-selected' : ''}`} disabled={busy} onClick={() => toggleChecked(deck.id)} aria-label={`Toggle selection of ${deck.name}`}>
@@ -336,22 +384,20 @@ export function DeckManagerPage() {
           <span className="deck-manager-tile-text"><strong>{deck.name}</strong><small>{deck.format_name || 'Any format'} · {deck.main_count} cards</small></span>
           </button>
           {statusPills(arenaStatuses(deck.id))}
-        </div>) : visible.map((deck) => (
-          <div className="deck-manager-tile-wrapper" key={deck.id}>
-          <label className="deck-manager-tile-select" title={`Select ${deck.name}`} onClick={(event) => event.stopPropagation()}>
-            <input className="deck-manager-tile-check" type="checkbox" aria-label={`Select ${deck.name}`} checked={checked.includes(deck.id)} disabled={busy} onChange={() => toggleChecked(deck.id)} />
-          </label>
-          <button key={deck.id} className="deck-manager-tile" onClick={() => choose(deck.id)} aria-haspopup="dialog" title={deck.name}>
-            <DeckVisual deckName={deck.name} visual={deckArt(deck.art_card)} />
-            <span className="deck-manager-tile-text">
-              <strong>{deck.name}</strong>
-              <small>{deck.format_name || 'Format not specified'} · {deck.main_count} cards</small>
-              <small>Updated: <time dateTime={deck.updated_at} title={formatDateTime(deck.updated_at)}>{new Date(deck.updated_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</time></small>
-            </span>
-          </button>
-          {statusPills(savedStatuses(deck))}
-          </div>
-        ))}
+        </div>) : (view === 'trash' ? visible.map(savedTile) : collectionGroups.map((group) => {
+          const decks = visible.filter((deck) => (deck.collection_id ?? '') === group.id);
+          const closed = collapsed.includes(group.id);
+          return <section className="deck-manager-group" key={group.id} aria-label={`${group.name} collection`}>
+            <div className="deck-manager-group-heading deck-manager-toolbar">
+              <button className="deck-manager-group-toggle" aria-label={`${group.name} (${decks.length})`} aria-expanded={!closed} aria-controls={`collection-${group.id || 'unsorted'}`} onClick={() => setCollapsed((value) => closed ? value.filter((id) => id !== group.id) : [...value, group.id])}>
+                <ChevronDown size={18} className={closed ? 'is-collapsed' : ''} /><strong>{group.name}</strong><span>({decks.length})</span>
+              </button>
+              {group.id ? <><button aria-label={`Rename ${group.name}`} disabled={busy} onClick={() => openCollection(group)}><Pencil size={16} /></button>
+                <button className="deck-manager-delete-quiet" aria-label={`Remove ${group.name} collection`} disabled={busy} onClick={() => { setEditingCollection(group); setModalOpener(document.activeElement as HTMLElement); setModal('remove-collection'); }}><Trash2 size={16} /></button></> : null}
+            </div>
+            {!closed ? <div className="deck-manager-group-decks" id={`collection-${group.id || 'unsorted'}`}>{decks.map(savedTile)}{!decks.length ? <p className="empty-state">{query || statusFilter !== 'all' ? 'No matching decks in this collection.' : 'Move decks here using the collection selector.'}</p> : null}</div> : null}
+          </section>;
+        }))}
       </div>
       {view === 'arena' && !arenaDecks.length ? <p className="empty-state">{native?.connected ? 'No Arena decks match your search.' : 'Open Arena’s Decks screen, then click Connect to Arena.'}</p> : null}
       {view !== 'arena' && (!library ? <p className="empty-state" role="status">Loading your collection…</p> : !visible.length ? (
@@ -359,10 +405,20 @@ export function DeckManagerPage() {
       ) : null)}
 
       {modal ? (
-        <DeckModal key={modal} title={modal === 'bulk-trash' ? `Move ${checkedDecks.length} decks to Trash?` : modal === 'bulk-delete' ? `Permanently delete ${checkedDecks.length} decks?` : modal === 'store' ? `Move ${checked.length} deck${checked.length === 1 ? '' : 's'} to your collection?` : modal === 'trash' ? `Move ${activeDetail?.name ?? selectedDeck?.name ?? 'saved deck'} to Trash?` : modal === 'delete' ? `Delete ${activeDetail?.name ?? selectedDeck?.name ?? 'saved deck'}?` : modal === 'deck' ? activeDetail?.name ?? selectedDeck?.name ?? 'Saved deck' : editingRevision ? 'Save a new revision' : 'Add a deck'} busy={busy} onClose={modal === 'trash' ? cancelTrash : closeModal} returnFocus={modalOpener}
+        <DeckModal key={modal} title={modal === 'collection' ? editingCollection ? 'Rename collection' : 'New collection' : modal === 'remove-collection' ? `Remove ${editingCollection?.name} collection?` : modal === 'bulk-trash' ? `Move ${checkedDecks.length} decks to Trash?` : modal === 'bulk-delete' ? `Permanently delete ${checkedDecks.length} decks?` : modal === 'store' ? `Move ${checked.length} deck${checked.length === 1 ? '' : 's'} to your collection?` : modal === 'trash' ? `Move ${activeDetail?.name ?? selectedDeck?.name ?? 'saved deck'} to Trash?` : modal === 'delete' ? `Delete ${activeDetail?.name ?? selectedDeck?.name ?? 'saved deck'}?` : modal === 'deck' ? activeDetail?.name ?? selectedDeck?.name ?? 'Saved deck' : editingRevision ? 'Save a new revision' : 'Add a deck'} busy={busy} onClose={modal === 'trash' ? cancelTrash : closeModal} returnFocus={modalOpener}
           headerActions={modal === 'deck' && activeDetail ? activeDetail.native_restorable && native?.available ? <button className="deck-manager-copy" disabled={busy || !native.connected || !native.deck_screen_open || native.limit_reached !== false || Boolean(native.pending_transfers?.length) || Boolean(activeDetail.trashed_at) || inArena(activeDetail)} onClick={() => void action(() => nativeAction('restore', [activeDetail.id]))}><ArrowUpFromLine size={16} /> Restore to Arena</button> : <button className="deck-manager-copy" disabled={busy} onClick={() => void action(() => exportDeck(false))}><Copy size={16} /> Copy for Arena</button> : null}>
           {feedback}
-          {modal === 'bulk-trash' || modal === 'bulk-delete' ? <div className="deck-manager-delete-confirmation">
+          {modal === 'collection' ? <form className="deck-manager-import" onSubmit={(event) => { event.preventDefault(); void action(async () => {
+            await saveDeckCollection(collectionName, editingCollection?.id); setRefresh((value) => value + 1); closeModal(); setNotice(editingCollection ? 'Collection renamed.' : 'Collection created.');
+          }); }}>
+            <label>Collection name<input autoFocus value={collectionName} maxLength={80} required onChange={(event) => setCollectionName(event.target.value)} placeholder="For example, Brawl or Blue decks" /></label>
+            <div className="deck-manager-toolbar"><button type="button" disabled={busy} onClick={closeModal}>Cancel</button><button className="deck-manager-add" disabled={busy || !collectionName.trim()} type="submit">{editingCollection ? 'Save name' : 'Create collection'}</button></div>
+          </form> : modal === 'remove-collection' ? <div className="deck-manager-delete-confirmation">
+            <p>Remove this collection? All its decks, including decks in Trash, will move to Unsorted. Their saved revisions will be retained.</p>
+            <div className="deck-manager-toolbar"><button disabled={busy} onClick={closeModal}>Cancel</button><button className="deck-manager-delete" disabled={busy || !editingCollection} onClick={() => void action(async () => {
+              if (!editingCollection) return; await removeDeckCollection(editingCollection.id); setDestination(''); setImportCollection(''); setRefresh((value) => value + 1); closeModal(); setNotice('Collection removed. Its decks are in Unsorted.');
+            })}>Remove collection</button></div>
+          </div> : modal === 'bulk-trash' || modal === 'bulk-delete' ? <div className="deck-manager-delete-confirmation">
             <p>{modal === 'bulk-trash' ? 'These decks and all their saved revisions will move to Trash. You can restore them from the Trash tab.' : 'These decks and all their saved revisions will be permanently deleted. You cannot undo this from Trash.'}</p>
             <p className="deck-manager-description">This affects your saved collection only. Decks in Arena and recorded games remain unchanged.</p>
             <ul className="deck-manager-confirmation-list" aria-label="Decks selected for removal">{checkedDecks.map((deck) => <li key={deck.id}><strong>{deck.name}</strong><small>{deck.format_name || 'Any format'}</small></li>)}</ul>
@@ -422,6 +478,9 @@ export function DeckManagerPage() {
                 {activeDetail.trashed_at ? <button className="deck-manager-delete" disabled={busy} onClick={() => { setModal('delete'); setError(''); setNotice(''); }}><Trash2 size={16} /> Delete permanently</button> : null}
               </div>
               <p className="deck-manager-description">{library?.capabilities.message}</p>
+              {!activeDetail.trashed_at ? <label>Collection<select aria-label="Deck collection" disabled={busy} value={activeDetail.collection_id ?? ''} onChange={(event) => { const target = event.target.value; void action(async () => {
+                await moveDecksToCollection([activeDetail.id], target || null); setRefresh((value) => value + 1); setNotice('Deck moved to collection.');
+              }); }}>{collectionOptions()}</select></label> : null}
               <label>Saved revision<select aria-label="Saved revision" value={activeDetail.revision_id} onChange={(e) => setRevision(e.target.value)}>
                 {activeDetail.revisions.map((r) => <option key={r.id} value={r.id}>{formatDateTime(r.created_at)}{r.id === activeDetail.current_revision_id ? ' · Latest' : ''}</option>)}
               </select></label>
@@ -453,6 +512,7 @@ export function DeckManagerPage() {
                 <label>Deck name<input value={name} onChange={(e) => setName(e.target.value)} placeholder="Use the name in the decklist" maxLength={256} /></label>
                 <label>Format<input value={format} onChange={(e) => setFormat(e.target.value)} placeholder="Optional" maxLength={128} /></label>
               </div>
+              {!editingRevision ? <label>Collection<select value={importCollection} disabled={busy} onChange={(event) => setImportCollection(event.target.value)}>{collectionOptions()}</select></label> : null}
               <label>Decklist or backup<textarea value={text} onChange={(e) => setText(e.target.value)} rows={10} required spellCheck={false} /></label>
               <input ref={fileInput} type="file" accept=".txt,.tappsdeck,.json" className="deck-manager-file" aria-label="Open deck backup file" onChange={(event) => {
                 const file = event.target.files?.[0]; if (!file) return;

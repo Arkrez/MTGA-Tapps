@@ -371,7 +371,9 @@ function sameSourceSnapshot(left,right) {
     // previously loaded full-deck model can use "". Preserve all other fields.
     const value=JSON.parse(JSON.stringify(deck));
     if (value.summary.Description===null) value.summary.Description='';
-    return JSON.stringify(value);
+    const canonical=item=>Array.isArray(item) ? item.map(canonical)
+      : item && typeof item==='object' ? Object.fromEntries(Object.keys(item).sort().map(key=>[key,canonical(item[key])])) : item;
+    return JSON.stringify(canonical(value));
   };
   return normalized(left)===normalized(right);
 }
@@ -431,6 +433,7 @@ function guard(expectedAccount, requireDecks=false) {
 }
 function releaseConnection() {
   if (pending) throw new Error('A native request is still pending.');
+  if (preparedCreate) {handleFree(preparedCreate.handle);preparedCreate=null;}
   if (connection) handleFree(connection.managerHandle);
   connection=null;
   return true;
@@ -580,10 +583,10 @@ async function prepareImport(account,deckText,name,id) {
     } finally {if(heldDeck)handleFree(heldDeck);handleFree(heldInput);}
   });
 }
-async function createDeck(account,archive,id) {
-  let draftHandle;
-  try {
-    draftHandle=await onUnityThread(()=>{
+let preparedCreate=null;
+async function prepareCreate(account,archive,id) {
+  if (preparedCreate) throw new Error('A deck is already prepared for creation.');
+    const draftHandle=await onUnityThread(()=>{
       const manager=guard(account,true);
       if (objectUnbox(invoke(findMethod('.DecksManager','get_DeckLimitReached',[]),manager)).readU8()) throw new Error('Arena’s deck slots are full. Move a deck to your collection first.');
       if (!/^[0-9a-f-]{36}$/.test(id) || cachedDecks(manager).some(d=>guidText(fieldAt(ref(d,'_summary'),'DeckId'))===id)) throw new Error('Restore identity already exists. Reconcile instead of creating again.');
@@ -603,6 +606,14 @@ async function createDeck(account,archive,id) {
         return held;
       } catch(error) {handleFree(held);throw error;}
     });
+    preparedCreate={account,id,handle:draftHandle};
+    return {id};
+}
+async function createPrepared(account,id) {
+  if (!preparedCreate || preparedCreate.account!==account || preparedCreate.id!==id) throw new Error('No matching prepared deck.');
+  const draftHandle=preparedCreate.handle;
+  preparedCreate=null;
+  try {
     const createdId=await promiseCall(account,()=>{
       const imported=stringObject('Imported'),held=handleNew(imported,0),flag=Memory.alloc(1);flag.writeU8(0);
       try {return invoke(findMethod('.DecksManager','CreateDeck',['Wizards.Mtga.Decks.Client_Deck','System.String','System.Boolean']),root(),[handleTarget(draftHandle),imported,flag]);}
@@ -613,6 +624,10 @@ async function createDeck(account,archive,id) {
     await roster(account);
     return fullDeck(account,id);
   } finally {if(draftHandle) await onUnityThread(()=>handleFree(draftHandle));}
+}
+async function createDeck(account,archive,id) {
+  await prepareCreate(account,archive,id);
+  return createPrepared(account,id);
 }
 async function removeDeck(account,snapshot) {
   const id=snapshot.arena_id;
@@ -627,5 +642,5 @@ async function removeDeck(account,snapshot) {
     return true;
   },true);
 }
-rpc.exports={open:openConnection,roster,archive:archiveDecks,fetchdeck:fullDeck,create:createDeck,remove:removeDeck,prepareimport:prepareImport,
+rpc.exports={open:openConnection,roster,archive:archiveDecks,fetchdeck:fullDeck,create:createDeck,remove:removeDeck,prepareimport:prepareImport,preparecreate:prepareCreate,createprepared:createPrepared,
   close(){return onUnityThread(releaseConnection);}};

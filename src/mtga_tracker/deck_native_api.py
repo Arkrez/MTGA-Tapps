@@ -141,6 +141,10 @@ def execute(db_path, action, selections, request_id, progress):
         )
     conn = dm.library_connection(db_path)
     try:
+        if action == "add":
+            from .deck_collections import validate_destination
+
+            validate_destination(conn, selections[0].get("collection_id"))
         with nb.attach() as bridge:
             progress("Reading Arena’s current decks…")
             report = bridge.roster()
@@ -148,9 +152,25 @@ def execute(db_path, action, selections, request_id, progress):
             if action == "reconcile":
                 report = dt.reconcile(conn, bridge, report)
             elif action == "add":
-                progress("Preparing the deck with Arena’s importer…")
+                progress(
+                    {
+                        "detail": "Preparing the deck with Arena’s importer…",
+                        "completed": 0,
+                        "total": 3,
+                    }
+                )
                 resolver = _resolve_names()
-                report = dt.add_import(conn, bridge, selections[0], request_id, report, resolver)
+                report = dt.add_import(
+                    conn,
+                    bridge,
+                    selections[0],
+                    request_id,
+                    report,
+                    resolver,
+                    lambda step, detail: progress(
+                        {"detail": detail, "completed": step, "total": 3}
+                    ),
+                )
             elif action == "backup":
                 if report.get("deck_screen_open") is not True:
                     raise dm.DeckManagerError(
@@ -162,7 +182,22 @@ def execute(db_path, action, selections, request_id, progress):
                         "A selected deck is no longer in Arena. Refresh the list."
                     )
                 progress(f"Backing up {len(ids)} deck{'s' if len(ids) != 1 else ''}…")
-                archives = bridge.archive(ids)
+                progress(
+                    {"detail": "Reading full deck backups…", "completed": 0, "total": len(ids) * 2}
+                )
+                archives = []
+                for i, identity in enumerate(ids):
+                    chunk = bridge.archive([identity])
+                    if len(chunk) != 1 or chunk[0]["source_snapshot"]["arena_id"] != identity:
+                        raise dm.DeckManagerError("Arena returned a different backup identity.")
+                    archives.extend(chunk)
+                    progress(
+                        {
+                            "detail": f"Read {i + 1} of {len(ids)} decks…",
+                            "completed": i + 1,
+                            "total": len(ids) * 2,
+                        }
+                    )
                 if (
                     len(archives) != len(ids)
                     or [a["source_snapshot"]["arena_id"] for a in archives] != ids
@@ -174,7 +209,7 @@ def execute(db_path, action, selections, request_id, progress):
                 for archive in archives:
                     validate_archive(archive)
                 resolver = _resolve_names()
-                for archive in archives:
+                for i, archive in enumerate(archives):
                     saved = dt.persist_archive(conn, archive, bridge.account_key, resolver)
                     dt.set_presence(
                         conn,
@@ -182,6 +217,13 @@ def execute(db_path, action, selections, request_id, progress):
                         archive["source_snapshot"]["arena_id"],
                         saved["id"],
                         "present",
+                    )
+                    progress(
+                        {
+                            "detail": f"Verified {i + 1} of {len(ids)} saved backups…",
+                            "completed": len(ids) + i + 1,
+                            "total": len(ids) * 2,
+                        }
                     )
             elif action in ("store", "restore"):
                 resolver = _resolve_names()
@@ -191,11 +233,39 @@ def execute(db_path, action, selections, request_id, progress):
                             "Arena entered a game. Remaining decks were not transferred."
                         )
                     progress(
-                        f"{'Moving to collection' if action == 'store' else 'Restoring to Arena'}: "
-                        f"{i + 1} of {len(selections)}…"
+                        {
+                            "detail": (
+                                "Moving to collection: "
+                                if action == "store"
+                                else "Restoring to Arena: "
+                            )
+                            + f"{i + 1} of {len(selections)}…",
+                            "completed": i * 3,
+                            "total": len(selections) * 3,
+                        }
                     )
                     report = dt.transfer(
-                        conn, bridge, action, selection, request_id, report, resolver
+                        conn,
+                        bridge,
+                        action,
+                        selection,
+                        request_id,
+                        report,
+                        resolver,
+                        lambda step, detail: progress(
+                            {
+                                "detail": f"{i + 1} of {len(selections)} · {detail}",
+                                "completed": i * 3 + step,
+                                "total": len(selections) * 3,
+                            }
+                        ),
+                    )
+                    progress(
+                        {
+                            "detail": f"Verified {i + 1} of {len(selections)} transfers…",
+                            "completed": (i + 1) * 3,
+                            "total": len(selections) * 3,
+                        }
                     )
                     # Publish completed progress even if the next deck fails.
                     with _LOCK:
@@ -245,6 +315,9 @@ def start(db_path, payload):
             or not isinstance(format_name, str)
         ):
             raise dm.DeckManagerError("Invalid deck name, format or bounded Arena decklist.")
+        saved_deck_id = imported.get("saved_deck_id")
+        if saved_deck_id is not None:
+            saved_deck_id = str(uuid.UUID(saved_deck_id))
         dm.parse_import(text, name, format_name)
         if selections:
             raise dm.DeckManagerError("Direct import accepts one decklist, not a deck selection.")
@@ -254,6 +327,12 @@ def start(db_path, payload):
                 "text": text,
                 "name": name.strip(),
                 "format_name": format_name,
+                **({"saved_deck_id": saved_deck_id} if saved_deck_id else {}),
+                **(
+                    {"collection_id": imported["collection_id"]}
+                    if imported.get("collection_id")
+                    else {}
+                ),
             }
         )
     for item in selections:
@@ -293,19 +372,32 @@ def start(db_path, payload):
             "selections": clean,
             "state": "running",
             "detail": "Connecting to Arena…",
+            "progress": {"completed": 0, "total": None},
             "created": time.monotonic(),
         }
 
     def progress(message):
         with _LOCK:
-            _JOBS[request_id]["detail"] = message
+            if isinstance(message, dict):
+                _JOBS[request_id]["detail"] = message["detail"]
+                _JOBS[request_id]["progress"] = {
+                    key: message[key] for key in ("completed", "total")
+                }
+            else:
+                _JOBS[request_id]["detail"] = message
 
     def run():
         global _ACTIVE
         try:
             result = execute(db_path, action, clean, request_id, progress)
             with _LOCK:
-                _JOBS[request_id].update(state="done", detail="Completed.", result=result)
+                total = _JOBS[request_id]["progress"]["total"] or 1
+                _JOBS[request_id].update(
+                    state="done",
+                    detail="Completed.",
+                    result=result,
+                    progress={"completed": total, "total": total},
+                )
         except Exception as exc:
             # Native exception messages contain no deck data or credentials.
             message = (

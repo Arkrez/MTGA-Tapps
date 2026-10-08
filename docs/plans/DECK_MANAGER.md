@@ -18,6 +18,12 @@ The grid now shares artwork/tile sizing across Saved and Arena, with filterable
 location/backup pills. Deck Finder direct add is wired through Arena's native text
 parser and the journaled restore path. A four-Forest live parser-only check passed;
 full direct-add creation still requires user-selected runtime testing.
+Named collapsible dashboard collections, atomic membership moves, collection removal
+that retains decks, and verified transfer progress bars are implemented. A failed
+Finder add exposed JSON key-order sensitivity in native preflight; structural checks
+and separate preparation/write stages now address it. Read-only reconstruction of
+that saved deck matched every value and left the roster unchanged. Full creation
+was not retried during this check.
 See [live experiment results](deck-manager/NATIVE_POC.md) and
 [reproduction commands](../../deck-manager-bridge/poc/README.md).
 See [implemented behavior](../DECK_MANAGER.md) and the [demo screenshot](deck-manager/preview.png).

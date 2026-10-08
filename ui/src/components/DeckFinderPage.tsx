@@ -1,6 +1,7 @@
+import { DeckTransferProgress } from './DeckTransferProgress';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Archive, Check, Copy, Dices, ExternalLink, Plus, RefreshCw } from 'lucide-react';
-import { importManagedDeck, addDeckToArena, fetchNativeDeckStatus, fetchNativeDeckJob, type NativeDeckStatus } from '../deckManagerApi';
+import { fetchDeckLibrary, type DeckCollection, type NativeDeckJob, importManagedDeck, addDeckToArena, fetchNativeDeckStatus, fetchNativeDeckJob, type NativeDeckStatus } from '../deckManagerApi';
 import {
   fetchDeckFinderJob,
   fetchDeckFinderProviders,
@@ -104,6 +105,14 @@ export function DeckFinderPage() {
   const [savedDeckId, setSavedDeckId] = useState<{ id: string; source: string } | null>(null);
   const [saveError, setSaveError] = useState<{ message: string; source: string } | null>(null);
   const [saving, setSaving] = useState(false);
+  const [collections, setCollections] = useState<DeckCollection[]>([]);
+  const [collectionId, setCollectionId] = useState('');
+  const [transferProgress, setTransferProgress] = useState<NativeDeckJob['progress']>();
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchDeckLibrary(controller.signal).then((library) => { if (!controller.signal.aborted) setCollections(library.collections ?? []); }).catch(() => {});
+    return () => controller.abort();
+  }, []);
   const [nativeStatus, setNativeStatus] = useState<NativeDeckStatus | null>(null);
   const [arenaJob, setArenaJob] = useState<{ id: string; source: string } | null>(null);
   const [arenaFeedback, setArenaFeedback] = useState<{ source: string; message: string; error: boolean } | null>(null);
@@ -137,6 +146,7 @@ export function DeckFinderPage() {
       try {
         const job = await fetchNativeDeckJob(arenaJob!.id, controller.signal);
         if (controller.signal.aborted) return;
+        setTransferProgress(job.progress);
         setArenaFeedback({ source: arenaJob!.source, message: job.state === 'done' ? 'Deck added to Arena and backed up in your collection.' : job.detail, error: job.state === 'error' });
         if (job.state === 'running') { timer = setTimeout(() => void poll(), JOB_POLL_MS); return; }
         if (job.state === 'done') setAddedSource(arenaJob!.source);
@@ -155,7 +165,9 @@ export function DeckFinderPage() {
     const source = selectedDeck.source_url + selectedDeck.name;
     setAdding(true); setArenaFeedback(null);
     try {
-      const result = await addDeckToArena(formatArenaImportText(selectedDeck.deck_text) || '', selectedDeck.name, selectedDeck.format_label || '');
+      const args = [formatArenaImportText(selectedDeck.deck_text) || '', selectedDeck.name, selectedDeck.format_label || ''] as const;
+      const savedId = savedDeckId?.source === source ? savedDeckId.id : undefined;
+      const result = collectionId ? await addDeckToArena(...args, savedId, collectionId) : savedId ? await addDeckToArena(...args, savedId) : await addDeckToArena(...args);
       setArenaJob({ id: result.job_id, source });
     } catch (error: unknown) {
       setAdding(false);
@@ -717,12 +729,13 @@ export function DeckFinderPage() {
             </div>
             <div className="deckfinder-detail-actions">
               {nativeStatus?.available ? <button className="deck-export-button" type="button"
-                disabled={adding || addedSource === selectedDeck.source_url + selectedDeck.name || nativeStatus.busy || nativeStatus.in_game || nativeStatus.limit_reached === true || Boolean(nativeStatus.pending_transfers?.length) || !selectedDeck.deck_text}
+                disabled={saving || adding || addedSource === selectedDeck.source_url + selectedDeck.name || nativeStatus.busy || nativeStatus.in_game || nativeStatus.limit_reached === true || Boolean(nativeStatus.pending_transfers?.length) || !selectedDeck.deck_text}
                 title={nativeStatus.in_game ? 'Finish your current game first.' : nativeStatus.limit_reached ? 'Free an Arena deck slot first.' : 'Arena must be open on Decks outside a match.'}
                 onClick={() => void addSelectedDeck()}>{addedSource === selectedDeck.source_url + selectedDeck.name ? <Check aria-hidden="true" /> : <Plus aria-hidden="true" />}{adding ? 'Adding…' : addedSource === selectedDeck.source_url + selectedDeck.name ? 'Added to Arena' : 'Add to Arena'}</button> : null}
-              <button className="deck-neutral-button" disabled={saving || !selectedDeck.deck_text} type="button" onClick={() => {
+              <select aria-label="Save deck to collection" value={collectionId} disabled={saving || adding} onChange={(event) => setCollectionId(event.target.value)}><option value="">Unsorted</option>{collections.map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select>
+              <button className="deck-neutral-button" disabled={saving || adding || !selectedDeck.deck_text} type="button" onClick={() => {
                 setSaving(true); setSaveError(null);
-                void importManagedDeck(formatArenaImportText(selectedDeck.deck_text) || '', selectedDeck.name, selectedDeck.format_label || '')
+                void importManagedDeck(formatArenaImportText(selectedDeck.deck_text) || '', selectedDeck.name, selectedDeck.format_label || '', savedDeckId?.source === selectedDeck.source_url + selectedDeck.name ? savedDeckId.id : undefined, collectionId || null)
                   .then((saved) => setSavedDeckId({ id: saved.id, source: selectedDeck.source_url + selectedDeck.name }))
                   .catch((error: unknown) => setSaveError({ message: error instanceof Error ? error.message : 'Could not save this deck.', source: selectedDeck.source_url + selectedDeck.name }))
                   .finally(() => setSaving(false));
@@ -750,9 +763,10 @@ export function DeckFinderPage() {
               </a>
             </div>
           </div>
+          {adding && arenaFeedback?.source === selectedDeck.source_url + selectedDeck.name ? <DeckTransferProgress detail={arenaFeedback.message} progress={transferProgress} /> : null}
           {savedDeckId?.source === selectedDeck.source_url + selectedDeck.name ? <p role="status">Deck saved. <a href="#/deck-manager">Open Deck Manager</a></p> : null}
           {saveError?.source === selectedDeck.source_url + selectedDeck.name ? <p role="alert">{saveError.message}</p> : null}
-          {arenaFeedback?.source === selectedDeck.source_url + selectedDeck.name ? <p role={arenaFeedback.error ? 'alert' : 'status'}>{arenaFeedback.message} {arenaFeedback.error ? <a href="#/deck-manager">Open Deck Manager</a> : null}</p> : null}
+          {!adding && arenaFeedback?.source === selectedDeck.source_url + selectedDeck.name ? <p role={arenaFeedback.error ? 'alert' : 'status'}>{arenaFeedback.message} {arenaFeedback.error ? <a href="#/deck-manager">Open Deck Manager</a> : null}</p> : null}
           {nativeStatus?.available ? <p className="section-description">To add this deck directly, leave Arena on Decks outside a match with a free deck slot.</p> : null}
           {selectedDeck.deck_text ? (
             <pre className="deckfinder-decklist">{formatArenaImportText(selectedDeck.deck_text)}</pre>
