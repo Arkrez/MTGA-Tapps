@@ -30,6 +30,7 @@ def load(name):
 capture = load("capture")
 runner = load("run")
 disposable = load("disposable_copy")
+disk_restore = load("disk_restore")
 
 
 def snapshot():
@@ -304,3 +305,175 @@ def test_native_wait_deadline_does_not_retry_write(monkeypatch):
     exports = SimpleNamespace(pollcopy=lambda: {"phase": "create_pending"})
     with pytest.raises(TimeoutError, match="uncertain"):
         disposable.await_phase(exports, "created_verified")
+
+
+def typed_archive():
+    report = snapshot()
+    return dict(
+        report,
+        archive_kind="arena_typed_model_poc",
+        source_snapshot=report["decks"][0],
+        model_json=json.dumps({"printing_id": 9007199254740993}),
+        summary_json=json.dumps(report["decks"][0]["summary"]),
+    )
+
+
+def restore_exports():
+    archive = typed_archive()
+    restored = copy.deepcopy(archive["source_snapshot"])
+    restored["name"] = restored["summary"]["Name"] = "Tapps Restore test"
+    restored["arena_id"] = restored["summary"]["DeckId"] = str(uuid.uuid4())
+    calls = []
+    results = iter(
+        [
+            {"phase": "created_verified", "created_snapshot": restored},
+            {"phase": "complete"},
+        ]
+    )
+
+    def prepare(from_disk, operation_id):
+        calls.append(("prepare_from_disk", from_disk))
+        return {
+            "operation_id": operation_id,
+            "reconstructed_from_disk": True,
+            "source_snapshot": archive["source_snapshot"],
+            "test_snapshot": restored,
+        }
+
+    exports = SimpleNamespace(
+        preparerestore=prepare,
+        createcopy=lambda: calls.append("create"),
+        pollcopy=lambda: next(results),
+        verifyrestoredcopy=lambda: {
+            "fetched_snapshot": restored,
+            "restored_from_disk_verified": True,
+            "full_deck_promise_successful": True,
+        },
+        writeready=lambda: True,
+        deletecopy=lambda data: calls.append(("delete", data)),
+    )
+    return archive, exports, calls, restored
+
+
+def test_disk_reconstruction_uses_reloaded_file_and_keeps_large_integer_json_text(tmp_path):
+    archive, exports, calls, _ = restore_exports()
+    path = tmp_path / "archive.json"
+    disposable.persist(path, archive)
+    archive["model_json"] = "{}"  # Altering the old in-memory value cannot affect restore.
+    result = disk_restore.restore_experiment(exports, path, tmp_path)
+    assert result["native_writes_executed"] is False
+    assert json.loads(calls[0][1]["model_json"])["printing_id"] == 9007199254740993
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("payload", [{"$type": "Arbitrary"}, {"nested": [{"$type": "Arbitrary"}]}])
+def test_archive_cannot_request_arbitrary_deserialization_type(payload):
+    archive = typed_archive()
+    archive["model_json"] = json.dumps(payload)
+    with pytest.raises(ValueError, match="arbitrary"):
+        disk_restore.validate_archive(archive)
+
+
+def test_disk_restore_archives_fetched_result_before_deleting_only_that_copy(tmp_path):
+    archive, exports, calls, restored = restore_exports()
+    path = tmp_path / "archive.json"
+    disposable.persist(path, archive)
+
+    def delete(value):
+        assert value == json.loads((tmp_path / "07-fetched.json").read_text())["decks"][0]
+        assert value["arena_id"] != archive["source_snapshot"]["arena_id"]
+        calls.append(("delete", value))
+
+    exports.deletecopy = delete
+    result = disk_restore.restore_experiment(exports, path, tmp_path, execute=True)
+    assert result["native_disk_restore_proven"] is True
+    assert calls[1:] == ["create", ("delete", restored)]
+
+
+def test_disk_restore_fetch_or_disk_failure_prevents_delete(tmp_path, monkeypatch):
+    archive, exports, calls, _ = restore_exports()
+    path = tmp_path / "archive.json"
+    disposable.persist(path, archive)
+    real_persist = disk_restore.persist
+
+    def fail(path, value):
+        if path.name == "07-fetched.json":
+            raise OSError("disk full")
+        return real_persist(path, value)
+
+    monkeypatch.setattr(disk_restore, "persist", fail)
+    with pytest.raises(OSError, match="disk full"):
+        disk_restore.restore_experiment(exports, path, tmp_path, execute=True)
+    assert calls[1:] == ["create"]
+
+
+def test_restore_fidelity_failure_is_recorded_and_own_copy_cleaned_up(tmp_path):
+    archive, exports, calls, restored = restore_exports()
+    path = tmp_path / "archive.json"
+    disposable.persist(path, archive)
+    exports.verifyrestoredcopy = lambda: {
+        "fetched_snapshot": restored,
+        "restored_from_disk_verified": False,
+        "full_deck_promise_successful": True,
+    }
+    result = disk_restore.restore_experiment(exports, path, tmp_path, execute=True)
+    assert result["native_disk_restore_proven"] is False
+    assert calls[-1] == ("delete", restored)
+
+
+def recovery_journal(tmp_path):
+    archive, exports, calls, restored = restore_exports()
+    original = tmp_path / "original"
+    output = tmp_path / "recovery"
+    original.mkdir()
+    output.mkdir()
+    path = original / "02-disk-archive.json"
+    disposable.persist(path, archive)
+    _, digest = disk_restore.load_archive(path)
+    disposable.persist(original / "03-loaded-archive.json", {"sha256": digest})
+    disposable.persist(original / "01-before.json", snapshot_from(archive["source_snapshot"]))
+    operation_id = str(uuid.uuid4())
+    prepared = {"operation_id": operation_id, "test_snapshot": restored}
+    disposable.persist(original / "04-reconstructed.json", prepared)
+    disposable.persist(original / "05-create-intent.json", {"operation_id": operation_id})
+    disposable.persist(original / "06-created.json", snapshot_from(restored))
+    exports.adoptrestoredcopy = lambda *args: calls.append("adopt") or {"no_create_retry": True}
+    exports.pollcopy = lambda: {"phase": "complete"}
+    return original, output, exports, calls, restored
+
+
+def snapshot_from(deck):
+    return dict(snapshot(), decks=[deck])
+
+
+def test_recovery_removes_only_existing_copy_without_create_retry(tmp_path):
+    original, output, exports, calls, restored = recovery_journal(tmp_path)
+    result = disk_restore.resume_experiment(exports, original, output, execute=True)
+    assert result["native_disk_restore_proven"] is True
+    assert calls == ["adopt", ("delete", restored)]
+    assert json.loads((output / "07-fetched.json").read_text())["decks"] == [restored]
+
+
+def test_recovery_default_only_verifies_and_archives(tmp_path):
+    original, output, exports, calls, _ = recovery_journal(tmp_path)
+    result = disk_restore.resume_experiment(exports, original, output)
+    assert result["native_writes_executed"] is False
+    assert calls == ["adopt"]
+    assert not (output / "09-delete-test-copy-intent.json").exists()
+
+
+@pytest.mark.parametrize("change", ["archive", "original_identity", "operation"])
+def test_recovery_rejects_changed_journal_before_native_adoption(tmp_path, change):
+    original, output, exports, calls, _ = recovery_journal(tmp_path)
+    if change == "archive":
+        path = original / "02-disk-archive.json"
+        path.write_text(path.read_text() + "\n")
+    elif change == "original_identity":
+        source = json.loads((original / "01-before.json").read_text())["decks"][0]
+        (original / "06-created.json").write_text(json.dumps(snapshot_from(source)))
+    else:
+        (original / "05-create-intent.json").write_text(json.dumps({"operation_id": "different"}))
+    with pytest.raises(ValueError):
+        disk_restore.resume_experiment(exports, original, output, execute=True)
+    assert calls == []
+    assert not (output / "09-delete-test-copy-intent.json").exists()

@@ -10,6 +10,7 @@ const targets = new Set([
   'Client_DeckCard', 'Client_CardSkin', 'EDeckPile',
   'TMP_Text', 'Application', 'GameObject',
   'Guid',
+  'JsonConvert', 'DeckInfo',
 ]);
 const game = Process.findModuleByName('GameAssembly.dylib')
   ?? Process.findModuleByName('GameAssembly.dll');
@@ -20,6 +21,7 @@ function api(name, returns, args) {
 const domainGet = api('domain_get', 'pointer', []);
 const threadAttach = api('thread_attach', 'pointer', ['pointer']);
 const threadDetach = api('thread_detach', 'void', ['pointer']);
+const threadCurrent = api('thread_current', 'pointer', []);
 const assembliesGet = api('domain_get_assemblies', 'pointer', ['pointer', 'pointer']);
 const assemblyImage = api('assembly_get_image', 'pointer', ['pointer']);
 const imageName = api('image_get_name', 'pointer', ['pointer']);
@@ -78,7 +80,11 @@ function iterate(fn, owner) {
   throw new Error('Metadata enumeration exceeded the bound.');
 }
 function attached(run) {
+  // Promise continuations can execute on Unity's already-attached main thread.
+  // Never detach a thread owned by Arena; only detach our own fresh attachment.
+  if (!threadCurrent().isNull()) return run();
   const thread = threadAttach(domainGet());
+  if (thread.isNull()) throw new Error('Could not attach the probe thread to IL2CPP.');
   try { return run(); } finally { threadDetach(thread); }
 }
 function discover() {
@@ -474,6 +480,111 @@ function prepareCopy(sourceId, operationId) {
       scope:'Create and remove only a new disposable duplicate. Existing source deck is never removed.'};
   } catch(error) { handleFree(draftHandle); throw error; }
 }
+function serializeModel(object) {
+  const result=invoke(findMethod('Newtonsoft.Json.JsonConvert','SerializeObject',['System.Object']),NULL,[object]);
+  if (result.isNull()) throw new Error('Native serializer returned no data.');
+  const handle=handleNew(result,0);
+  try { return text(result); } finally { handleFree(handle); }
+}
+function physicalSummaryJson(json,sourceSummary) {
+  const serialized=JSON.parse(json), physical={};
+  for (const key of Object.keys(sourceSummary)) {
+    if (!(key in serialized)) throw new Error(`Serializer omitted summary field ${key}.`);
+    physical[key]=serialized[key];
+  }
+  // Computed IsFavorite/Format/date property setters can rewrite Attributes.
+  // Persist only verified physical fields, retaining the serializer's Guid codec.
+  return JSON.stringify(physical);
+}
+function deserializeModel(json,key) {
+  if (typeof json!=='string' || json.length>20000) throw new Error('Invalid bounded model archive.');
+  const klass=classes.get(key);
+  if (!klass) throw new Error('The required archive model type is unavailable.');
+  const input=stringObject(json), handle=handleNew(input,0);
+  try {
+    const result=invoke(findMethod('Newtonsoft.Json.JsonConvert','DeserializeObject',['System.String','System.Type']),NULL,
+      [input,typeObject(classType(klass))]);
+    if (result.isNull() || !objectClass(result).equals(klass)) throw new Error('Archive did not deserialize into the checked type.');
+    return result;
+  } finally { handleFree(handle); }
+}
+function archiveModel(sourceId) {
+  checkedHandleABI();
+  const report=snapshot(), manager=root();
+  const deck=cachedDecks(manager).find(d=>guidText(fieldAt(ref(d,'_summary'),'DeckId'))===sourceId);
+  const source=report.decks.find(d=>d.arena_id===sourceId);
+  if (!deck || !source || source.is_net_deck || !source.contents_loaded || source.piles.length!==4) throw new Error('Choose a complete ordinary deck for archival.');
+  const model=invoke(findMethod('Wizards.Mtga.Decks.DeckServiceWrapperHelpers','ToAzureModel',['Wizards.Mtga.Decks.Client_Deck']),NULL,[deck]);
+  const handle=handleNew(model,0);
+  try {
+    const modelJson=serializeModel(model), summaryJson=physicalSummaryJson(serializeModel(ref(deck,'_summary')),source.summary);
+    if (!sameSourceSnapshot(deckSnapshot(deck),source)) throw new Error('Source changed during archival.');
+    return {schema:1,archive_kind:'arena_typed_model_poc',model_json:modelJson,summary_json:summaryJson,
+      source_snapshot:source,pile_names:report.pile_names,runtime:'IL2CPP',unity_thread_observed:true,
+      unity_version:text(invoke(findMethod('UnityEngine.Application','get_unityVersion',[])))};
+  } finally { handleFree(handle); }
+}
+function prepareRestore(archive,operationId) {
+  if (testCopy) throw new Error('A test copy is already prepared.');
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(operationId)
+    || archive.schema!==1 || archive.archive_kind!=='arena_typed_model_poc') throw new Error('Invalid archive or operation identity.');
+  checkedHandleABI();
+  const report=snapshot(), manager=root();
+  if (report.live_deck_selectors!==1 || report.service_calls.limit_reached) throw new Error('Open Decks with a free slot for the restore test.');
+  const beforeIds=report.decks.map(d=>d.arena_id);
+  if (beforeIds.includes(operationId)) throw new Error('The restore identity already exists.');
+  const source=report.decks.find(d=>d.arena_id===archive.source_snapshot.arena_id);
+  if (!source || source.is_net_deck || !sameSourceSnapshot(source,archive.source_snapshot)) throw new Error('Source changed since archival; no restore test started.');
+  // Reconstruct exclusively from the disk payload: no live source-deck pointer,
+  // ToAzureModel call, or fallback to the cached source's card lists.
+  const model=deserializeModel(archive.model_json,'Wizards.Mtga.FrontDoorModels.DeckInfo');
+  const modelHandle=handleNew(model,0);
+  let draft;
+  try { draft=invoke(findMethod('Wizards.Mtga.Decks.DeckServiceWrapperHelpers','ToClientModel',['Wizards.Mtga.FrontDoorModels.DeckInfo']),NULL,[model]); }
+  finally { handleFree(modelHandle); }
+  const draftHandle=handleNew(draft,0);
+  try {
+    const summary=deserializeModel(archive.summary_json,'Wizards.Mtga.Decks.Client_DeckSummary');
+    const summaryHandle=handleNew(summary,0);
+    try { fieldSetObject(draft,fields(objectClass(draft)).get('_summary'),summary); }
+    finally { handleFree(summaryHandle); }
+    const reconstructed=deckSnapshot(draft);
+    if (!sameSourceSnapshot(reconstructed,archive.source_snapshot)) {
+      const changed=Object.keys(archive.source_snapshot).filter(k=>JSON.stringify(reconstructed[k])!==JSON.stringify(archive.source_snapshot[k]));
+      const summaryChanged=Object.keys(archive.source_snapshot.summary).filter(k=>JSON.stringify(reconstructed.summary[k])!==JSON.stringify(archive.source_snapshot.summary[k]));
+      throw new Error(`Disk reconstruction changed fields ${changed.join(',')} / summary ${summaryChanged.join(',')}; no create call allowed.`);
+    }
+    const guid=parseGuid(operationId), guidHandle=handleNew(guid,0);
+    try { fieldSet(summary,fields(objectClass(summary)).get('DeckId'),objectUnbox(guid)); }
+    finally { handleFree(guidHandle); }
+    const name=`Tapps Restore ${operationId.slice(0,8)}`, nameObject=stringObject(name), nameHandle=handleNew(nameObject,0);
+    try { fieldSetObject(summary,fields(objectClass(summary)).get('Name'),nameObject); }
+    finally { handleFree(nameHandle); }
+    testCopy={phase:'prepared',draftHandle,managerHandle:handleNew(manager,0),beforeIds,name,
+      expected:deckSnapshot(draft),sourceSnapshot:source,promiseHandle:null,fromArchive:true};
+    return {operation_id:operationId,phase:'prepared',source_snapshot:source,test_snapshot:testCopy.expected,
+      reconstructed_from_disk:true,scope:'Create and remove only a new restored duplicate; source is never removed.'};
+  } catch(error) { handleFree(draftHandle); throw error; }
+}
+function adoptRestoredCopy(archive,prepared,created,beforeIds) {
+  if (testCopy || !Array.isArray(beforeIds) || !beforeIds.length || beforeIds.length>2000) throw new Error('Invalid recovery context.');
+  checkedHandleABI();
+  const report=snapshot(), manager=root();
+  if (report.live_deck_selectors!==1) throw new Error('Open Decks before recovering the existing test copy.');
+  if (beforeIds.includes(created.arena_id) || created.arena_id===archive.source_snapshot.arena_id
+    || created.name!==prepared.test_snapshot.name || created.name!==`Tapps Restore ${prepared.operation_id.slice(0,8)}`) throw new Error('Recovery identity is not the known new test copy.');
+  const currentIds=report.decks.map(d=>d.arena_id);
+  if (beforeIds.some(id=>!currentIds.includes(id))) throw new Error('Original roster is not present; no recovery deletion allowed.');
+  const source=report.decks.find(d=>d.arena_id===archive.source_snapshot.arena_id);
+  const current=report.decks.find(d=>d.arena_id===created.arena_id);
+  if (!source || !sameSourceSnapshot(source,archive.source_snapshot)) throw new Error('Original source changed; stop recovery.');
+  if (!current || !sameSourceSnapshot(current,created)) throw new Error('Test copy changed or is missing; stop recovery without another write.');
+  // Recovery may verify/delete only the archived, already-created new identity.
+  // It cannot reach the "prepared" phase and has no draft to create again.
+  testCopy={phase:'created_verified',draftHandle:null,managerHandle:handleNew(manager,0),beforeIds,
+    name:current.name,expected:prepared.test_snapshot,created:current,sourceSnapshot:source,promiseHandle:null,fromArchive:true};
+  return {existing_copy_verified:true,no_create_retry:true,current_snapshot:current};
+}
 function createCopy() {
   const manager=copyManager();
   if (testCopy.phase!=='prepared') throw new Error('Test creation cannot be repeated.');
@@ -512,7 +623,7 @@ function pollCopy() {
   if (testCopy.phase==='delete_pending') {
     const result=invoke(objectMethod(promise,'get_Result',[]),promise);
     if (result.isNull() || !objectUnbox(result).readU8()) throw new Error('Deletion was not confirmed; stop for review.');
-    handleFree(testCopy.promiseHandle); testCopy.promiseHandle=null;
+    if (testCopy.promiseHandle) handleFree(testCopy.promiseHandle); testCopy.promiseHandle=null;
     const refresh=invoke(findMethod('.DecksManager','ForceRefreshCachedDecks',[]),manager);
     if (refresh.isNull()) throw new Error('No refresh promise returned; roster unverified.');
     testCopy.promiseHandle=handleNew(refresh,0); testCopy.phase='refresh_pending';
@@ -545,7 +656,7 @@ function deleteCopy(archive) {
   const guid=parseGuid(archive.arena_id), guidHandle=handleNew(guid,0);
   testCopy.phase='delete_unknown';
   try {
-    handleFree(testCopy.promiseHandle); testCopy.promiseHandle=null;
+    if (testCopy.promiseHandle) handleFree(testCopy.promiseHandle); testCopy.promiseHandle=null;
     const promise=invoke(findMethod('.DecksManager','DeleteDeck',['System.Guid']),manager,[objectUnbox(guid)]);
     if (promise.isNull()) throw new Error('No delete promise returned; outcome unknown.');
     testCopy.promiseHandle=handleNew(promise,0); testCopy.phase='delete_pending';
@@ -558,8 +669,8 @@ function releaseCopy() {
     testCopy=null;
   }
 }
-async function refreshRoster() {
-  attached(discover);
+async function refreshRoster(discoverFirst=true) {
+  if (discoverFirst) attached(discover);
   const handles=[];
   try {
     const state=await onUnityThread(() => {
@@ -590,6 +701,48 @@ async function refreshRoster() {
     if (handles.length) await onUnityThread(()=>handles.forEach(handle=>handleFree(handle)));
   }
 }
+async function verifyRestoredCopy() {
+  await onUnityThread(()=>{
+    copyManager(false);
+    if (!testCopy.fromArchive || testCopy.phase!=='created_verified') throw new Error('A verified new disk-restored copy is required.');
+  });
+  const refresh=await refreshRoster(false);
+  let promiseHandle;
+  try {
+    promiseHandle=await onUnityThread(()=>{
+      const manager=copyManager(false);
+      const guid=parseGuid(testCopy.created.arena_id), guidHandle=handleNew(guid,0);
+      try {
+        const promise=invoke(findMethod('.DecksManager','GetFullDeck',['System.Guid']),manager,[objectUnbox(guid)]);
+        if (promise.isNull()) throw new Error('No full-deck verification promise returned.');
+        return handleNew(promise,0);
+      } finally { handleFree(guidHandle); }
+    });
+    const deadline=Date.now()+20000;
+    while (Date.now()<deadline) {
+      const report=await onUnityThread(()=>{
+        copyManager(false);
+        const promise=handleTarget(promiseHandle);
+        if (!objectUnbox(invoke(objectMethod(promise,'get_IsDone',[]),promise)).readU8()) return null;
+        if (!objectUnbox(invoke(objectMethod(promise,'get_Successful',[]),promise)).readU8()) throw new Error('Full-deck verification failed.');
+        const actual=deckSnapshot(invoke(objectMethod(promise,'get_Result',[]),promise));
+        if (actual.arena_id!==testCopy.created.arena_id || testCopy.beforeIds.includes(actual.arena_id)
+          || actual.name!==testCopy.name) throw new Error('Fetched identity is not the owned test copy.');
+        const expected=JSON.parse(JSON.stringify(testCopy.expected));
+        expected.arena_id=actual.arena_id; expected.summary.DeckId=actual.arena_id;
+        const fidelity=sameSourceSnapshot(actual,expected);
+        testCopy.created=actual; // Archive the actual fetched result before any cleanup.
+        return {fetched_snapshot:actual,full_deck_promise_successful:true,
+          refresh_successful:refresh.force_refresh_successful,restored_from_disk_verified:fidelity};
+      });
+      if (report) return report;
+      await new Promise(resolve=>setTimeout(resolve,200));
+    }
+    throw new Error('Full-deck verification timed out; stop without deletion.');
+  } finally {
+    if (promiseHandle) await onUnityThread(()=>handleFree(promiseHandle));
+  }
+}
 function onUnityThread(run) {
   const klass = classes.get('UnityEngine.UnitySynchronizationContext');
   const exec = klass && iterate(classMethods, klass).find(m => methodName(m).readUtf8String() === 'Exec' && methodCount(m) === 0);
@@ -618,6 +771,11 @@ rpc.exports = {
   clearfolder() { return onUnityThread(clearTestFolder); },
   folderstatus() { return onUnityThread(folderStatus); },
   preparecopy(sourceId,operationId) { attached(discover); return onUnityThread(()=>prepareCopy(sourceId,operationId)); },
+  archivemodel(sourceId) { attached(discover); return onUnityThread(()=>archiveModel(sourceId)); },
+  preparerestore(archive,operationId) { attached(discover); return onUnityThread(()=>prepareRestore(archive,operationId)); },
+  adoptrestoredcopy(archive,prepared,created,beforeIds) { attached(discover); return onUnityThread(()=>adoptRestoredCopy(archive,prepared,created,beforeIds)); },
+  verifyrestoredcopy() { attached(discover); return verifyRestoredCopy(); },
+  writeready() { return onUnityThread(()=>{copyManager(false); return selectorObjects().length===1;}); },
   createcopy() { return onUnityThread(createCopy); },
   pollcopy() { return onUnityThread(pollCopy); },
   deletecopy(archive) { return onUnityThread(()=>deleteCopy(archive)); },

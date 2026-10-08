@@ -9,6 +9,8 @@ Game service/UI operations run on Unity's main thread through a one-shot listene
 on `UnitySynchronizationContext.Exec`. It does not launch or restart Arena, install
 a game mod, patch its files, or copy authentication tokens. Reports contain
 personal deck data: keep them outside git. New report files use mode `0600`.
+Metadata discovery borrows an existing attached IL2CPP thread without detaching
+it; only a helper attachment created by this probe is released.
 
 ## Setup and read checks
 
@@ -90,7 +92,7 @@ metadata fidelity for a future restore constructor.
 The initial runner stopped during a temporary Decks-screen rebuild after
 deletion was requested; no writes were repeated. A successful separate refresh
 proved the test copy absent and original decks intact. The subsequent polling
-fix is covered offline but has not been exercised in another live write run.
+fix also completed the later disk-restored copy's cleanup.
 Run write mode only after the user approves that specific create/delete test:
 
 ```sh
@@ -116,6 +118,47 @@ deletes a deck. The private experiment directory is a record, not a production
 transfer recovery journal. A copy test proves service access; it does **not**
 prove restoration by reconstructing a client deck from a disk archive.
 
+## Disk reconstruction and recovery
+
+**One disk-reconstructed deck persisted across an Arena restart and was verified
+and removed.** The initial verification probe crashed Arena after creation;
+an unsafe borrowed-thread detach path was fixed before successful recovery.
+This is a development feasibility result, not production reliability.
+
+Dry run (capture, detach, load the file in a fresh attachment, construct and compare
+without saving any Arena deck):
+
+```sh
+PYTHONPATH=src /tmp/tapps-native-poc/bin/python deck-manager-bridge/poc/disk_restore.py \
+  --pid ARENA_PID --output /tmp/arena-disk-dry-run
+```
+
+With approval for the specific duplicate create/delete test, add `--execute` and
+use a new output directory. The original source is never deleted. The typed
+archive retains model JSON as text, including Int64 style values; reconstruction
+restores checked physical summary fields, excluding computed setters that can
+rewrite attributes. It compares the full rebuilt snapshot before assigning a new
+test identity/name, checks capacity and creates once. A successful roster refresh
+and `GetFullDeck` verify the actual saved copy before durable archival and cleanup.
+Deserialization uses explicit checked native types and rejects `$type` properties.
+
+If interrupted **after** `06-created.json` exists, inspect the private journal
+before any further write. Do not rerun the normal create experiment. Recovery
+uses a new directory and the existing actual copy's recorded identity:
+
+```sh
+PYTHONPATH=src /tmp/tapps-native-poc/bin/python deck-manager-bridge/poc/disk_restore.py \
+  --pid ARENA_PID --resume /tmp/arena-disk-write-test \
+  --output /tmp/arena-disk-recovery
+```
+
+Recovery without `--execute` fetches/verifies/archives the existing copy only.
+With approval, `--execute` removes only that copy after durable fetched-data
+read-back. Recovery checks the original archive hash, operation identity, original
+roster and source, and unchanged named test snapshot. It has no create path. A
+missing/changed copy, account/service change or uncertain result stops; this is
+not a general production transfer journal. Detaching never deletes a deck.
+
 ## Checks and references
 
 ```sh
@@ -127,7 +170,10 @@ node --test deck-manager-bridge/poc/probe.test.cjs
 Offline tests cover exact archival, incomplete captures, no overwrite/partial
 publication, wrong PID refusal, interruption cleanup, and durable boundaries
 before deleting a test copy. JavaScript tests cover the UI/service guards and
-description normalization without accepting real card/cosmetic/metadata changes.
+description normalization without accepting real card/cosmetic/metadata changes,
+physical-summary reconstruction and IL2CPP thread ownership. Python tests cover
+disk loading, large integers, durable fetched-data cleanup and recovery with no
+create retries or targeting original IDs.
 They never attach to the game.
 
 References: [Frida API](https://frida.re/docs/javascript-api/),

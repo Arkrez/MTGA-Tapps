@@ -8,11 +8,13 @@ const vm = require('node:vm');
 function probe() {
   const calls = [];
   const context = {
+    handlers: {},
     rpc: {},
     Process: {findModuleByName: () => ({getExportByName: name => name})},
     NativeFunction: function(name) {
       return (...args) => {
         calls.push(name);
+        if (context.handlers[name]) return context.handlers[name](...args);
         if (name === 'il2cpp_gchandle_get_target') return context.heldManager;
         throw new Error(`Unexpected native API call: ${name}`);
       };
@@ -22,6 +24,23 @@ function probe() {
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'probe.js'), 'utf8'), context);
   return {context, calls};
 }
+
+test('metadata discovery never detaches an Arena-owned attached thread', () => {
+  const {context, calls} = probe();
+  context.handlers.il2cpp_thread_current = () => ({isNull: () => false});
+  assert.equal(vm.runInContext('attached(()=>42)', context), 42);
+  assert.deepEqual(calls, ['il2cpp_thread_current']);
+});
+
+test('the probe releases only its own new thread attachment on errors', () => {
+  const {context, calls} = probe();
+  context.handlers.il2cpp_thread_current = () => ({isNull: () => true});
+  context.handlers.il2cpp_domain_get = () => 'domain';
+  context.handlers.il2cpp_thread_attach = () => ({isNull: () => false});
+  context.handlers.il2cpp_thread_detach = () => {};
+  assert.throws(() => vm.runInContext('attached(()=>{throw new Error("fixture")})', context), /fixture/);
+  assert.deepEqual(calls, ['il2cpp_thread_current','il2cpp_domain_get','il2cpp_thread_attach','il2cpp_thread_detach']);
+});
 
 function deck() {
   return {
@@ -40,6 +59,23 @@ test('fresh roster can represent an empty description as null without changing t
   assert.equal(vm.runInContext('sameSourceSnapshot(left,right)', context), true);
   assert.equal(context.right.summary.Description, null); // Comparison never mutates the archive.
   assert.deepEqual(calls, []);
+});
+
+test('typed summary archive excludes computed setters while retaining physical metadata', () => {
+  const {context, calls} = probe();
+  context.physical = deck().summary;
+  context.serialized = JSON.stringify({...context.physical, IsFavorite: true, Format: 'Historic', LastPlayed: 'computed'});
+  const result = JSON.parse(vm.runInContext('physicalSummaryJson(serialized,physical)', context));
+  assert.deepEqual(result, context.physical);
+  assert.equal('IsFavorite' in result, false);
+  assert.deepEqual(calls, []);
+});
+
+test('a serializer omission cannot silently create a partial summary archive', () => {
+  const {context} = probe();
+  context.physical = deck().summary;
+  context.serialized = '{}';
+  assert.throws(() => vm.runInContext('physicalSummaryJson(serialized,physical)', context), /omitted summary field/);
 });
 
 for (const change of ['description', 'name', 'printing', 'quantity', 'skin', 'attribute']) {

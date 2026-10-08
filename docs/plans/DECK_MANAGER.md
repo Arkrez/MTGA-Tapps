@@ -4,9 +4,10 @@ Status: partially implemented on branch `deck-manager`. The general-purpose
 local library, dashboard/menu entry, text/full backups, revisions, passive
 capture, trash and backup merging are implemented. An explicit Mac IL2CPP proof
 now demonstrates bulk cache capture and an empty native section below Starter
-Decks. A disposable native create/archive/delete test also completed after
-read-only reconciliation. Disk-to-Arena restoration and production integration
-remain unproven.
+Decks. Native create/delete and restoration of one disk-reconstructed duplicate
+are demonstrated, including persistence across an Arena restart. The initial
+verification probe crashed Arena; recovery completed after a thread ownership
+fix. Production integration and reliability remain unproven.
 See [live experiment results](deck-manager/NATIVE_POC.md) and
 [reproduction commands](../../deck-manager-bridge/poc/README.md).
 See [implemented behavior](../DECK_MANAGER.md) and the [demo screenshot](deck-manager/preview.png).
@@ -38,12 +39,18 @@ The user confirmed the temporary collection section appeared after Starter Decks
 it was removed and its absence verified. The subsequent approved write test
 created, verified, archived and removed one new duplicate. A successful final
 native roster refresh verified its absence and all original IDs/card data intact.
-Arena and the tracker stayed running. Cache coverage is not authenticated roster coverage.
+Arena and the tracker stayed running during that first service test. A separate
+disk reconstruction test created one new deck from an archive loaded in a fresh
+attachment. Arena crashed during verification, then the user reopened it. After
+the probe fix, recovery fetched the existing copy, verified full metadata, piles
+and skins, archived it and removed it without another create request. Final
+refresh confirmed all 187 original IDs and card data intact. Cache coverage is
+not authenticated roster coverage.
 
-**Next gate:** reconstruct a client deck from its persisted archive and verify
-the exact restored result. The completed write test used an independent in-memory
-model; it does not prove disk-to-Arena restoration. Authenticated roster discovery
-and recovery-safe transfers remain necessary before production integration.
+**Next gate:** establish stable attachment/dispatcher behavior, authenticated
+account and roster discovery, and recovery-safe transfers. The single-deck disk
+restore gate passed, but broader format/cosmetic coverage, cold-cache fetching,
+bulk transfers and Windows support remain necessary before production integration.
 
 ## Findings and confidence
 
@@ -380,7 +387,7 @@ merely to force installation.
 
 | Phase | Work | Exit evidence |
 | --- | --- | --- |
-| 0 — Current-build feasibility | Mac arm64 POC demonstrates cache enumeration, GetFullDeck, bulk archival, an empty native section, and one disposable create/archive/delete with read-only reconciliation. Disk-to-Arena reconstruction, cold-cache coverage and Windows remain pending. | Document authenticated roster coverage, missing fields, capacity, account isolation and production loader/permission requirements. Native support is promised only where demonstrated. |
+| 0 — Current-build feasibility | Mac arm64 POC demonstrates cache enumeration, GetFullDeck, bulk archival, an empty native section, disposable create/delete and one disk-reconstructed deck surviving restart. Initial verification crashed Arena; fixed-probe recovery verified and removed the existing copy. Stability, cold-cache coverage and Windows remain pending. | Document authenticated roster coverage, missing fields, capacity, account isolation and production loader/permission requirements. Native support is promised only where demonstrated. |
 | 1 — Durable library | Implemented: migration 32, immutable revisions, general text/file import/export, dashboard/menu, capture of available save/submission lists, backup merge, trash and Deck Finder/history save actions. Account-authenticated observations, full roster reads and native writes are pending. | Python/UI tests and demo browser checks pass. Exact portable-text and full-JSON round trips, backup restore/merge and no gameplay rows from capture are tested. Log coverage is explicitly incomplete. |
 | 2 — Controlled transfers | Native client-service adapter, journal, single-deck store/restore, fresh verification, full-slot swap and recovery. | Approved disposable-deck tests establish round-trip fidelity and interruption recovery. No deletion before durable verification. |
 | 3 — Native collection section | Folder after Starter Decks, native tiles, transfer actions, disabled queue selection, dashboard/native consistency. | The same library and transfer state appear in both UIs; unsupported builds retain dashboard/manual access. |

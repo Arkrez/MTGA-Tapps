@@ -2,10 +2,11 @@
 
 Date: 2026-10-07. Branch: `deck-manager`.
 
-**The Mac native section, bulk capture, and create/delete services work on the
-tested running client.** Restoration by reconstructing a deck from disk remains
-unverified. The disposable-copy test completed after read-only reconciliation
-of a temporary Decks-screen rebuild during its final polling stage.
+**The Mac native section, bulk capture, create/delete services and restoration
+of one deck reconstructed from disk are demonstrated.** The restored duplicate
+persisted across an Arena restart, matched the archived data and was removed.
+The initial disk verification probe crashed Arena; recovery completed after
+fixing an unsafe thread detach path. This does not establish production stability.
 The user considers manual clipboard transfer insufficient: native transfer
 feasibility is the gate for continuing this feature.
 
@@ -27,6 +28,12 @@ feasibility is the gate for continuing this feature.
 | Live archive/delete | Actual created-copy snapshot fsynced/read back before `DeleteDeck`; only that new copy was targeted |
 | Final reconciliation | Separate `ForceRefreshCachedDecks` promise done/successful; copy absent; all 187 original IDs present; all original piles/skins identical |
 | Original non-net metadata | All non-net snapshots identical after treating null/empty descriptions as equivalent; source deck never removed |
+| Disk reconstruction | Capture session detached; new attachment loaded the persisted archive and rebuilt typed model/physical summary; full draft snapshot matched before new ID/name assignment |
+| Disk-restored creation | Exactly one new “Tapps Restore” duplicate created; actual identity/piles/skins verified and archived |
+| Interrupted verification | Arena crashed after creation, before cleanup; no delete or repeated create request had occurred |
+| Restart/recovery | User reopened Arena; fresh attachment adopted only the journaled new copy, successfully refreshed/fetched it and verified metadata, piles, printing IDs, quantities and skins |
+| Disk-copy cleanup | Fetched copy durably archived, removed and absent after successful refresh; no second create request |
+| Final whole-cache comparison | 187 original IDs present, no test copy; every original pile/skin identical; all original non-net snapshots identical with only null/empty description equivalence |
 
 This demonstrates the local in-process route on the actual Mac client rather
 than relying on a Windows mod's behavior. The section is empty: no library deck
@@ -36,7 +43,8 @@ The first UI attempts exposed Frida integer/callback argument mismatches and
 the difference between old 32-bit and Unity 6 pointer-sized GC handles. Temporary
 clones were identified and removed through the runtime. The final run verifies
 the Unity 6 ABI before cloning and checks section absence after destruction.
-Arena and the active tracker remained running. These initial UI/read tests
+Arena and the active tracker remained running during those initial UI/read tests.
+Those tests
 changed no saved decks; the subsequent write test created and removed only its
 new disposable duplicate.
 
@@ -51,12 +59,16 @@ Archive data retains printing IDs, quantities, Main/Sideboard/CommandZone/
 Companions piles, card skins, attributes and raw summary metadata. The nullable
 folder Guid is preserved as bytes rather than guessed. Numeric IDs are retained
 even when display names are unresolved. Unsupported summary fields/piles fail
-instead of silently creating a partial backup. This proves local disk round
-trip fidelity of the captured snapshot, **not disk-to-Arena restoration**.
+instead of silently creating a partial backup. The bulk capture establishes
+snapshot archival fidelity. The subsequent separate single-deck experiment
+establishes disk-to-Arena restoration for its tested deck.
 
-The native conversion helper normalized the draft's `IsFavorite` attribute.
-A production restore constructor must explicitly preserve/reapply required
-metadata instead of assuming client conversion/export helpers are lossless.
+The native conversion helper normalized the first in-memory draft's `IsFavorite`
+attribute. Disk reconstruction now explicitly restores the physical summary.
+Computed JSON properties (`IsFavorite`, format and date setters) are excluded:
+their deserialization can rewrite raw attributes. Typed model JSON is retained
+as text so Int64 style values never pass through JavaScript's numeric conversion.
+The reconstructed draft is compared against its archived snapshot before creation.
 No broad printing/cosmetics/format matrix has been run yet.
 
 `CreateDeck(Client_Deck, String, Boolean)`, `DeleteDeck(Guid)` and
@@ -64,7 +76,7 @@ No broad printing/cosmetics/format matrix has been run yet.
 Windows/other architectures, installed-app
 permissions, shipping a loader and client-update compatibility are untested.
 
-## Completed write test and remaining gate
+## Completed service and disk tests
 
 [Experiment code and commands](../../../deck-manager-bridge/poc/README.md)
 include a prepared, explicitly enabled disposable-copy test. It creates one
@@ -94,14 +106,38 @@ while retaining the same-service identity check; actual create/delete still
 require Decks open. Source verification allows only the observed equivalent
 empty-description representation. Offline JavaScript tests verify those
 boundaries and rejection of real card/metadata changes. This revised automated
-polling path has not been exercised in another live write test.
+polling path also completed the later disk-copy cleanup successfully.
 
-The next feasibility gate is actual archive reconstruction:
-capture → reconstruct **from saved data** → create disposable deck → fetch and
-compare every pile/printing/cosmetic → remove only the disposable deck. Only
-after this succeeds should production store/restore and bulk transfers proceed.
+The user then authorized disk restoration while on Decks outside a match. The
+probe persisted a typed archive, detached completely, loaded the file in a new
+attachment and reconstructed a new independent deck from those bytes. A dry run
+verified the draft's complete snapshot. The live run created exactly one duplicate
+and persisted its actual returned identity/data, then Arena crashed during the
+verification stage, before any cleanup request.
 
-Production work then needs authenticated account/roster discovery, a durable
+The macOS crash report records a main-thread access fault. Inspection found a
+probe path that could detach an already-attached, Arena-owned IL2CPP thread during
+an asynchronous continuation. The probe now checks `thread_current`, detaches only
+its own new attachments and avoids nested discovery in the verification path.
+Offline tests exercise both thread ownership cases. The crash report alone does
+not conclusively attribute the fault; broad reliability remains untested.
+
+After the user reopened Arena and authorized continuing, `disk_restore.py --resume`
+validated the original journal/archive digest and adopted only the already-created
+copy. It cannot enter the create phase. A successful native roster refresh and
+`GetFullDeck` returned that persisted copy; its full snapshot matched the expected
+disk reconstruction, allowing only null/empty-description equivalence. The fetched
+snapshot was fsynced/read back before removing that copy. Cleanup and final refresh
+completed without a repeated create request. A separate read-only whole-cache
+comparison confirmed every original ID, pile and skin, and all original non-net
+metadata intact. The tracker was never stopped or restarted by the experiment.
+
+This passes the **single-deck disk restoration feasibility gate**. It does not
+yet demonstrate a stable end-to-end unattended run, arbitrary archived decks,
+bulk transfers or a production recovery journal.
+
+Production work first needs stable attachment/dispatcher behavior and wider
+format/cosmetic coverage, then authenticated account/roster discovery, a durable
 reconciliation journal, capacity-aware restore/swap, native tiles backed by the
 same tracker library, scene lifecycle handling and supported platform packaging.
 Do not expose native transfers in the dashboard before those gates are met.
@@ -110,3 +146,7 @@ Private runtime reports/databases are intentionally outside the repository.
 No personal deck names, IDs, card lists, credentials or proprietary binaries
 are included in this report. References and reproduction details are in the
 experiment README; the tracker does not automatically attach to Arena.
+
+Offline validation after the disk/recovery changes: full Python suite **826
+passed, 1 skipped, 1 deselected, 5 subtests passed**; JavaScript probe tests **15
+passed**; probe syntax and diff whitespace checks passed. UI was unchanged.

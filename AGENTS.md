@@ -148,14 +148,22 @@ Primary code paths:
   and `ui/src/components/DeckManagerPage.test.tsx`.
 - `deck-manager-bridge/poc/`: explicit development-only Frida/IL2CPP experiment,
   never auto-loaded or packaged. Mac Unity 6 native folder and bulk cache capture
-  are demonstrated; one disposable create/archive/delete test completed after
-  read-only reconciliation. Disk-to-Arena reconstruction remains unverified.
+  are demonstrated; one disk-reconstructed duplicate persisted across an Arena
+  restart, was fetched with matching metadata/piles/skins, and was removed.
+  The initial verification probe crashed Arena; borrowed-thread detach was fixed
+  before recovery. This is feasibility evidence, not production reliability.
   Attach to an explicit running PID; never restart Arena or modify its installation.
   Reports contain private decks and belong outside git. Capture targets a new,
   separate database only. Temporary UI tests require an agreed out-of-match Decks
-  session; `disposable_copy.py --execute` requires approval for its specific account
+  session; `disposable_copy.py --execute` and `disk_restore.py --execute` require
+  approval for their specific account
   create/delete test. It may delete only its new verified test copy after durable
-  read-back, never the source. Unknown outcomes stop without retry. See its README
+  read-back, never the source. Unknown outcomes stop without retry.
+  `disk_restore.py --resume` adopts only the journaled existing copy; it cannot
+  create another deck. Typed archives keep Int64 JSON as text and restore only
+  physical summary fields, excluding computed setters. Never detach an existing
+  Arena-owned IL2CPP thread; release only attachments made by the probe.
+  See its README
   and `docs/plans/deck-manager/NATIVE_POC.md`; offline checks:
   `PYTHONPATH=src venv/bin/python -m pytest tests/test_native_deck_poc.py -q`
   and `node --check deck-manager-bridge/poc/probe.js` followed by
