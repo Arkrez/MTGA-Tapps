@@ -133,6 +133,12 @@ Primary code paths:
   Moving a deck to Trash opens a recoverable-action confirmation; native Restore
   to Arena (or Copy for Arena for text-only revisions) appears as a yellow button
   in the deck dialog header beside Close.
+  Every saved/trash tile has a top-right 24px checkbox in a separate 44px target;
+  selection never opens details. Local bulk removal supports all saved deck types,
+  including decks still in Arena. Both bulk Trash and permanent-delete dialogs list
+  every selected deck; `/api/deck-manager/remove-selected` validates explicit
+  confirmation and applies the entire selection in one transaction. Permanent
+  deletion still requires Trash and protects pending transfer backups.
   Migration 32 creates independent `managed_decks`, `managed_deck_revisions`,
   `managed_deck_cards` and `managed_deck_bindings` tables. Library trash/reset
   never deletes Arena decks; gameplay reset preserves the library. Permanent local
@@ -144,8 +150,7 @@ Primary code paths:
   `native_deck_archive.py` + `assets/arena_decks.js`: direct native Deck Manager
   jobs, explicitly started from the dashboard. GET/status polling never attaches.
   The Arena tab supports bulk backup/move; Saved supports direct native restores.
-  Live integration validation is deferred while the user plays; do not attach or
-  restart Arena/tracker during that game. Wait for the user to explicitly report
+  Do not attach or restart Arena/tracker while the user plays. Wait for the user to explicitly report
   being out of a match on Decks before any live validation; app restarts still
   require explicit approval.
   Initial runtime support is Apple Silicon macOS IL2CPP Unity `6000.3.14f1`, gated
@@ -166,6 +171,12 @@ Primary code paths:
   the hashed account provenance. No queue, crafting or gameplay calls are allowed.
   Tests: `tests/test_deck_transfers.py` and `node --test tests/native_decks.test.cjs`
   are offline and must never attach to Arena. UI checks remain the normal four commands.
+  `scripts/preview_deck_manager.py --db <separate-library> --tracker-db <active-db>`
+  runs only a dashboard on port 8880 by default, with live Arena actions. Its game
+  guard reads the active DB in read-only mode on each check, fails closed when
+  unavailable, and rejects sharing that database with the test library. Other
+  dashboard POST routes are disabled. It starts no tracker or desktop app.
+  `tests/test_deck_manager_preview.py` covers isolation and fresh game-status checks.
 - `src/mtga_tracker/deck_capture.py`: the existing log-entry pipeline archives available
   `DeckUpsertDeckV3` / `EventSetDeckV3` outgoing lists for any format before game-exclusion
   gates. They are unconfirmed observations, not a complete roster or successful save.

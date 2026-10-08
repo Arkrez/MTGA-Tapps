@@ -354,21 +354,61 @@ def delete_deck(conn: sqlite3.Connection, deck_id: str) -> None:
             if not conn.execute("SELECT 1 FROM managed_decks WHERE id = ?", (deck_id,)).fetchone():
                 raise KeyError("Saved deck not found.")
             raise DeckManagerError("Move this deck to Trash before deleting it permanently.")
-        if conn.execute(
-            "SELECT 1 FROM managed_deck_transfers WHERE deck_id=? AND phase NOT IN ('complete','cancelled')",
-            (deck_id,),
-        ).fetchone():
-            raise DeckManagerError(
-                "Reconcile this deck’s interrupted Arena transfer before deleting its backup."
-            )
-        conn.execute(
-            "DELETE FROM managed_deck_cards WHERE revision_id IN "
-            "(SELECT id FROM managed_deck_revisions WHERE deck_id = ?)",
-            (deck_id,),
+        _delete_deck_rows(conn, deck_id)
+
+
+def _delete_deck_rows(conn: sqlite3.Connection, deck_id: str) -> None:
+    """Delete within the caller's write transaction, preserving pending backups."""
+    if conn.execute(
+        "SELECT 1 FROM managed_deck_transfers WHERE deck_id=? "
+        "AND phase NOT IN ('complete','cancelled')",
+        (deck_id,),
+    ).fetchone():
+        raise DeckManagerError(
+            "Reconcile this deck’s interrupted Arena transfer before deleting its backup."
         )
-        conn.execute("DELETE FROM managed_deck_bindings WHERE deck_id = ?", (deck_id,))
-        conn.execute("DELETE FROM managed_deck_revisions WHERE deck_id = ?", (deck_id,))
-        conn.execute("DELETE FROM managed_decks WHERE id = ?", (deck_id,))
+    conn.execute(
+        "DELETE FROM managed_deck_cards WHERE revision_id IN "
+        "(SELECT id FROM managed_deck_revisions WHERE deck_id = ?)",
+        (deck_id,),
+    )
+    conn.execute("DELETE FROM managed_deck_bindings WHERE deck_id = ?", (deck_id,))
+    conn.execute("DELETE FROM managed_deck_revisions WHERE deck_id = ?", (deck_id,))
+    conn.execute("DELETE FROM managed_decks WHERE id = ?", (deck_id,))
+
+
+def remove_decks(conn: sqlite3.Connection, deck_ids: Any, action: str) -> int:
+    """Move selected saved decks to Trash or delete trashed decks as one transaction."""
+    if (
+        not isinstance(deck_ids, list)
+        or not 1 <= len(deck_ids) <= 2000
+        or any(not isinstance(i, str) or not i.strip() or len(i) > 128 for i in deck_ids)
+        or len(set(deck_ids)) != len(deck_ids)
+        or action not in {"trash", "delete"}
+    ):
+        raise DeckManagerError("Select between 1 and 2,000 unique saved decks to remove.")
+    with conn:
+        # Acquire the write lock before checking the entire selection. No nested
+        # commits: a missing deck or protected backup rolls back the whole batch.
+        conn.execute("UPDATE managed_decks SET id=id WHERE id=?", (deck_ids[0],))
+        for deck_id in deck_ids:
+            row = conn.execute(
+                "SELECT trashed_at FROM managed_decks WHERE id=?", (deck_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError("A selected saved deck no longer exists. Refresh your collection.")
+            if bool(row[0]) != (action == "delete"):
+                raise DeckManagerError("The selection changed. Refresh and select the decks again.")
+        if action == "trash":
+            timestamp = now()
+            conn.executemany(
+                "UPDATE managed_decks SET trashed_at=?,updated_at=? WHERE id=?",
+                [(timestamp, timestamp, deck_id) for deck_id in deck_ids],
+            )
+        else:
+            for deck_id in deck_ids:
+                _delete_deck_rows(conn, deck_id)
+    return len(deck_ids)
 
 
 def merge_library(conn: sqlite3.Connection) -> Dict[str, int]:

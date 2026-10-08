@@ -197,14 +197,20 @@ def test_permanent_delete_removes_all_revisions_and_bindings_only_for_selected_d
     with conn:
         conn.execute(
             "INSERT INTO managed_deck_bindings (account_key, arena_deck_id, deck_id, observed_at) "
-            "VALUES ('account', 'arena-id', ?, '2026-10-06')", (saved["id"],)
+            "VALUES ('account', 'arena-id', ?, '2026-10-06')",
+            (saved["id"],),
         )
-        conn.execute("INSERT INTO tracker_sessions (id, started_at) VALUES ('session', '2026-10-06')")
+        conn.execute(
+            "INSERT INTO tracker_sessions (id, started_at) VALUES ('session', '2026-10-06')"
+        )
         conn.execute("INSERT INTO matches (id, session_id) VALUES ('match', 'session')")
-        conn.execute("INSERT INTO games (id, session_id, match_id) VALUES ('game', 'session', 'match')")
+        conn.execute(
+            "INSERT INTO games (id, session_id, match_id) VALUES ('game', 'session', 'match')"
+        )
         conn.execute(
             "INSERT INTO participants (id, game_id, role, deck_id, deck_name) "
-            "VALUES ('player', 'game', 'player', ?, 'Favorite deck')", (saved["id"],)
+            "VALUES ('player', 'game', 'player', ?, 'Favorite deck')",
+            (saved["id"],),
         )
     dm.update_metadata(conn, saved["id"], {"trashed": True})
     dm.delete_deck(conn, saved["id"])
@@ -215,7 +221,10 @@ def test_permanent_delete_removes_all_revisions_and_bindings_only_for_selected_d
     assert conn.execute("SELECT COUNT(*) FROM managed_deck_cards").fetchone()[0] == 5
     assert conn.execute("SELECT COUNT(*) FROM managed_deck_bindings").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM games").fetchone()[0] == 1
-    assert conn.execute("SELECT deck_id FROM participants WHERE id = 'player'").fetchone()[0] == saved["id"]
+    assert (
+        conn.execute("SELECT deck_id FROM participants WHERE id = 'player'").fetchone()[0]
+        == saved["id"]
+    )
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
@@ -238,10 +247,13 @@ def test_permanent_delete_failure_rolls_back_children(conn):
     with conn:
         conn.execute(
             "INSERT INTO managed_deck_bindings (account_key, arena_deck_id, deck_id, observed_at) "
-            "VALUES ('account', 'arena-id', ?, '2026-10-06')", (saved["id"],)
+            "VALUES ('account', 'arena-id', ?, '2026-10-06')",
+            (saved["id"],),
         )
-        conn.execute("CREATE TRIGGER fail_delete BEFORE DELETE ON managed_decks "
-                     "BEGIN SELECT RAISE(ABORT, 'Deletion failed'); END")
+        conn.execute(
+            "CREATE TRIGGER fail_delete BEFORE DELETE ON managed_decks "
+            "BEGIN SELECT RAISE(ABORT, 'Deletion failed'); END"
+        )
     with pytest.raises(sqlite3.IntegrityError, match="Deletion failed"):
         dm.delete_deck(conn, saved["id"])
     assert dm.deck_detail(conn, saved["id"])["deck"]["import_text"] == TEXT
@@ -250,17 +262,79 @@ def test_permanent_delete_failure_rolls_back_children(conn):
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
+def test_bulk_trash_preserves_revisions_and_unselected_decks(conn):
+    decks = [dm.save_deck(conn, dm.parse_import(TEXT)) for _ in range(3)]
+    ids = [d["id"] for d in decks[:2]]
+    assert dm.remove_decks(conn, ids, "trash") == 2
+    assert all(dm.deck_detail(conn, i)["trashed_at"] for i in ids)
+    assert not dm.deck_detail(conn, decks[2]["id"])["trashed_at"]
+    assert conn.execute("SELECT COUNT(*) FROM managed_deck_revisions").fetchone()[0] == 3
+    assert conn.execute("SELECT COUNT(*) FROM managed_deck_transfers").fetchone()[0] == 0
+    assert dm.remove_decks(conn, ids, "delete") == 2
+    assert [d["id"] for d in dm.list_decks(conn)] == [decks[2]["id"]]
+    assert conn.execute("SELECT COUNT(*) FROM managed_deck_cards").fetchone()[0] == 5
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_bulk_removal_rolls_back_when_selection_changes_or_a_delete_fails(conn):
+    decks = [dm.save_deck(conn, dm.parse_import(TEXT)) for _ in range(2)]
+    ids = [d["id"] for d in decks]
+    with pytest.raises(KeyError):
+        dm.remove_decks(conn, [ids[0], "missing"], "trash")
+    assert all(not dm.deck_detail(conn, i)["trashed_at"] for i in ids)
+    dm.update_metadata(conn, ids[1], {"trashed": True})
+    with pytest.raises(dm.DeckManagerError, match="selection changed"):
+        dm.remove_decks(conn, ids, "delete")
+    dm.update_metadata(conn, ids[0], {"trashed": True})
+    with conn:
+        conn.execute(
+            "CREATE TRIGGER fail_last_delete BEFORE DELETE ON managed_decks "
+            f"WHEN OLD.id='{ids[1]}' BEGIN SELECT RAISE(ABORT, 'Deletion failed'); END"
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        dm.remove_decks(conn, ids, "delete")
+    assert len(dm.list_decks(conn)) == 2
+    assert conn.execute("SELECT COUNT(*) FROM managed_deck_cards").fetchone()[0] == 10
+
+
+def test_bulk_removal_api_requires_confirmation_and_validates_all_ids(tmp_path):
+    path = tmp_path / "selected.db"
+    conn = dm.library_connection(path)
+    saved = dm.save_deck(conn, dm.parse_import(TEXT))
+    conn.close()
+    endpoint = "/api/deck-manager/remove-selected"
+    for invalid in ([], [saved["id"], saved["id"]], [None], "all", ["missing"]):
+        response = api.handle_post(
+            endpoint, {"ids": invalid, "action": "trash", "confirm": "TRASH"}, path
+        )
+        assert response[0] in (400, 404)
+    assert api.handle_post(endpoint, {"ids": [saved["id"]], "action": "trash"}, path)[0] == 400
+    assert api.handle_post(
+        endpoint, {"ids": [saved["id"]], "action": "trash", "confirm": "TRASH"}, path
+    ) == (200, {"ok": True, "count": 1})
+
+
 def test_delete_api_requires_confirmation_and_uses_selected_database(tmp_path):
     selected = tmp_path / "chosen.db"
     path = "/api/deck-manager/delete"
-    for invalid in ({"id": "deck"}, {"id": "", "confirm": "DELETE"},
-                    {"id": 1, "confirm": "DELETE"}, {"id": "deck", "confirm": True}, []):
+    for invalid in (
+        {"id": "deck"},
+        {"id": "", "confirm": "DELETE"},
+        {"id": 1, "confirm": "DELETE"},
+        {"id": "deck", "confirm": True},
+        [],
+    ):
         assert api.handle_post(path, invalid, selected)[0] == 400
         assert not selected.exists()
     _, saved = api.handle_post("/api/deck-manager/import", {"text": TEXT}, selected)
     payload = {"id": saved["id"], "confirm": "DELETE"}
     assert api.handle_post(path, payload, selected)[0] == 400
-    assert api.handle_post("/api/deck-manager/update", {"id": saved["id"], "trashed": True}, selected)[0] == 200
+    assert (
+        api.handle_post("/api/deck-manager/update", {"id": saved["id"], "trashed": True}, selected)[
+            0
+        ]
+        == 200
+    )
     assert api.handle_post(path, payload, selected) == (200, {"ok": True})
     assert api.handle_get("/api/deck-manager", {}, selected)[1]["decks"] == []
     assert api.handle_post(path, payload, selected)[0] == 404
@@ -268,6 +342,7 @@ def test_delete_api_requires_confirmation_and_uses_selected_database(tmp_path):
 
 def test_read_only_library_and_selected_database(tmp_path, monkeypatch):
     from mtga_tracker import deck_native_api
+
     monkeypatch.setattr(deck_native_api.nb, "availability", lambda: (True, "Available"))
     selected = tmp_path / "chosen.db"
     assert api.handle_get("/api/deck-manager", {}, selected)[1]["decks"] == []

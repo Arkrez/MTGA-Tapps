@@ -9,8 +9,11 @@ are demonstrated, including persistence across an Arena restart. The initial
 verification probe crashed Arena; recovery completed after a thread ownership
 fix. The tracker now includes native background jobs, authenticated account/service
 guards, fresh roster/full-deck reads, a durable transfer journal and bulk dashboard
-backup/move/restore controls. Integration is covered offline; live validation is
-deferred because the user is playing ranked and prohibited interruption.
+backup/move/restore controls. Integration is covered offline; live roster refresh
+and backup of all 94 ordinary decks passed on 2026-10-08 after the user confirmed
+being out of a match on Decks. The separate live-test dashboard is running with an
+isolated library and a read-only active-game guard from the existing tracker.
+Integrated move/restore validation remains pending.
 See [live experiment results](deck-manager/NATIVE_POC.md) and
 [reproduction commands](../../deck-manager-bridge/poc/README.md).
 See [implemented behavior](../DECK_MANAGER.md) and the [demo screenshot](deck-manager/preview.png).
@@ -50,8 +53,8 @@ and skins, archived it and removed it without another create request. Final
 refresh confirmed all 187 original IDs and card data intact. Cache coverage is
 not authenticated roster coverage.
 
-**Next work:** live validation of the integrated adapter after the user explicitly
-returns to Decks, then the persistent in-game collection/tiles. Account guards,
+**Next work:** live move/restore validation of the integrated adapter from the
+isolated dashboard, then the persistent in-game collection/tiles. Account guards,
 fresh service reads, recovery journal and bulk transfers are implemented with
 offline coverage. Wider format/cosmetic coverage, installed-bundle permissions,
 cold-cache behavior and Windows support still need runtime evidence. Do not attach

@@ -6,7 +6,8 @@ tray/menu. There is no product-imposed deck-count limit in this library.
 
 This branch now implements direct native backup, move and restore from the tracker,
 including bulk selection. The integrated adapter has been verified with offline
-tests; live validation of this integration is deferred while the user is playing.
+tests, plus a live roster refresh and backup of 94 decks on 2026-10-08. Integrated
+move/restore validation remains pending through the separate live test dashboard.
 The earlier live proof established native disk restoration. A persistent collection
 category inside Arena remains separate work in [the implementation plan](plans/DECK_MANAGER.md).
 
@@ -87,6 +88,16 @@ starts from the selected list;
 earlier snapshots remain available. The dialog supports Escape/backdrop dismissal,
 keeps keyboard focus inside while open and returns focus on closing. Notes and
 tags belong to the library entry.
+Each selection checkbox is in the top right of the tile, with a larger click
+target separate from the details button. Select any saved decks, or use **Select
+all** for the current search, then **Move selected to trash**. The confirmation
+lists every selected deck. This includes text imports and backups of decks still
+in Arena; native restore requires all selected entries to be native backups that
+are absent from the connected roster. Changing the search or tab clears selection.
+In **Trash**, **Delete selected permanently** also lists the full selection before
+confirmation. Bulk removal is atomic: a missing/changed deck or protected pending
+transfer prevents partial deletion.
+
 The red **Move to trash** button asks for confirmation and affects only this local
 entry; **Restore from trash** recovers
 it. To remove it completely, open the **Trash** tab, click the deck and choose
@@ -98,6 +109,26 @@ an old backup or capturing the deck again can add it back to the collection.
 
 The local library works with Arena closed. Card artwork uses the dashboard's
 existing online Scryfall image loader; saved lists remain readable offline.
+
+## Test alongside another branch
+
+Use a separate `deck-manager` worktree, its built `ui/dist`, and a dashboard-only
+server. `scripts/preview_deck_manager.py` accepts `--db` for a separate persistent
+deck library, `--tracker-db` for the existing tracker's database, and `--port`
+(default 8880). Set `PYTHONPATH=src` in the feature worktree when using an interpreter
+whose editable installation points to another checkout.
+
+This starts no second tracker. Playing a game continues to write analytics only
+through the existing tracker. The preview reads its live-game row using read-only
+SQLite connections, blocks native attachment during a game, and fails closed if
+the game guard cannot be read. Only Deck Manager writes are permitted from this
+test server; app settings and analytics restore/reset are disabled.
+
+Local imports, revisions and Trash affect the separate test library. **Connect**,
+backup, move and restore use the real running Arena client: a confirmed move removes
+the selected real deck after backing it up, and restore recreates it from the test
+library. Keep that library for as long as you need its backups. The library remains
+usable with Arena closed; connecting and transfers require Decks outside a match.
 
 ## Restore and export
 

@@ -113,6 +113,7 @@ def handle_post(path, payload, db_path):
         "/api/deck-manager/import",
         "/api/deck-manager/update",
         "/api/deck-manager/delete",
+        "/api/deck-manager/remove-selected",
         "/api/deck-manager/capture",
     ):
         return None
@@ -120,6 +121,13 @@ def handle_post(path, payload, db_path):
         return 400, {"error": "Expected a JSON object."}
     conn = None
     try:
+        if path.endswith("/remove-selected"):
+            action = payload.get("action")
+            if action not in ("trash", "delete") or payload.get("confirm") != action.upper():
+                raise dm.DeckManagerError("Confirm removal of the selected saved decks.")
+            conn = dm.library_connection(db_path)
+            count = dm.remove_decks(conn, payload.get("ids"), action)
+            return 200, {"ok": True, "count": count}
         if path.endswith("/delete"):
             deck_id = payload.get("id")
             if not isinstance(deck_id, str) or not deck_id.strip():

@@ -4,6 +4,12 @@
 
 ### Features
 
+- Deck Manager selection moves to the top right with a larger click target.
+  Bulk-action buttons match the existing page styles. All saved decks can be
+  selected for an atomic move to Trash; trashed decks can be permanently deleted
+  in a batch. Both confirmations list every selected deck. A dashboard-only test
+  launcher isolates the library while reading the active tracker's game status
+  without writing to its database or starting another tracker.
 - Deck Manager now has direct native backup, move and restore jobs on the
   `deck-manager` branch, including an Arena deck grid, bulk selection, confirmation
   before moving decks out of Arena, and a yellow Restore to Arena action for native
@@ -11,8 +17,9 @@
   read-only reconciliation without repeating uncertain requests. Active tracked games
   block attachment; account changes, full slots and changed decks block writes.
   The initial adapter targets Apple Silicon macOS Unity `6000.3.14f1`. Integrated
-  live verification and the persistent in-game collection section remain pending;
-  the existing game/tracker were left running during implementation.
+  live roster refresh and backup of 94 real decks passed on 2026-10-08; integrated
+  move/restore validation and the persistent in-game collection section remain pending.
+  The existing game/tracker were left running during implementation and verification.
 - Added an explicit development-only native Deck Manager experiment. Live Mac
   tests demonstrated bulk cached-deck capture and a temporary native collection
   section below Starter Decks. One native disposable create/archive/delete test
@@ -33,8 +40,8 @@
   keep revisions, search names/formats/tags, add notes, recover local Trash and
   download `.tappsdeck` backups. Deck Finder and deck-history pages can save lists
   into this library. Available outgoing Arena save/submission lists are archived
-  independently of gameplay statistics. Restore currently uses clipboard text
-  and Arena's Import button; native Arena UI and direct transfers are pending.
+  independently of gameplay statistics. Text-only revisions support clipboard
+  import; native backups support direct transfers on the tested Mac runtime.
 - Tracker backups carry the independent deck library. Merging retains revisions;
   restore previews require confirmation for deck/revision loss, including old
   backups that predate Deck Manager. Gameplay reset preserves saved decks.

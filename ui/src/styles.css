@@ -5745,7 +5745,13 @@ a.sidebar-deck-finder {
 .deck-manager-toolbar .deck-manager-add:hover:not(:disabled) { background: color-mix(in srgb, var(--deck-manager-button) 88%, white); }
 .deck-manager-toolbar .deck-manager-delete { border-color: #b4232b; color: #fff; background: #b4232b; }
 .deck-manager-toolbar .deck-manager-delete:hover:not(:disabled), .deck-manager-toolbar .deck-manager-delete:focus-visible { border-color: #cf3039; background: #cf3039; }
+.deck-manager-toolbar .deck-manager-copy { background: #f4c95d; border-color: #f4c95d; color: #241c07; font-weight: 700; }
+.deck-manager-toolbar .deck-manager-copy:hover:not(:disabled), .deck-manager-toolbar .deck-manager-copy:focus-visible { background: #ffda79; border-color: #ffda79; }
 .deck-manager-delete-confirmation > p { line-height: 1.6; }
+.deck-manager-confirmation-list { list-style: none; padding: 0; margin: 16px 0; max-height: 320px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; }
+.deck-manager-confirmation-list li { padding: 10px 12px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.deck-manager-confirmation-list li:last-child { border-bottom: 0; }
+.deck-manager-confirmation-list small { display: block; margin-top: 4px; color: var(--muted); }
 .deck-manager-toolbar button:disabled, .deck-manager-heading-actions button:disabled { opacity: 0.5; cursor: default; }
 .deck-manager-search, .deck-manager-modal input, .deck-manager-modal textarea, .deck-manager-modal select {
   box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
@@ -5757,18 +5763,23 @@ a.sidebar-deck-finder {
 .deck-manager-import > label > textarea { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; line-height: 1.6; }
 .deck-manager-decks { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: start; gap: 16px; }
 .deck-manager-native-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 16px 0; }
-.deck-manager-native-bar label { display: inline-flex; align-items: center; gap: 8px; }
+.deck-manager-native-bar label { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; }
+.deck-manager-native-bar input[type="checkbox"] { width: 24px; height: 24px; margin: 0; accent-color: var(--deck-manager-accent); cursor: pointer; }
 .deck-manager-native-bar span { color: var(--muted); font-size: 0.9rem; }
 .deck-manager-tile-wrapper { position: relative; min-width: 0; }
-.deck-manager-tile-check { position: absolute; z-index: 1; top: 7px; left: 7px; accent-color: var(--deck-manager-accent); width: 16px; height: 16px; }
-.deck-manager-arena-tile { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); cursor: pointer; }
+.deck-manager-tile-select { position: absolute; z-index: 1; top: 4px; right: 4px; display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; cursor: pointer; border-radius: 8px; }
+.deck-manager-tile-select:hover { background: color-mix(in srgb, var(--deck-manager-accent) 12%, var(--surface)); }
+.deck-manager-tile-select:focus-within { outline: 2px solid var(--deck-manager-accent); outline-offset: 1px; }
+.deck-manager-tile-check { accent-color: var(--deck-manager-accent); width: 24px; height: 24px; margin: 0; cursor: pointer; }
+.deck-manager-tile-wrapper:has(input:checked) .deck-manager-tile { border-color: var(--deck-manager-accent); }
+.deck-manager-arena-tile { position: relative; display: flex; align-items: center; gap: 12px; min-width: 0; padding: 14px 60px 14px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); cursor: pointer; }
 .deck-manager-arena-tile:has(input:checked) { border-color: var(--deck-manager-accent); }
-.deck-manager-arena-tile input { accent-color: var(--deck-manager-accent); }
+.deck-manager-arena-tile input { position: absolute; top: 14px; right: 14px; accent-color: var(--deck-manager-accent); width: 24px; height: 24px; margin: 0; }
 .deck-manager-arena-tile .deck-visual { width: 54px; height: 54px; flex: 0 0 54px; }
 .deck-manager-arena-tile strong { display: block; overflow-wrap: anywhere; font-size: 0.95rem; }
 .deck-manager-arena-tile small { display: block; color: var(--muted); font-size: 0.8rem; margin-top: 5px; }
 .deck-manager-tile {
-  display: flex; align-items: center; gap: 14px; min-height: 114px; padding: 14px;
+  display: flex; align-items: center; gap: 14px; min-height: 114px; padding: 14px 60px 14px 14px;
   text-align: left; width: 100%; min-width: 0; border: 1px solid var(--border); border-radius: 10px;
   background: var(--surface); color: var(--text); font: inherit; cursor: pointer;
   transition: border-color 120ms ease, background 120ms ease;

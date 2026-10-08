@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  fetchDeckLibrary, fetchManagedDeck, importManagedDeck, updateManagedDeck, exportManagedDeck, deleteManagedDeck,
+  fetchDeckLibrary, fetchManagedDeck, importManagedDeck, updateManagedDeck, exportManagedDeck, deleteManagedDeck, removeManagedDecks,
   fetchNativeDeckStatus, startNativeDeckJob, fetchNativeDeckJob,
   type ManagedDeck, type ManagedDeckDetail,
 } from '../deckManagerApi';
@@ -9,7 +9,7 @@ import { DeckManagerPage } from './DeckManagerPage';
 
 vi.mock('../deckManagerApi', () => ({
   fetchDeckLibrary: vi.fn(), fetchManagedDeck: vi.fn(), importManagedDeck: vi.fn(),
-  updateManagedDeck: vi.fn(), exportManagedDeck: vi.fn(), captureArenaDecks: vi.fn(), deleteManagedDeck: vi.fn(),
+  updateManagedDeck: vi.fn(), exportManagedDeck: vi.fn(), captureArenaDecks: vi.fn(), deleteManagedDeck: vi.fn(), removeManagedDecks: vi.fn(),
   fetchNativeDeckStatus: vi.fn(), startNativeDeckJob: vi.fn(), fetchNativeDeckJob: vi.fn(),
 }));
 
@@ -28,6 +28,80 @@ const detail: ManagedDeckDetail = { ...saved, revision_id: 'new',
 const capabilities = { arena_transfers: false, native_section: false, capacity: null,
   message: 'Direct Arena transfers are not connected in this build.' };
 
+it('selects an imported deck using its full checkbox label without opening details', async () => {
+  render(<DeckManagerPage />);
+  const checkbox = await screen.findByRole('checkbox', { name: `Select ${saved.name}` });
+  fireEvent.click(checkbox.closest('label')!);
+  expect(checkbox).toBeChecked();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(fetchManagedDeck).not.toHaveBeenCalled();
+});
+
+it('lists every selected saved deck before a bulk move and preserves selection on cancellation', async () => {
+  const other = { ...saved, id: 'deck-b', name: 'Second saved deck' };
+  vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [saved, other], capabilities });
+  render(<DeckManagerPage />);
+  fireEvent.click(await screen.findByRole('checkbox', { name: 'Select all visible saved decks' }));
+  await waitFor(() => expect(screen.getByRole('checkbox', { name: `Select ${other.name}` })).toBeChecked());
+  fireEvent.click(screen.getByRole('button', { name: 'Move selected to trash' }));
+  const dialog = screen.getByRole('dialog', { name: 'Move 2 decks to Trash?' });
+  const list = within(dialog).getByRole('list', { name: 'Decks selected for removal' });
+  expect(within(list).getAllByRole('listitem')).toHaveLength(2);
+  expect(list).toHaveTextContent(saved.name);
+  expect(list).toHaveTextContent(other.name);
+  expect(removeManagedDecks).not.toHaveBeenCalled();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+  expect(screen.getByRole('checkbox', { name: `Select ${saved.name}` })).toBeChecked();
+  expect(removeManagedDecks).not.toHaveBeenCalled();
+});
+
+it('moves only confirmed selected saved decks and prevents repeat removal', async () => {
+  const other = { ...saved, id: 'deck-b', name: 'Second saved deck' };
+  let finish!: (value: { ok: boolean; count: number }) => void;
+  vi.mocked(removeManagedDecks).mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+  vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [saved, other], capabilities });
+  render(<DeckManagerPage />);
+  fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${saved.name}` }));
+  fireEvent.click(screen.getByRole('button', { name: 'Move selected to trash' }));
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Move to trash' }));
+  expect(removeManagedDecks).toHaveBeenCalledExactlyOnceWith([saved.id], 'trash');
+  expect(screen.getByRole('button', { name: 'Moving…' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+  vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [{ ...saved, trashed_at: 'today' }, other], capabilities });
+  await act(async () => { finish({ ok: true, count: 1 }); });
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('1 deck moved to Trash');
+});
+
+it('requires confirmation listing trashed decks for bulk permanent deletion and retains them on failure', async () => {
+  const other = { ...saved, id: 'deck-b', name: 'Second saved deck', trashed_at: 'today' };
+  vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [{ ...saved, trashed_at: 'today' }, other], capabilities });
+  vi.mocked(removeManagedDecks).mockRejectedValue(new Error('Reconcile an interrupted transfer first.'));
+  render(<DeckManagerPage />);
+  fireEvent.click(screen.getByRole('button', { name: 'Trash' }));
+  fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${saved.name}` }));
+  fireEvent.click(screen.getByRole('checkbox', { name: `Select ${other.name}` }));
+  fireEvent.click(screen.getByRole('button', { name: 'Delete selected permanently' }));
+  const dialog = screen.getByRole('dialog', { name: 'Permanently delete 2 decks?' });
+  expect(within(dialog).getByRole('list')).toHaveTextContent(other.name);
+  expect(removeManagedDecks).not.toHaveBeenCalled();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Delete permanently' }));
+  await waitFor(() => expect(removeManagedDecks).toHaveBeenCalledExactlyOnceWith([saved.id, other.id], 'delete'));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Reconcile');
+  expect(dialog).toBeInTheDocument();
+  expect(fetchDeckLibrary).toHaveBeenCalledTimes(1);
+});
+
+it('selects decks already in Arena for local removal while rejecting a mixed restore selection', async () => {
+  const active = { ...saved, native_restorable: true, native_arena_ids: ['arena-a'] };
+  vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [active], capabilities });
+  vi.mocked(fetchNativeDeckStatus).mockResolvedValue(connected);
+  render(<DeckManagerPage />);
+  fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${saved.name}` }));
+  expect(screen.getByRole('button', { name: 'Move selected to trash' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Restore selected to Arena' })).toBeDisabled();
+});
+
 beforeEach(() => {
   vi.resetAllMocks();
   Object.defineProperties(HTMLDialogElement.prototype, {
@@ -39,6 +113,7 @@ beforeEach(() => {
   vi.mocked(fetchManagedDeck).mockResolvedValue(detail);
   vi.mocked(updateManagedDeck).mockResolvedValue({ ok: true });
   vi.mocked(deleteManagedDeck).mockResolvedValue({ ok: true });
+  vi.mocked(removeManagedDecks).mockResolvedValue({ ok: true, count: 2 });
   vi.mocked(importManagedDeck).mockResolvedValue(detail);
   vi.mocked(exportManagedDeck).mockResolvedValue({ text: 'Commander\n1 Atraxa\n\nDeck\n4 Forest (DMU) 281', name: saved.name, extension: '.txt' });
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn().mockResolvedValue(undefined) } });

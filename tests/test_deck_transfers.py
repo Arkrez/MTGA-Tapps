@@ -289,6 +289,11 @@ def test_pending_transfer_blocks_local_permanent_deletion(conn):
     dm.update_metadata(conn, detail["id"], {"trashed": True})
     with pytest.raises(dm.DeckManagerError, match="Reconcile"):
         dm.delete_deck(conn, detail["id"])
+    other = dm.save_deck(conn, dm.parse_import("Deck\n4 Forest"))
+    dm.update_metadata(conn, other["id"], {"trashed": True})
+    with pytest.raises(dm.DeckManagerError, match="Reconcile"):
+        dm.remove_decks(conn, [other["id"], detail["id"]], "delete")
+    assert dm.deck_detail(conn, other["id"])
     assert saved(conn)
 
 

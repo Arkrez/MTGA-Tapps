@@ -77,3 +77,38 @@ The integrated adapter has not been live-tested or activated in the running app.
 Live validation is deferred until the user explicitly reports being out of a match
 on Decks. Persistent native collection/tiles, Windows and installed-app permissions
 remain unvalidated.
+
+## Selection, bulk removal and isolated live testing — 2026-10-08
+
+- Saved/Trash selection applies to every deck, including text imports and entries
+  still in Arena. Checkboxes moved to the top right with a 24px control inside a
+  separate 44px label. Shared toolbar styles cover the native action bars, including
+  orange move, yellow restore and red local removal controls.
+- Bulk Trash/permanent-delete confirmations list every selected deck. The API
+  validates required confirmation and the complete selection under a write lock;
+  deletion failure or a pending transfer rolls back the entire batch.
+- Full Python suite: **852 passed, 1 skipped, 1 deselected, 5 subtests passed**.
+  The two additional preview-isolation/game-guard tests passed separately, as did
+  the expanded pending-backup protection test. Full UI suite: **163 passed** in
+  21 files; TypeScript, lint and production build passed. The existing bundle-size
+  warning remains. New controls have not received an automated browser review.
+- After the user explicitly confirmed the ranked game had ended and Arena was on
+  Decks, the integrated adapter completed a successful authoritative roster refresh:
+  **94 ordinary decks**, native limit **100**, active Decks controller present.
+  A subsequent integrated bulk backup saved all **94 native archives** into an
+  isolated persistent test library. No Arena create/remove/move was called.
+- `scripts/preview_deck_manager.py` runs a dashboard only on a separate port. It
+  writes only the separate library, reads the already-running tracker's active-game
+  row in SQLite read-only mode on every guard check, fails closed on missing status,
+  and disables non-Deck-Manager POST routes. It launches no tracker or desktop app.
+  Tests verify a game started after launch blocks connection, missing status fails
+  closed, the tracker schema remains intact, and identical/aliased DBs are rejected.
+- HTTP smoke checks verified all 94 library entries are native-restorable, their
+  bound identities equal the cached Arena roster, and settings writes are rejected.
+  A temporary text-only entry was imported, bulk-trashed and bulk-deleted through
+  the live-test API. All 94 real backups remained; no real Arena deck was affected.
+
+The live test dashboard is ready for user-selected moves/restores. Integrated
+move/restore runtime validation, persistent native collection/tiles, Windows and
+installed-bundle permissions remain pending. Neither Arena nor the existing
+tracker/desktop app was restarted. The other working branch was not changed.
