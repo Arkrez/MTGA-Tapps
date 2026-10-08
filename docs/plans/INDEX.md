@@ -7,7 +7,7 @@ or operational documentation only.
 | Plan | Current status | Remaining work |
 | --- | --- | --- |
 | [Backups and carrying history between computers](BACKUP_AND_SYNC.md) | Phases 1–2 shipped: `.tappsbackup` export/restore/merge, synced-folder picks, previews with confirmation, undo, delete and open-location (Settings → Backup & restore) | Automatic post-session backups; Google Drive by API only if the folder route proves insufficient |
-| [Deck Manager](DECK_MANAGER.md) | Local library implemented on `deck-manager`; [Mac POC](deck-manager/NATIVE_POC.md) proves bulk capture and temporary native section | Approved disposable-copy service test, disk-to-Arena reconstruction, authenticated roster/account discovery, durable transfers, native tiles and packaging; manual transfer is insufficient |
+| [Deck Manager](DECK_MANAGER.md) | Local library implemented on `deck-manager`; [Mac POC](deck-manager/NATIVE_POC.md) proves bulk capture and temporary native section | Live disposable-copy service test (approved, awaiting Decks screen), disk-to-Arena reconstruction, authenticated roster/account discovery, durable transfers, native tiles and packaging; manual transfer is insufficient |
 | [Linux support](linux_implementation.md) | Not implemented as a supported distribution | Prefix discovery/rotation, tray-free controller, overlay, packaging and desktop validation |
 | [Install discovery](MTGA_INSTALL_DISCOVERY.md) | Unity-header discovery and Settings path display implemented | Editable overrides/validation; evidence-driven platform fallbacks |
 | [Surveil and scry validation](SCRY_TRACKING.md) | Scry implemented, migration 29 present | Surveil log capture/handler/UI and real opponent-scry validation |

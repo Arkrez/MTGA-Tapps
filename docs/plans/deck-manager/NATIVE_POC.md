@@ -66,9 +66,12 @@ The original deck is never deleted. Unknown outcomes stop without retries.
 Source, intent and created-copy snapshots are private, exclusive and fsynced;
 disk failure before the archive check prevents deletion.
 
-This test is pending the user's approval because it saves and removes a deck
-on their Arena account; the existing authorization covered an empty temporary
-UI section. Its code is ready for review and offline boundary tests pass.
+The user approved this disposable-copy test with “game is open - ready to go.”
+The first attempt stopped before draft preparation or any create/delete call:
+Arena reported capacity available but zero active Decks selectors. A subsequent
+read-only check confirmed the same state. No new test deck was created. The
+test is awaiting the Decks screen being open outside a match; the existing
+approval covers this test and does not need to be requested again.
 
 If that succeeds, the next feasibility gate is actual archive reconstruction:
 capture → reconstruct **from saved data** → create disposable deck → fetch and

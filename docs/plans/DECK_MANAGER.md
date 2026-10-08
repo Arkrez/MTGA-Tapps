@@ -36,9 +36,11 @@ The user confirmed the temporary collection section appeared after Starter Decks
 it was removed and its absence verified. No saved decks changed, and Arena and
 the tracker stayed running. Cache coverage is not authenticated roster coverage.
 
-**Next gate:** the prepared disposable-copy service test needs approval to create
-and remove only a new test duplicate. Actual reconstruction from a disk archive
-and exact restoration follow as a separate gate before production transfers.
+**Next gate:** the user approved the prepared disposable-copy service test to
+create and remove only a new test duplicate. Its first attempt stopped before
+any writes because Decks was closed; it awaits that screen being opened outside
+a match. Actual reconstruction from a disk archive and exact restoration follow
+as a separate gate before production transfers.
 
 ## Findings and confidence
 

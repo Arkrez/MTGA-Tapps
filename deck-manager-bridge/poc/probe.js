@@ -442,7 +442,8 @@ function prepareCopy(sourceId, operationId) {
   if (!uuid.test(sourceId) || !uuid.test(operationId)) throw new Error('Valid source and operation UUIDs are required.');
   checkedHandleABI();
   const report=snapshot();
-  if (report.live_deck_selectors!==1 || report.service_calls.limit_reached) throw new Error('Open Decks with a free slot for the disposable-copy test.');
+  if (report.live_deck_selectors!==1) throw new Error('Open Arena\'s Decks screen before the disposable-copy test.');
+  if (report.service_calls.limit_reached) throw new Error('Arena reports its deck limit reached; no test copy created.');
   const manager=root(), cached=cachedDecks(manager);
   const beforeIds=cached.map(d=>guidText(fieldAt(ref(d,'_summary'),'DeckId')));
   if (beforeIds.includes(operationId)) throw new Error('The test identity already exists; refusing reuse.');
