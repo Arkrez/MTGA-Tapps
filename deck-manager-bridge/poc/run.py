@@ -14,7 +14,7 @@ def main():
     parser.add_argument("--pid", type=int, required=True, help="Running Arena process ID")
     parser.add_argument("--output", type=Path, required=True, help="New local JSON report")
     parser.add_argument(
-        "--mode", choices=("inspect", "cache", "service", "folder"), default="inspect"
+        "--mode", choices=("inspect", "cache", "service", "refresh", "folder"), default="inspect"
     )
     parser.add_argument(
         "--show-seconds", type=int, default=15, help="Temporary folder display time (5–60)"
@@ -40,7 +40,12 @@ def main():
         if processes.get(args.pid) not in ("MTGA", "MTGA.exe"):
             raise RuntimeError("The selected PID is not the running MTGA process.")
         session = device.attach(args.pid)
-        timer = Timer(30 + (args.show_seconds if args.mode == "folder" else 0), session.detach)
+        duration = (
+            60
+            if args.mode == "refresh"
+            else 30 + (args.show_seconds if args.mode == "folder" else 0)
+        )
+        timer = Timer(duration, session.detach)
         timer.daemon = True
         timer.start()
         script = session.create_script(Path(__file__).with_name("probe.js").read_text())
@@ -71,6 +76,8 @@ def main():
             )
         elif args.mode == "service":
             print("Invoked GetFullDeck through Arena's deck service; no deck changes made.")
+        elif args.mode == "refresh":
+            print("Arena roster refresh succeeded and was captured; no deck changes made.")
         else:
             print("Temporary native collection section created and removed; no deck changes made.")
         return 0

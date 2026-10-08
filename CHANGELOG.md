@@ -6,8 +6,9 @@
 
 - Added an explicit development-only native Deck Manager experiment. Live Mac
   tests demonstrated bulk cached-deck capture and a temporary native collection
-  section below Starter Decks. Native create/delete and restore remain unverified;
-  the tracker does not load this experiment automatically.
+  section below Starter Decks. One native disposable create/archive/delete test
+  completed with read-only reconciliation after the Decks UI rebuilt. Disk-to-Arena
+  reconstruction remains unverified; the tracker does not load this automatically.
 - Deck Manager asks for confirmation before moving a deck to Trash, with a red
   action button. Copy for Arena is yellow and sits beside the dialog's close button.
 - Deck Manager can permanently delete a local deck from Trash after confirmation,

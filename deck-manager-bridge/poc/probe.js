@@ -428,12 +428,11 @@ function parseGuid(value) {
   try { return invoke(findMethod('System.Guid','Parse',['System.String']),NULL,[text]); }
   finally { handleFree(handle); }
 }
-function copyManager() {
+function copyManager(requireDecks=true) {
   if (!testCopy) throw new Error('No prepared test copy.');
   const manager=root();
-  if (!manager.equals(handleTarget(testCopy.managerHandle)) || selectorObjects().length!==1) {
-    throw new Error('Arena scene/session changed; stop and review the test copy.');
-  }
+  if (!manager.equals(handleTarget(testCopy.managerHandle))) throw new Error('Deck service changed; stop and review the test copy.');
+  if (requireDecks && selectorObjects().length!==1) throw new Error(`Decks screen changed during ${testCopy.phase}; stop and review the test copy.`);
   return manager;
 }
 function prepareCopy(sourceId, operationId) {
@@ -491,7 +490,9 @@ function createCopy() {
   } finally { handleFree(importedHandle); }
 }
 function pollCopy() {
-  const manager=copyManager();
+  // Polling/refresh are reads. Refresh can temporarily rebuild the Decks UI;
+  // retain the service identity guard. Create/delete still require Decks open.
+  const manager=copyManager(false);
   if (!['create_pending','delete_pending','refresh_pending'].includes(testCopy.phase)) throw new Error('No pending disposable-copy operation.');
   const promise=handleTarget(testCopy.promiseHandle);
   if (!objectUnbox(invoke(objectMethod(promise,'get_IsDone',[]),promise)).readU8()) return {phase:testCopy.phase};
@@ -521,10 +522,20 @@ function pollCopy() {
   if (remaining.includes(testCopy.created.arena_id)) throw new Error('Test deck is still present after refresh.');
   if (testCopy.beforeIds.some(id=>!remaining.includes(id))) throw new Error('Roster changed during test; review required.');
   const source=cachedDecks(manager).find(d=>guidText(fieldAt(ref(d,'_summary'),'DeckId'))===testCopy.sourceSnapshot.arena_id);
-  if (!source || JSON.stringify(deckSnapshot(source))!==JSON.stringify(testCopy.sourceSnapshot)) throw new Error('Source snapshot changed during test; review required.');
+  if (!source || !sameSourceSnapshot(deckSnapshot(source),testCopy.sourceSnapshot)) throw new Error('Source snapshot changed during test; review required.');
   testCopy.phase='complete';
   return {phase:'complete',test_copy_absence_verified:true,original_roster_preserved:true,
     native_create_delete_proven:true,native_transfers_proven:false};
+}
+function sameSourceSnapshot(left,right) {
+  const normalized=deck=>{
+    // A fresh summary represents an empty description as null, while a
+    // previously loaded full-deck model can use "". Preserve all other fields.
+    const value=JSON.parse(JSON.stringify(deck));
+    if (value.summary.Description===null) value.summary.Description='';
+    return JSON.stringify(value);
+  };
+  return normalized(left)===normalized(right);
 }
 function deleteCopy(archive) {
   const manager=copyManager();
@@ -545,6 +556,38 @@ function releaseCopy() {
   if (testCopy) {
     [testCopy.draftHandle,testCopy.managerHandle,testCopy.promiseHandle].filter(h=>h!==null).forEach(handle => handleFree(handle));
     testCopy=null;
+  }
+}
+async function refreshRoster() {
+  attached(discover);
+  const handles=[];
+  try {
+    const state=await onUnityThread(() => {
+      checkedHandleABI();
+      const manager=root();
+      const managerHandle=handleNew(manager,0); handles.push(managerHandle);
+      const promise=invoke(findMethod('.DecksManager','ForceRefreshCachedDecks',[]),manager);
+      if (promise.isNull()) throw new Error('No roster refresh promise returned.');
+      const promiseHandle=handleNew(promise,0); handles.push(promiseHandle);
+      return {managerHandle,promiseHandle};
+    });
+    const deadline=Date.now()+20000;
+    while (Date.now()<deadline) {
+      const report=await onUnityThread(() => {
+        if (!root().equals(handleTarget(state.managerHandle))) throw new Error('Deck service changed during roster refresh.');
+        // A normal refresh can temporarily disable/rebuild the Decks selector.
+        // This is read-only: require the same service, not an active UI component.
+        const promise=handleTarget(state.promiseHandle);
+        if (!objectUnbox(invoke(objectMethod(promise,'get_IsDone',[]),promise)).readU8()) return null;
+        if (!objectUnbox(invoke(objectMethod(promise,'get_Successful',[]),promise)).readU8()) throw new Error('Roster refresh failed.');
+        return {...snapshot(),force_refresh_done:true,force_refresh_successful:true};
+      });
+      if (report) return report;
+      await new Promise(resolve=>setTimeout(resolve,200));
+    }
+    throw new Error('Roster refresh did not complete within 20 seconds.');
+  } finally {
+    if (handles.length) await onUnityThread(()=>handles.forEach(handle=>handleFree(handle)));
   }
 }
 function onUnityThread(run) {
@@ -570,6 +613,7 @@ rpc.exports = {
   inspect() { return attached(discover); },
   cache() { attached(discover); return onUnityThread(snapshot); },
   service() { attached(discover); return onUnityThread(serviceProbe); },
+  refresh() { return refreshRoster(); },
   folder() { attached(discover); return onUnityThread(addTestFolder); },
   clearfolder() { return onUnityThread(clearTestFolder); },
   folderstatus() { return onUnityThread(folderStatus); },

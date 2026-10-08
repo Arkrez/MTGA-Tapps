@@ -30,6 +30,8 @@ different process name. Output paths must be new.
   --pid ARENA_PID --mode cache --output /tmp/arena-cache.json
 /tmp/tapps-native-poc/bin/python deck-manager-bridge/poc/run.py \
   --pid ARENA_PID --mode service --output /tmp/arena-service.json
+/tmp/tapps-native-poc/bin/python deck-manager-bridge/poc/run.py \
+  --pid ARENA_PID --mode refresh --output /tmp/arena-refreshed-cache.json
 PYTHONPATH=src venv/bin/python deck-manager-bridge/poc/capture.py \
   /tmp/arena-cache.json /tmp/arena-experiment.sqlite3
 ```
@@ -39,6 +41,9 @@ PYTHONPATH=src venv/bin/python deck-manager-bridge/poc/capture.py \
 summary attributes and skins. It queries Arena's actual limit decision; it
 does not count all cached summaries as user slots. `service` calls `GetFullDeck`
 for one ordinary cached deck and checks its promise and returned identity.
+`refresh` awaits a successful `ForceRefreshCachedDecks` promise and captures the
+resulting cache. It makes no save/delete calls and tolerates the native Decks
+selector temporarily rebuilding while retaining the service identity check.
 
 `capture.py` validates every ordinary deck before creating a **separate new**
 SQLite library. It preserves raw runtime metadata, verifies persisted hashes,
@@ -81,8 +86,12 @@ the source and draft privately. The original remains unchanged. The helper
 normalized `IsFavorite` in the observed draft; this does not claim complete
 metadata fidelity for a future restore constructor.
 
-**The following write mode has not been run against Arena.** Run it only after
-the user approves this specific create/delete test:
+**The live Mac create/delete test completed after read-only reconciliation.**
+The initial runner stopped during a temporary Decks-screen rebuild after
+deletion was requested; no writes were repeated. A successful separate refresh
+proved the test copy absent and original decks intact. The subsequent polling
+fix is covered offline but has not been exercised in another live write run.
+Run write mode only after the user approves that specific create/delete test:
 
 ```sh
 PYTHONPATH=src /tmp/tapps-native-poc/bin/python deck-manager-bridge/poc/disposable_copy.py \
@@ -97,7 +106,8 @@ The reviewed sequence is:
 4. Verify the named test copy's piles/skins; fsync and read back its full snapshot.
 5. Allow `DeleteDeck` only for that internally recorded, unchanged test copy.
 6. Await deletion, force a roster refresh, verify its absence, original cached
-   identities still present, and the original source snapshot unchanged.
+   identities still present, and the original source snapshot unchanged (null
+   and empty descriptions are equivalent).
 
 No arbitrary deck deletion RPC exists. Disk failure, scene change, request
 failure or timeout stops the sequence. An uncertain creation is never retried;
@@ -111,11 +121,14 @@ prove restoration by reconstructing a client deck from a disk archive.
 ```sh
 PYTHONPATH=src venv/bin/python -m pytest tests/test_native_deck_poc.py -q
 node --check deck-manager-bridge/poc/probe.js
+node --test deck-manager-bridge/poc/probe.test.cjs
 ```
 
 Offline tests cover exact archival, incomplete captures, no overwrite/partial
 publication, wrong PID refusal, interruption cleanup, and durable boundaries
-before deleting a test copy. They never attach to the game.
+before deleting a test copy. JavaScript tests cover the UI/service guards and
+description normalization without accepting real card/cosmetic/metadata changes.
+They never attach to the game.
 
 References: [Frida API](https://frida.re/docs/javascript-api/),
 [Unity dispatcher source](https://github.com/Unity-Technologies/UnityCsReference/blob/master/Runtime/Export/Scripting/UnitySynchronizationContext.cs),

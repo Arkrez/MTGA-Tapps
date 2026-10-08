@@ -148,6 +148,8 @@ def fake_runtime(monkeypatch, name="MTGA"):
     calls = []
     exports = SimpleNamespace(
         inspect=lambda: {"classes": [], "native_transfers_proven": False},
+        refresh=lambda: calls.append("refresh")
+        or {"force_refresh_successful": True, "native_transfers_proven": False},
         folder=lambda: calls.append("folder") or {"native_folder_proven": True},
         clearfolder=lambda: calls.append("cleanup") or {"removed": True},
         folderstatus=lambda: {"temporary_sections_remaining": 0},
@@ -187,6 +189,17 @@ def test_runner_refuses_other_processes(tmp_path, monkeypatch):
     assert runner.main() == 1
     assert calls == []
     assert not output.exists()
+
+
+def test_read_only_refresh_report_is_saved_and_session_detaches(tmp_path, monkeypatch):
+    calls = fake_runtime(monkeypatch)
+    output = tmp_path / "refresh.json"
+    monkeypatch.setattr(
+        sys, "argv", ["run.py", "--pid", "42", "--mode", "refresh", "--output", str(output)]
+    )
+    assert runner.main() == 0
+    assert calls == [("attach", 42), "load", "refresh", "detach"]
+    assert json.loads(output.read_text())["force_refresh_successful"] is True
 
 
 def test_temporary_folder_cleanup_runs_on_interruption(tmp_path, monkeypatch):
