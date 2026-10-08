@@ -6,10 +6,13 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from .log_sanitize import scrub_raw_log
 from .rendering import apply_style, display_path_without_username, should_use_colors
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .replay_capture import ReplayFact
 
 
 class TrackerRenderingMixin:
@@ -42,10 +45,31 @@ class TrackerRenderingMixin:
         output_stream.write(self._style(raw_text, style) + "\n")
         output_stream.flush()
 
-    def _print_event(self, text: str, style: Optional[str] = None) -> None:
-        """Print an event line with optional style."""
+    def _print_event(
+        self, text: str, style: Optional[str] = None, fact: Optional["ReplayFact"] = None
+    ) -> None:
+        """Print an event line with optional style.
+
+        ``fact`` carries the replay columns for the persisted row; the console
+        text is never affected by it."""
         self._print_line(text, style=style)
-        self._record_game_event(text, style=style)
+        self._record_game_event(text, style=style, fact=fact)
+
+    def _print_event_fact(
+        self, text: str, style: Optional[str], fact: Optional["ReplayFact"]
+    ) -> None:
+        """``_print_event`` with a replay fact.
+
+        The fact travels beside the call (not as an argument) so wrappers
+        that replace ``_print_event(text, style)`` keep working."""
+        if fact is None:
+            self._print_event(text, style)
+            return
+        self._replay_pending_fact = fact
+        try:
+            self._print_event(text, style)
+        finally:
+            self._replay_pending_fact = None
 
     def _print_summary_heading(self, text: str, style: str = "turn") -> None:
         """Print a more prominent summary heading."""

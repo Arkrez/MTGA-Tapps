@@ -1,0 +1,81 @@
+import { describe, expect, it } from 'vitest';
+import { PLAYER, SAMPLE_CARDS, makeSampleStream } from '../fixtures/sampleStream';
+import { StreamBuilder, card } from '../fixtures/streamBuilder';
+import { CARD_HEIGHT, layoutBoard } from '../layout';
+import { buildTimeline, stateAt } from '../reducer';
+import { sceneLabels } from './labels';
+
+describe('scene labels', () => {
+  const stream = makeSampleStream();
+  const timeline = buildTimeline(stream);
+  const opts = { mirrorOpponent: false, hindsight: true, playerSeat: PLAYER };
+
+  it('labels every pile except empty command zones', () => {
+    const state = stateAt(timeline, stream.turns[0].first_seq);
+    const labels = sceneLabels(layoutBoard(state, opts), SAMPLE_CARDS);
+    const piles = labels.filter((l) => l.tone === 'pile').map((l) => l.text);
+    expect(piles).toContain('Library 54');
+    expect(piles).toContain('Graveyard 0');
+    expect(piles.some((text) => text.startsWith('Command'))).toBe(false);
+  });
+
+  it('leaves stack captions to the DOM stack preview', () => {
+    const push = stream.events.find((e) => e.kind === 'stack_push' && e.stack_id === 's5')!;
+    const state = stateAt(timeline, push.seq);
+    const layout = layoutBoard(state, opts);
+    expect(layout.cards.some((c) => c.row === 'stack')).toBe(true);
+    const labels = sceneLabels(layout, SAMPLE_CARDS);
+    expect(labels.some((l) => l.obj?.startsWith('stack:'))).toBe(false);
+  });
+
+  it('puts pile badges across the lower edge of the scaled pile', () => {
+    const state = stateAt(timeline, stream.turns[0].first_seq);
+    const layout = layoutBoard(state, opts);
+    const labels = sceneLabels(layout, SAMPLE_CARDS);
+    for (const pile of layout.piles.filter((p) => p.zone !== 'command')) {
+      const label = labels.find((l) => l.id === `pile:${pile.seat}:${pile.zone}`)!;
+      expect(label.x).toBe(pile.x);
+      expect(label.y).toBeLessThan(pile.y);
+      expect(label.y).toBeGreaterThan(pile.y - (CARD_HEIGHT * pile.scale) / 2);
+    }
+  });
+
+  it('badges every creature with its power/toughness, emphasized when modified, with other counters above', () => {
+    const pt = stream.events.find((e) => e.kind === 'pt' && e.obj === 'tok1')!;
+    const state = stateAt(timeline, pt.seq);
+    const layout = layoutBoard(state, opts);
+    const labels = sceneLabels(layout, SAMPLE_CARDS);
+    const badge = labels.find((l) => l.id === 'stat:tok1')!;
+    expect(badge).toMatchObject({ text: '2/2', tone: 'stat', emphasis: true, align: 'center' });
+    const chip = labels.find((l) => l.id === 'counters:tok1')!;
+    expect(chip).toMatchObject({ text: '+1/+1', tone: 'counters' });
+    // Badge across the lower edge, counters across the upper edge.
+    expect(badge.y).toBeLessThan(0);
+    expect(chip.y).toBeGreaterThan(0);
+    // An unmodified creature shows its printed values, not emphasized.
+    const plain = labels.find((l) => l.id === 'stat:215');
+    expect(plain?.text).toMatch(/^\d+\/\d+$/);
+    expect(plain?.emphasis).toBe(false);
+    expect(labels.some((l) => l.id === 'counters:215')).toBe(false);
+  });
+
+  it('shows a planeswalker\u2019s loyalty total, never the word "loyalty"', () => {
+    const b = new StreamBuilder();
+    b.add('game_start', { seats_hand_sizes: { 1: 0, 2: 0 }, library_sizes: { 1: 40, 2: 40 } });
+    b.move('pw1', 'a9', 'limbo', 'battlefield', 1, 'put');
+    b.add('counter', { obj: 'pw1', type: 'loyalty', delta: 1, total: 1 });
+    b.add('counter', { obj: 'pw1', type: 'loyalty', delta: 3, total: 4 });
+    b.add('counter', { obj: 'pw1', type: 'loyalty', delta: -2, total: 2 });
+    const built = b.build({ a9: card('Ajani', 'Planeswalker') }, { playerSeat: 1 });
+    const tl = buildTimeline(built);
+    const counters = built.events.filter((e) => e.kind === 'counter');
+    const at = (i: number) => sceneLabels(layoutBoard(stateAt(tl, counters[i].seq), { ...opts, playerSeat: 1 }), built.cards);
+    expect(at(0).find((l) => l.id === 'stat:pw1')).toMatchObject({ text: '1', tone: 'loyalty' });
+    expect(at(1).find((l) => l.id === 'stat:pw1')?.text).toBe('4');
+    expect(at(2).find((l) => l.id === 'stat:pw1')?.text).toBe('2');
+    expect(at(2).some((l) => l.id === 'counters:pw1')).toBe(false);
+    // A planeswalker with no loyalty information (a reconstructed game) gets no badge at all.
+    const quiet = sceneLabels(layoutBoard(stateAt(tl, built.events[1].seq), { ...opts, playerSeat: 1 }), built.cards);
+    expect(quiet.some((l) => l.id === 'stat:pw1')).toBe(false);
+  });
+});

@@ -77,6 +77,25 @@ attributes can describe an edited deck and remain hints. They must not override 
 Brawl's join event (`EventName: Brawl_Ladder`) therefore remains stronger
 than the generic Historic Brawl deck attribute.
 
+## Game results
+
+`tracker_lifecycle.py` reads each GRE message in a batch, including terminal
+messages after ordinary state diffs. Explicit terminal winners from game
+results, `finalMatchResult` and intermission results override weaker hints.
+Game-scoped results take precedence over match-scoped fallback results.
+
+An `AnnotationType_LossOfGame` with a valid losing seat and reason can finish
+the game even without a separate final result. `SBA_DrawEmptyLibrary` reports
+decking; `SBA_Poisoned` reports poison. Resolve the winner relative to the local
+seat, not life totals. Terminal `PendingLoss` statuses are fallback hints;
+partial `PlayerStatus_InGame` updates do not identify a winner. Stale or
+nonpositive life totals cannot reverse an identified winner. Without winner
+evidence, positive-life endings remain Unknown.
+
+A copied dashboard timeline contains rendered actions, not the raw terminal
+payloads. Its last cast cannot establish the winner. Diagnose disputed outcomes
+using Arena's original `Player.log` or the tracker's archived payloads.
+
 ## Scry and card metadata
 
 Scry annotations list card IDs in `affectedIds`; they do not put the seat

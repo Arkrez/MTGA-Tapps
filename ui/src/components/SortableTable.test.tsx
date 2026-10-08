@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { SortableTable } from './SortableTable';
@@ -175,6 +175,47 @@ describe('SortableTable', () => {
     await user.click(screen.getByRole('button', { name: /deck/i }));
     expect(screen.getByText('Page 1 of 2')).toBeInTheDocument();
     expect(within(table).getByText('Deck 01')).toBeInTheDocument();
+  });
+
+  it('jumps by number, first/last controls and page entry across a long table', async () => {
+    const user = userEvent.setup();
+    render(
+      <SortableTable
+        caption="Decks"
+        columns={[{ key: 'deck', header: 'Deck' }]}
+        getRowKey={(row) => row.deck}
+        pageSize={10}
+        paginationControls="full"
+        rows={Array.from({ length: 130 }, (_, index) => ({ deck: `Deck ${String(index + 1).padStart(3, '0')}` }))}
+      />,
+    );
+    const pagination = screen.getByRole('navigation', { name: 'Decks pagination' });
+    const table = screen.getByRole('table', { name: 'Decks' });
+    expect(within(pagination).getByRole('button', { name: 'First page' })).toBeDisabled();
+    expect(within(pagination).getByRole('button', { name: 'Page 1' })).toHaveAttribute('aria-current', 'page');
+
+    await user.click(within(pagination).getByRole('button', { name: 'Page 4' }));
+    expect(within(table).getByText('Deck 031')).toBeInTheDocument();
+    await user.click(within(pagination).getByRole('button', { name: 'Last page' }));
+    expect(within(table).getByText('Deck 130')).toBeInTheDocument();
+    expect(within(pagination).getByRole('button', { name: 'Last page' })).toBeDisabled();
+    expect(within(pagination).getByRole('button', { name: 'Next page' })).toBeDisabled();
+
+    const input = within(pagination).getByRole('spinbutton', { name: 'Go to page' });
+    await user.clear(input);
+    await user.type(input, '7');
+    await user.click(within(pagination).getByRole('button', { name: 'Go' }));
+    expect(within(table).getByText('Deck 061')).toBeInTheDocument();
+    expect(within(pagination).getByRole('button', { name: 'Page 7' })).toHaveAttribute('aria-current', 'page');
+    expect(within(pagination).getByRole('button', { name: 'Page 6' })).toBeInTheDocument();
+    expect(within(pagination).getByRole('button', { name: 'Page 8' })).toBeInTheDocument();
+
+    const jump = within(pagination).getByRole('spinbutton', { name: 'Go to page' });
+    fireEvent.change(jump, { target: { value: '99' } });
+    fireEvent.submit(jump.closest('form')!);
+    expect(within(pagination).getByText('Page 7 of 13')).toBeInTheDocument();
+    await user.click(within(pagination).getByRole('button', { name: 'First page' }));
+    expect(within(table).getByText('Deck 001')).toBeInTheDocument();
   });
 
   it('returns to page one when the pagination key changes', async () => {

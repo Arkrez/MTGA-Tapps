@@ -43,9 +43,11 @@ import {
 } from 'lucide-react';
 import { TRACKER_NAME } from '../branding';
 import { dashboardNavItems, type AppNavItem } from '../nav';
+import { REPLAY_ROUTE_HASH } from '../routes';
 import type { ThemeName } from '../theme';
 import { checkForUpdate, type UpdateInfo } from '../updateCheck';
 import { CardSearch } from './CardSearch';
+import { CollapseToggle } from './CollapseToggle';
 
 interface AppShellProps {
   theme: ThemeName;
@@ -112,6 +114,7 @@ const NAV_ICONS: Record<string, LucideIcon> = {
   'opponent-games': History,
   'deck-finder-browse': Search,
   'live-scoreboard': Activity,
+  'replay-games': Play,
   'settings-tracker': Info,
   'settings-deck-ai': Bot,
   'settings-creators': Users,
@@ -121,6 +124,10 @@ const NAV_ICONS: Record<string, LucideIcon> = {
 function NavIcon({ id }: { id: string }) {
   const Icon = NAV_ICONS[id] ?? Circle;
   return <Icon aria-hidden="true" className="sidebar-nav-icon" />;
+}
+
+function isReplayHash(hash: string): boolean {
+  return hash === REPLAY_ROUTE_HASH || hash.startsWith(`${REPLAY_ROUTE_HASH}/`) || hash.startsWith(`${REPLAY_ROUTE_HASH}?`);
 }
 
 function scrollToSection(id: string) {
@@ -151,6 +158,15 @@ export function AppShell({
     setActiveSection(id);
     scrollToSection(id);
   }
+  // Highlight the Replay tile on the replay list and player routes.
+  const [replayActive, setReplayActive] = useState(() => isReplayHash(window.location.hash));
+  useEffect(() => {
+    function onHashChange() {
+      setReplayActive(isReplayHash(window.location.hash));
+    }
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
   const [version, setVersion] = useState<string | null>(null);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   // Green when the tracker is running (live or idle), red when it is not.
@@ -293,15 +309,13 @@ export function AppShell({
         Skip to content
       </a>
       <aside className="sidebar">
-        <button
-          aria-expanded={!collapsed}
-          aria-label={collapsed ? 'Show navigation' : 'Hide navigation'}
+        <CollapseToggle
+          collapsed={collapsed}
+          side="left"
+          label="navigation"
           className="sidebar-toggle"
-          type="button"
-          onClick={toggleSidebar}
-        >
-          {collapsed ? '\u00bb' : '\u00ab'}
-        </button>
+          onToggle={toggleSidebar}
+        />
         {collapsed ? null : (
         <div className="brand-row">
           <a
@@ -382,6 +396,13 @@ export function AppShell({
                 href={`#${item.id}`}
                 title={label}
                 onClick={(event) => {
+                  // Pages without the section (the replay player keeps the
+                  // dashboard nav) need a real hash change so App re-routes;
+                  // replaceState alone fires no hashchange and the click
+                  // would be silently ignored.
+                  if (!document.getElementById(item.id)) {
+                    return;
+                  }
                   event.preventDefault();
                   navigateToSection(item.id);
                   // Reflect the section in the URL without re-triggering routing
@@ -400,14 +421,25 @@ export function AppShell({
           })}
         </nav>
         {collapsed ? (
-          <a
-            aria-label="Deck Finder"
-            className="sidebar-deck-finder sidebar-deck-finder-mini"
-            href="#/deck-finder"
-            title="Deck Finder"
-          >
-            <Search aria-hidden="true" />
-          </a>
+          <div className="sidebar-bottom sidebar-bottom-mini">
+            <a
+              aria-current={replayActive ? 'page' : undefined}
+              aria-label="Replay"
+              className={`sidebar-replay sidebar-replay-mini replay-wide-only${replayActive ? ' sidebar-replay-active' : ''}`}
+              href={REPLAY_ROUTE_HASH}
+              title="Watch replays of your games"
+            >
+              <Play aria-hidden="true" />
+            </a>
+            <a
+              aria-label="Deck Finder"
+              className="sidebar-deck-finder sidebar-deck-finder-mini"
+              href="#/deck-finder"
+              title="Deck Finder"
+            >
+              <Search aria-hidden="true" />
+            </a>
+          </div>
         ) : (
           <div className="sidebar-bottom">
             {update ? (
@@ -421,6 +453,15 @@ export function AppShell({
                 Update {update.tag} available →
               </a>
             ) : null}
+            <a
+              aria-current={replayActive ? 'page' : undefined}
+              className={`sidebar-replay replay-wide-only${replayActive ? ' sidebar-replay-active' : ''}`}
+              href={REPLAY_ROUTE_HASH}
+              title="Watch replays of your games"
+            >
+              <Play aria-hidden="true" />
+              <span className="sidebar-nav-label">Replay</span>
+            </a>
             <a className="sidebar-deck-finder" href="#/deck-finder" title="Browse top decks inside the dashboard">
               <Search aria-hidden="true" />
               <span className="sidebar-nav-label">Deck Finder</span>

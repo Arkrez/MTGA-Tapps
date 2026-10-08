@@ -42,7 +42,8 @@ import {
   outcomeTone,
   shortFormatLabel,
 } from '../format';
-import { gameRouteHash, gamesRouteHash } from '../routes';
+import { deckRouteHashWithFilters, gameRouteHash, gamesRouteHash } from '../routes';
+import { ReplayLink } from './ReplayLink';
 import { fetchManaCosts, playedManaStats, seedManaCosts, type CardManaInfo } from '../manaCosts';
 import { makeOpponentColorColumns } from '../opponentColorColumns';
 import { ManaCost } from './ManaCost';
@@ -511,6 +512,20 @@ const gameColumns: Column<DeckGameRow>[] = [
     numeric: true,
   },
 ];
+
+function gameColumnsWithReplay(returnHash: string): Column<DeckGameRow>[] {
+  return [
+    ...gameColumns,
+    {
+      key: 'replay',
+      header: '',
+      sortable: false,
+      render: (row) => (
+        <ReplayLink availability={row.replay} gameId={row.game_id} returnHash={returnHash} variant="icon" />
+      ),
+    },
+  ];
+}
 
 
 type CutCardRow = DeckCompositionRow & {
@@ -1516,7 +1531,7 @@ export function DeckDetailPage({
       <Section id="deck-games" title="Recent Games" description="Game length and average turn pace for both players.">
         <SortableTable
           caption="Recent games for this deck"
-          columns={gameColumns}
+          columns={gameColumnsWithReplay(deckRouteHashWithFilters(deckName, filters))}
           initialSort={{ key: 'started_at', direction: 'desc' }}
           getRowKey={(row) => row.game_id}
           rows={detail.recent}

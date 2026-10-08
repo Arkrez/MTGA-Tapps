@@ -102,3 +102,10 @@ export const settingsNavItems: AppNavItem[] = [
   { id: 'back-to-dashboard', label: '\u2190 Back to dashboard', route: '#overview' },
   { id: 'settings-tracker', label: 'Settings' },
 ];
+
+// The Replay list page (#/replay). The player page (#/replay/<id>) brings
+// its own layout and no section nav.
+export const replayNavItems: AppNavItem[] = [
+  { id: 'back-to-dashboard', label: '← Back to dashboard', route: '#overview' },
+  { id: 'replay-games', label: 'Recent games' },
+];

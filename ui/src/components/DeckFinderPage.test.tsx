@@ -52,6 +52,51 @@ async function chooseCreator(name = 'Hello Good Game') {
 }
 
 describe('YouTube Deck Finder', () => {
+  it('opens the first deck in the selected panel and keeps the browser available', async () => {
+    const listed = { ...deck, deck_text: 'About\nName Ramp 5 Lands at Once (HGG)\n\nDeck\n4 Opt (STA) 19\n56 Island\nSideboard\n2 Negate (MOM) 68' };
+    vi.mocked(startDeckFinderFetch).mockResolvedValue({ done: true, decks: [listed], view });
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    render(<DeckFinderPage />);
+    await chooseCreator();
+    const panel = await screen.findByRole('complementary', { name: 'Selected deck' });
+    expect(within(panel).getByRole('heading', { name: 'Ramp 5 Lands at Once (HGG)' })).toBeInTheDocument();
+    expect(within(panel).getByText('Hello Good Game · Standard · 60 cards')).toBeInTheDocument();
+    expect(within(panel).queryByText('Selected deck')).not.toBeInTheDocument();
+    expect(within(panel).queryByText(/card names/)).not.toBeInTheDocument();
+    expect(within(panel).getByRole('list', { name: 'Deck cards' })).toHaveTextContent('4Opt56Island');
+    expect(within(panel).getByRole('list', { name: 'Sideboard cards' })).toHaveTextContent('2Negate');
+    expect(screen.getByRole('region', { name: 'Deck Finder results' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: deck.name })).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(within(panel).getByRole('button', { name: 'Export to Arena' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(listed.deck_text?.replace('\nSideboard', '\n\nSideboard')));
+  });
+
+  it('keeps the new deck loading when an older creator hydration finishes', async () => {
+    let finishOld!: (value: DeckFinderDeck) => void;
+    let finishNew!: (value: DeckFinderDeck) => void;
+    const old = { ...deck, deck_text: null };
+    const newer = { ...deck, name: 'Sloth Brew', source_url: sources[1].url, deck_text: null };
+    vi.mocked(startDeckFinderFetch).mockResolvedValueOnce({ done: true, decks: [old], view });
+    vi.mocked(hydrateDeckFinderDeck)
+      .mockReturnValueOnce(new Promise((resolve) => { finishOld = resolve; }))
+      .mockReturnValueOnce(new Promise((resolve) => { finishNew = resolve; }));
+    render(<DeckFinderPage />);
+    await chooseCreator();
+    await waitFor(() => expect(hydrateDeckFinderDeck).toHaveBeenCalledTimes(1));
+    vi.mocked(startDeckFinderFetch).mockResolvedValue({ done: true, decks: [newer], view });
+    fireEvent.click(within(screen.getByRole('group', { name: 'Creators' })).getByRole('button', { name: 'Sloth' }));
+    await waitFor(() => expect(hydrateDeckFinderDeck).toHaveBeenCalledTimes(2));
+    await act(async () => { finishOld({ ...old, deck_text: 'Deck\n60 Forest' }); });
+    const panel = screen.getByRole('complementary', { name: 'Selected deck' });
+    expect(within(panel).getByRole('heading', { name: 'Sloth Brew' })).toBeInTheDocument();
+    expect(within(panel).getByRole('status')).toHaveTextContent('Loading deck list');
+    expect(within(panel).queryByText('Forest')).not.toBeInTheDocument();
+    await act(async () => { finishNew({ ...newer, deck_text: 'Deck\n60 Island' }); });
+    expect(within(panel).getByText('Island')).toBeInTheDocument();
+    expect(within(panel).queryByRole('status')).not.toBeInTheDocument();
+  });
+
   it('opens the site picker without fetching sources or decks', async () => {
     const moxfield = {
       ...youtube, key: 'moxfield', display_name: 'moxfield.com',

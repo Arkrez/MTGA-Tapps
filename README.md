@@ -193,7 +193,10 @@ chart, with a season selector to replay any climb:
 
 **Your decks** — every deck with its signature card, an Aggro/Midrange/Control
 profile judged from damage pace, win-rate bars, and per-game combat telemetry,
-searchable and sortable:
+searchable and sortable. Recorded deck history has no deck-count limit, including
+decks later removed from Arena; the table shows ten rows per page. Decks and
+All Games offer numbered pages, first/last controls and a Go to page field.
+Sessions offers the same controls with 15 rows per page and no session-count cap:
 
 ![Decks table on the Overview](docs/images/deck-overview.png)
 

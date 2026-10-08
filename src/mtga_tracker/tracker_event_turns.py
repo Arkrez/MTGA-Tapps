@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
+from .replay_capture import ReplayFact, replay_safe
+
 
 class TrackerTurnStateMixin:
     """Focused event helpers used by TrackerEventsMixin."""
@@ -218,6 +220,7 @@ class TrackerTurnStateMixin:
         if turn_changed:
             self._finish_active_turn_timer(self._now())
 
+        previous_phase = self.game_state.phase
         if turn_num is not None:
             self.game_state.turn_number = turn_num
         if active_player is not None:
@@ -226,6 +229,13 @@ class TrackerTurnStateMixin:
             self.game_state.phase = phase
         if step:
             self.game_state.step = step
+        if turn_changed and turn_num:
+            # Replay: an empty last phase of the previous turn is never written;
+            # both kept hands, by instance id, precede the first turn.
+            self._replay_drop_pending_phase()
+            self._replay_emit_opening_hands(data)
+        if phase and (phase != previous_phase or turn_changed) and phase != "Phase_Beginning":
+            self._record_replay_phase(phase, step or None)
 
         if (
             turn_num == 1
@@ -354,7 +364,9 @@ class TrackerTurnStateMixin:
                 int(turn_num)
             )
         self._print_line(f"\n{'='*75}")
-        self._print_event(f"Turn {turn_num} - OPPONENT'S TURN", "turn")
+        self._print_event_fact(
+            f"Turn {turn_num} - OPPONENT'S TURN", "turn", self._replay_turn_fact(active_player)
+        )
         self._print_line(f"Life: You {player_life} - {opponent_life} Opponent")
         self._print_previous_turn_duration(previous_turn)
         self._print_line(f"{'='*75}\n")
@@ -376,10 +388,35 @@ class TrackerTurnStateMixin:
                 int(turn_num)
             )
         self._print_line(f"\n{'='*75}")
-        self._print_event(f"Turn {turn_num} - YOUR TURN", "turn")
+        self._print_event_fact(
+            f"Turn {turn_num} - YOUR TURN", "turn", self._replay_turn_fact(active_player)
+        )
         self._print_line(f"Life: You {player_life} - {opponent_life} Opponent")
         self._print_previous_turn_duration(previous_turn)
         self._print_line(f"{'='*75}\n")
+
+    @replay_safe()
+    def _replay_turn_fact(self, active_player: Optional[int]) -> Optional[ReplayFact]:
+        """``turn`` fact for a printed turn header."""
+        if not self._replay_capturing():
+            return None
+        seat = self._normalize_seat_id(active_player)
+        return ReplayFact(
+            "turn",
+            seat_id=seat,
+            payload={"active_seat": seat} if seat is not None else None,
+        )
+
+    @replay_safe()
+    def _record_replay_phase(self, phase: str, step: Optional[str]) -> None:
+        """Silent ``phase`` row on each phase change, with the step Arena
+        reported in the same turnInfo (NULL when it named none)."""
+        if (self.game_state.turn_number or 0) < 1:
+            return
+        self._record_silent_event(
+            ReplayFact("phase", seat_id=self._normalize_seat_id(self.game_state.active_player)),
+            phase_row=(phase, step),
+        )
 
     def _flush_pending_turn_header_for_seat(self, seat_id: Optional[int]) -> None:
         """Flush deferred turn header for the side that owns the current event."""

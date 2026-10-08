@@ -835,7 +835,9 @@ def test_raw_payload_archive_purges_client_chatter_and_keeps_30_days(tmp_path):
     from mtga_tracker.payload_codec import compress_payload, decode_payload
 
     db_path = tmp_path / "analytics.sqlite3"
-    now = datetime(2026, 9, 7, 12, 0, 0)
+    # apply_pending_migrations also prunes using the real clock. Keep seeded
+    # rows relative to that clock so its startup prune preserves recent rows.
+    now = datetime.now()
     old = (now - timedelta(days=45)).isoformat()
     recent = (now - timedelta(days=2)).isoformat()
     rows = [

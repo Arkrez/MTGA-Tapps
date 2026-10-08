@@ -183,3 +183,36 @@ def test_runtime_app_icon_has_transparent_corners():
     assert image.pixelColor(0, 0).alpha() == 0
     assert image.pixelColor(image.width() - 1, image.height() - 1).alpha() == 0
     assert image.pixelColor(image.width() // 2, image.height() // 2).alpha() == 255
+
+
+def test_replay_fragment_targets_list_or_game():
+    assert menu_app.replay_fragment(None) == "/#/replay"
+    assert menu_app.replay_fragment("") == "/#/replay"
+    assert menu_app.replay_fragment("abc-1") == "/#/replay/abc-1"
+    assert menu_app.replay_fragment("a/b c") == "/#/replay/a%2Fb%20c"
+
+
+def test_newest_finished_game_id_reads_latest_ended_game(tmp_path):
+    import sqlite3
+
+    db_path = tmp_path / "tracker.sqlite3"
+    assert menu_app.newest_finished_game_id(db_path) is None
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE games (id TEXT PRIMARY KEY, started_at TEXT, ended_at TEXT)")
+        conn.executemany(
+            "INSERT INTO games VALUES (?, ?, ?)",
+            [
+                ("old", "2026-01-01T10:00:00", "2026-01-01T10:10:00"),
+                ("new", "2026-01-02T10:00:00", "2026-01-02T10:10:00"),
+                ("running", "2026-01-03T10:00:00", None),
+            ],
+        )
+    assert menu_app.newest_finished_game_id(db_path) == "new"
+
+
+def test_newest_finished_game_id_tolerates_a_database_without_games(tmp_path):
+    import sqlite3
+
+    db_path = tmp_path / "empty.sqlite3"
+    sqlite3.connect(db_path).close()
+    assert menu_app.newest_finished_game_id(db_path) is None

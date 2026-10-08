@@ -13,6 +13,7 @@ import { gameRouteHash, gamesRouteHash } from '../routes';
 import { Badge } from './Badge';
 import { ColorPips } from './ColorPips';
 import { DeckLink } from './DeckLink';
+import { ReplayLink } from './ReplayLink';
 import { FilterBar } from './FilterBar';
 import { Section } from './Section';
 import { SortableTable, type Column } from './SortableTable';
@@ -111,6 +112,17 @@ const columns: Column<AllGamesRow>[] = [
   },
 ];
 
+function replayColumn(returnHash: string): Column<AllGamesRow> {
+  return {
+    key: 'replay',
+    header: '',
+    sortable: false,
+    render: (row) => (
+      <ReplayLink availability={row.replay} gameId={row.game_id} returnHash={returnHash} variant="icon" />
+    ),
+  };
+}
+
 export function GamesPage({
   filters = {},
   onFiltersChange,
@@ -179,6 +191,10 @@ export function GamesPage({
     };
   }, [filters, retryToken]);
 
+  const tableColumns = useMemo(
+    () => [...columns, replayColumn(gamesRouteHash({ ...filters, quick: quickFilter === 'all' ? undefined : quickFilter }))],
+    [filters, quickFilter],
+  );
   const loadedResponse = loadState.status === 'loaded' ? loadState.response : null;
   const rows = useMemo(() => loadedResponse?.games ?? [], [loadedResponse]);
 
@@ -279,9 +295,10 @@ export function GamesPage({
         <FormatQuickFilters value={quickFilter} onChange={selectQuickFilter} />
         <SortableTable
           caption="All games"
-          columns={columns}
+          columns={tableColumns}
           pageSize={30}
-          paginationKey={quickFilter}
+          paginationControls="full"
+          paginationKey={gamesRouteHash({ ...filters, quick: quickFilter })}
           getRowKey={(row) => row.game_id}
           initialSort={{ key: 'started_at', direction: 'desc' }}
           rows={visibleRows}

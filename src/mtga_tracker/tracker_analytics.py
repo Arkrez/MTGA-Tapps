@@ -38,10 +38,12 @@ from .rank_progress import (
     parse_constructed_rank_snapshot,
     parse_limited_rank_snapshot,
 )
+from .replay_capture import REPLAY_VERSION, PendingEventRow, ReplayFact, replay_safe
+from .replay_capture_events import ReplayEventsMixin
 from .state import CardEvent
 
 
-class TrackerAnalyticsMixin:
+class TrackerAnalyticsMixin(ReplayEventsMixin):
     """SQLite analytics and dashboard persistence helpers used by CardTracker."""
 
     def _is_bot_match(self) -> bool:
@@ -192,9 +194,7 @@ class TrackerAnalyticsMixin:
             # numbers (for the draw-quality strip), and the opponent's
             # revealed cards (for the archetype guess).
             "player_lands": self._live_lands_played(self.player_cards) if in_game else None,
-            "opponent_lands": (
-                self._live_lands_played(self.opponent_cards) if in_game else None
-            ),
+            "opponent_lands": (self._live_lands_played(self.opponent_cards) if in_game else None),
             "turn_started_at": (
                 g.turn_started_at.isoformat() if in_game and g.turn_started_at else None
             ),
@@ -203,9 +203,7 @@ class TrackerAnalyticsMixin:
             "ramped_lands": draw_stats[2] if draw_stats else None,
             "deck_size": deck_stats[0] if deck_stats else None,
             "deck_lands": deck_stats[1] if deck_stats else None,
-            "opponent_cards": (
-                self._live_opponent_card_names() if in_game else None
-            ),
+            "opponent_cards": (self._live_opponent_card_names() if in_game else None),
             "match_id": match_id,
             "game_id": game_id,
             "format": format_label,
@@ -423,9 +421,7 @@ class TrackerAnalyticsMixin:
             1 for e in drawn if self._live_event_is_land(e)
         )
         ramped = sum(
-            1
-            for e in drawn
-            if getattr(e, "source", None) == "ramp" and self._live_event_is_land(e)
+            1 for e in drawn if getattr(e, "source", None) == "ramp" and self._live_event_is_land(e)
         )
         return lands_seen, len(opening) + len(drawn), ramped
 
@@ -1058,16 +1054,17 @@ class TrackerAnalyticsMixin:
         db_audit report a missing completed game and offer to reconstruct the
         very ghost we skipped — so remove the breadcrumbs with the skip.
         """
+        game_id = self._current_game_id()
+        # Rows still waiting in the per-message buffer belong to the ghost too.
+        self._replay_discard_game_rows(game_id)
         conn = self._analytics_connect()
         if conn is None:
             return
-        game_id = self._current_game_id()
         try:
             with conn:
+                # Covers printed and silent (visible = 0) replay rows alike.
                 for table_name in ("game_events", "game_turns"):
-                    conn.execute(
-                        f"DELETE FROM {table_name} WHERE game_id = ?", (game_id,)
-                    )
+                    conn.execute(f"DELETE FROM {table_name} WHERE game_id = ?", (game_id,))
         except sqlite3.Error:
             # Cleanup is best-effort; the audit's orphan sweep also covers it.
             pass
@@ -1144,64 +1141,39 @@ class TrackerAnalyticsMixin:
             return "opponent", self.game_state.opponent_seat_id
         return None, None
 
-    def _record_game_event(self, text: str, style: Optional[str] = None) -> None:
-        """Best-effort structured event row for turn-log lines."""
+    def _record_game_event(
+        self, text: str, style: Optional[str] = None, fact: Optional[ReplayFact] = None
+    ) -> None:
+        """Best-effort structured event row for turn-log lines.
+
+        Rows are buffered per GRE message and written in one transaction
+        (see replay_capture). The seat, role and participant come from the
+        printed text exactly as before; ``fact`` adds the replay columns and
+        only fills ``seat_id`` when the text names no actor.
+        """
+        if fact is None:
+            fact = getattr(self, "_replay_pending_fact", None)
+        if fact is not None:
+            self._replay_pending_fact = None
         if not self.game_state.game_start_time:
             return
         if self._is_untracked_match():
             return
-        conn = self._analytics_connect()
-        if conn is None:
-            return
         try:
-            match_id = self._current_match_id()
             game_id = self._current_game_id()
             actor_role, seat_id = self._infer_event_actor(text)
             participant_id = self._participant_id_for_seat(game_id, seat_id)
-            now = self._now()
-            elapsed_seconds = max(0, int((now - self.game_state.game_start_time).total_seconds()))
-            with conn:
-                conn.execute(
-                    """
-                    INSERT INTO game_events (
-                        session_id,
-                        match_id,
-                        game_id,
-                        event_time,
-                        elapsed_seconds,
-                        turn_number,
-                        phase,
-                        step,
-                        participant_id,
-                        seat_id,
-                        actor_role,
-                        event_type,
-                        text,
-                        player_life,
-                        opponent_life
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        self.session_id,
-                        match_id,
-                        game_id,
-                        now.isoformat(),
-                        elapsed_seconds,
-                        self.game_state.turn_number or None,
-                        self.game_state.phase or None,
-                        self.game_state.step or None,
-                        participant_id,
-                        seat_id,
-                        actor_role,
-                        style,
-                        str(text or ""),
-                        self.game_state.player_life,
-                        self.game_state.opponent_life,
-                    ),
-                )
-        except sqlite3.Error:
+            row = PendingEventRow(
+                self._replay_row_base(participant_id, actor_role, silent=False),
+                str(text or ""),
+                style,
+                fact,
+                1,
+                seat_id,
+            )
+        except Exception:  # noqa: BLE001 - history is best effort, tracking is not
             return
+        self._replay_append(row)
 
     def _record_library_event(
         self,
@@ -1551,10 +1523,12 @@ class TrackerAnalyticsMixin:
                 opponent_turns,
                 outcome,
                 outcome_reason,
-                winner_participant_id
+                winner_participant_id,
+                replay_version
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
+                replay_version = excluded.replay_version,
                 ended_at = excluded.ended_at,
                 duration_seconds = excluded.duration_seconds,
                 total_turns = excluded.total_turns,
@@ -1578,6 +1552,7 @@ class TrackerAnalyticsMixin:
                 outcome,
                 reason,
                 winner_participant_id,
+                REPLAY_VERSION,
             ),
         )
 
@@ -1913,10 +1888,13 @@ class TrackerAnalyticsMixin:
                 f"saved {persisted_turns} of {observed_turns} observed turn timing rows"
             )
 
-    def _persist_game_analytics(self, outcome: str, reason: str) -> None:
-        """Persist dashboard-ready summary data for a completed game."""
+    def _persist_game_analytics(self, outcome: str, reason: str) -> bool:
+        """Persist dashboard-ready summary data for a completed game.
+
+        Returns True once the core game row is saved (the replay link is only
+        worth printing then)."""
         if self._is_untracked_match():
-            return
+            return False
         # A "game" with no turns, no opening hand, and no draws is a ghost:
         # typically a post-concede message tail misread as a new game. BUT a
         # concede during the mulligan decision is a REAL game with a real
@@ -1936,7 +1914,7 @@ class TrackerAnalyticsMixin:
         ):
             self._print_line("👻 Skipping ghost game record (no turns or cards observed).")
             self._purge_ghost_game_breadcrumbs()
-            return
+            return False
         # Pre-keep concede: the hand shown during the mulligan decision IS
         # the opening hand — adopt it so the game record shows those cards.
         if not self.game_state.starting_hand and self.game_state._hand_before_mulligan:
@@ -1945,9 +1923,11 @@ class TrackerAnalyticsMixin:
                 list(self.game_state._hand_before_mulligan_ids),
                 list(self.game_state._hand_before_mulligan_events),
             )
+        self._record_game_end_fact(outcome, reason)
         conn = self._analytics_connect()
         if conn is None:
-            return
+            return False
+        saved = False
         try:
             match_id = self._current_match_id()
             game_id = self._current_game_id()
@@ -2002,6 +1982,7 @@ class TrackerAnalyticsMixin:
                 self._upsert_participant_analytics(conn, [player, opponent])
 
             self._run_analytics_write(conn, persist_core)
+            saved = True
 
             try:
 
@@ -2035,6 +2016,25 @@ class TrackerAnalyticsMixin:
         except sqlite3.Error as exc:
             game_id = locals().get("game_id", "unknown")
             self._report_analytics_persistence_error("core game", game_id, exc)
+        return saved
+
+    @replay_safe()
+    def _record_game_end_fact(self, outcome: str, reason: str) -> None:
+        """Silent ``game_end`` row, written before the game row exists."""
+        winner_seat = None
+        if outcome == "win":
+            winner_seat = self.game_state.player_seat_id
+        elif outcome == "loss":
+            winner_seat = self.game_state.opponent_seat_id
+        self._record_silent_event(
+            ReplayFact(
+                "game_end",
+                seat_id=winner_seat if winner_seat in (1, 2) else None,
+                payload={"reason": str(reason or outcome or "unknown")},
+            ),
+            at=self.game_state.game_end_time,
+        )
+        self._replay_flush()
 
     def _report_analytics_persistence_error(
         self, stage: str, game_id: str, error: sqlite3.Error

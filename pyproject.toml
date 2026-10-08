@@ -46,6 +46,7 @@ mtga-tracker-app = "mtga_tracker.app:main"
 mtga-tracker-audit-db = "mtga_tracker.db_audit:main"
 mtga-tracker-dashboard = "mtga_tracker.dashboard:main"
 mtga-tracker-draw-quality = "mtga_tracker.draw_quality:main"
+mtga-tracker-replay-dump = "mtga_tracker.replay_dump:main"
 
 # The release tag IS the version: `git tag v0.5.9.1` and every artifact,
 # API payload, and UI readout derives from it. Nothing to edit per release.

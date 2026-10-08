@@ -73,6 +73,72 @@ def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
     )
 
 
+def _table_columns(conn: sqlite3.Connection, table_name: str) -> Set[str]:
+    return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table_name})")}
+
+
+def _visible_events_clause(conn: sqlite3.Connection, alias: str = "") -> str:
+    """``AND visible = 1`` once the replay columns exist; empty on older DBs.
+
+    Silent replay-only rows (``visible = 0``) never reach printed history:
+    the Game Detail timeline, the life curve and the live feed.
+    """
+    prefix = f"{alias}." if alias else ""
+    return f" AND {prefix}visible = 1" if "visible" in _table_columns(conn, "game_events") else ""
+
+
+_REPLAY_UNAVAILABLE = {"state": "unavailable", "reason": "no events"}
+
+
+def _replay_availability(
+    conn: sqlite3.Connection, game_ids: Iterable[Any]
+) -> Dict[str, Dict[str, Optional[str]]]:
+    """``{game_id: {"state", "reason"}}`` for a whole result set.
+
+    Set-based on purpose: one ``IN`` lookup per 500 ids against the covering
+    ``idx_game_events_game_time`` index plus one for ``replay_version`` —
+    never a correlated subquery per row (about 1 ms for 1,100 games).
+    """
+    ids = list(dict.fromkeys(str(game_id) for game_id in game_ids if game_id))
+    with_events: Set[str] = set()
+    recorded: Set[str] = set()
+    has_version = "replay_version" in _table_columns(conn, "games")
+    for start in range(0, len(ids), 500):
+        chunk = ids[start : start + 500]
+        marks = ",".join("?" * len(chunk))
+        with_events.update(
+            str(row[0])
+            for row in conn.execute(
+                f"SELECT DISTINCT game_id FROM game_events WHERE game_id IN ({marks})", chunk
+            )
+        )
+        if has_version:
+            recorded.update(
+                str(row[0])
+                for row in conn.execute(
+                    f"SELECT id FROM games WHERE id IN ({marks}) AND replay_version IS NOT NULL",
+                    chunk,
+                )
+            )
+    result: Dict[str, Dict[str, Optional[str]]] = {}
+    for game_id in ids:
+        if game_id not in with_events:
+            result[game_id] = dict(_REPLAY_UNAVAILABLE)
+        elif game_id in recorded:
+            result[game_id] = {"state": "recorded", "reason": None}
+        else:
+            result[game_id] = {"state": "reconstructed", "reason": None}
+    return result
+
+
+def _attach_replay_availability(
+    conn: sqlite3.Connection, rows: List[Dict[str, Any]], key: str = "game_id"
+) -> None:
+    availability = _replay_availability(conn, (row.get(key) for row in rows))
+    for row in rows:
+        row["replay"] = availability.get(str(row.get(key)), dict(_REPLAY_UNAVAILABLE))
+
+
 _TYPE_SUFFIX_RE = re.compile(r"\s*\([^()]*\)\s*$")
 _BRACKET_CONTENT_RE = re.compile(r"\[([^\]\n]+)\]")
 
@@ -101,9 +167,7 @@ def _timeline_text_segments(
 ) -> List[Dict[str, str]]:
     """Split timeline text into plain text and validated card-name segments."""
     linkable_card_names = (
-        set(linkable_cards)
-        if isinstance(linkable_cards, dict)
-        else linkable_cards
+        set(linkable_cards) if isinstance(linkable_cards, dict) else linkable_cards
     )
     segments: List[Dict[str, str]] = []
     cursor = 0
@@ -627,9 +691,9 @@ def _deck_decklist_analysis(
         if row["deck_zone"] == "deck":
             deck_rows_by_game.setdefault(game_id, []).append(row)
         else:
-            sideboard_by_game.setdefault(game_id, {})[
-                _clean_card_name(row["display_name"])
-            ] = int(row["quantity"] or 0)
+            sideboard_by_game.setdefault(game_id, {})[_clean_card_name(row["display_name"])] = int(
+                row["quantity"] or 0
+            )
 
     seen_by_game: Dict[str, Dict[str, int]] = {}
     seen_totals_by_game: Dict[str, int] = {}
@@ -652,8 +716,8 @@ def _deck_decklist_analysis(
             clean = _clean_card_name(row["display_name"])
             bucket = seen_by_game.setdefault(game_id, {})
             bucket[clean] = bucket.get(clean, 0) + int(row["copies"] or 0)
-            seen_totals_by_game[game_id] = (
-                seen_totals_by_game.get(game_id, 0) + int(row["copies"] or 0)
+            seen_totals_by_game[game_id] = seen_totals_by_game.get(game_id, 0) + int(
+                row["copies"] or 0
             )
 
     # --- Composition / dead-weight rows ---
@@ -898,9 +962,7 @@ def _deck_decklist_analysis(
 
     def _top_combos(counter: Dict[str, int]) -> str:
         ranked = sorted(counter.items(), key=lambda item: (-item[1], item[0]))[:2]
-        return " · ".join(
-            f"{label} ×{count}" if count > 1 else label for label, count in ranked
-        )
+        return " · ".join(f"{label} ×{count}" if count > 1 else label for label, count in ranked)
 
     swap_rows = []
     for stats in swap_stats.values():
@@ -913,9 +975,7 @@ def _deck_decklist_analysis(
                 "games_in": stats["games_in"],
                 "wins_in": stats["wins_in"],
                 "losses_in": stats["losses_in"],
-                "win_rate_in": round(100.0 * stats["wins_in"] / decided, 1)
-                if decided
-                else None,
+                "win_rate_in": round(100.0 * stats["wins_in"] / decided, 1) if decided else None,
                 "vs_in": _top_combos(stats["vs_in"]),
                 "vs_out": _top_combos(stats["vs_out"]),
             }
@@ -935,15 +995,15 @@ def _deck_decklist_analysis(
             "matches": multi_game_matches,
             "game_one": {
                 **game_one,
-                "win_rate": round(100.0 * game_one["wins"] / decided_one, 1)
-                if decided_one
-                else None,
+                "win_rate": (
+                    round(100.0 * game_one["wins"] / decided_one, 1) if decided_one else None
+                ),
             },
             "post_board": {
                 **post_board,
-                "win_rate": round(100.0 * post_board["wins"] / decided_post, 1)
-                if decided_post
-                else None,
+                "win_rate": (
+                    round(100.0 * post_board["wins"] / decided_post, 1) if decided_post else None
+                ),
             },
             "boarded_in": [
                 {"display_name": name, "copies": copies}
@@ -1084,9 +1144,7 @@ def _opponent_color_rows(
     return result
 
 
-def _brawl_summary(
-    conn: sqlite3.Connection, where: str, params: List[Any]
-) -> Dict[str, Any]:
+def _brawl_summary(conn: sqlite3.Connection, where: str, params: List[Any]) -> Dict[str, Any]:
     """Overall Brawl record plus a per-queue split.
 
     Brawl-only players should get a headline record, not just commander
@@ -1640,7 +1698,9 @@ def _mana_readiness_rows(
     return rows
 
 
-def _combat_deck_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -> List[Dict[str, Any]]:
+def _combat_deck_rows(
+    conn: sqlite3.Connection, where: str, params: List[Any]
+) -> List[Dict[str, Any]]:
     """Per-deck combat/aggression profile from game_participant_stats.
 
     No row cap: the Decks table joins these by name, and a cap (this used to
@@ -1697,9 +1757,7 @@ def _combat_deck_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -
             row["aggression_profile"] = "Midrange"
         attackers_lost = int(row.get("attackers_lost") or 0)
         blockers_lost = int(row.get("blockers_lost") or 0)
-        row["trade_ratio"] = (
-            round(blockers_lost / attackers_lost, 2) if attackers_lost else None
-        )
+        row["trade_ratio"] = round(blockers_lost / attackers_lost, 2) if attackers_lost else None
     return rows
 
 
@@ -1760,13 +1818,9 @@ def _interaction_deck_profile(
     select_parts = ["COUNT(s.removal_played) AS games_tracked"]
     for prefix, alias in (("p", "s"), ("o", "os")):
         for column in _INTERACTION_STAT_COLUMNS:
-            select_parts.append(
-                f"ROUND(AVG({alias}.{column}), 2) AS {prefix}_{column}"
-            )
+            select_parts.append(f"ROUND(AVG({alias}.{column}), 2) AS {prefix}_{column}")
         other = "os" if alias == "s" else "s"
-        select_parts.append(
-            f"ROUND(AVG({other}.spells_countered), 2) AS {prefix}_counters_landed"
-        )
+        select_parts.append(f"ROUND(AVG({other}.spells_countered), 2) AS {prefix}_counters_landed")
         select_parts.append(
             f"""ROUND(AVG(CASE
               WHEN {alias}.counters_played IS NOT NULL
@@ -1890,7 +1944,9 @@ def _deck_mode_splits(match_rows: List[Dict[str, Any]]) -> Optional[Dict[str, An
     return splits or None
 
 
-def _combat_split_rows(conn: sqlite3.Connection, where: str, params: List[Any]) -> List[Dict[str, Any]]:
+def _combat_split_rows(
+    conn: sqlite3.Connection, where: str, params: List[Any]
+) -> List[Dict[str, Any]]:
     """Aggression aggregates split by game outcome (wins vs losses)."""
     return _dict_rows(
         conn.execute(
@@ -2194,9 +2250,7 @@ def _deck_color_map(conn: sqlite3.Connection) -> Dict[str, str]:
     """
     if not _table_exists(conn, "cards"):
         return {}
-    has_mana = "mana_cost" in {
-        row[1] for row in conn.execute("PRAGMA table_info(cards)")
-    }
+    has_mana = "mana_cost" in {row[1] for row in conn.execute("PRAGMA table_info(cards)")}
     cost_column = 'c."mana_cost"' if has_mana else "NULL"
     result: Dict[str, str] = {}
     if _table_exists(conn, "game_deck_cards"):
@@ -2283,9 +2337,7 @@ def _participant_deck_color_map(
         or not _table_exists(conn, "game_deck_cards")
     ):
         return {}
-    has_mana = "mana_cost" in {
-        row[1] for row in conn.execute("PRAGMA table_info(cards)")
-    }
+    has_mana = "mana_cost" in {row[1] for row in conn.execute("PRAGMA table_info(cards)")}
     cost_column = 'c."mana_cost"' if has_mana else "NULL"
     rows_by_participant: Dict[str, List[Any]] = {}
     # Stay below SQLite's variable limit when All Games contains a long history.
@@ -2436,14 +2488,8 @@ def _deck_export_snapshot(
         )
         card["quantity"] += int(row.get("quantity") or 0)
 
-    main_deck = [
-        {"display_name": name, **card}
-        for name, card in grouped["deck"].items()
-    ]
-    sideboard = [
-        {"display_name": name, **card}
-        for name, card in grouped["sideboard"].items()
-    ]
+    main_deck = [{"display_name": name, **card} for name, card in grouped["deck"].items()]
+    sideboard = [{"display_name": name, **card} for name, card in grouped["sideboard"].items()]
     if not main_deck:
         return unavailable
 
@@ -2541,7 +2587,6 @@ def dashboard_snapshot(
                 WHERE {where}
                 GROUP BY p.deck_name
                 ORDER BY games DESC, win_rate DESC
-                LIMIT 100
                 """,
                 params,
             )
@@ -2747,6 +2792,10 @@ def dashboard_snapshot(
                     WHERE g2.match_id = g.match_id
                   ) AS match_losses,
                   (
+                    SELECT po.display_name FROM participants po
+                    WHERE po.game_id = g.id AND po.role = 'opponent'
+                  ) AS opponent_name,
+                  (
                     SELECT GROUP_CONCAT(CASE WHEN c.color_identity IS NOT NULL THEN c.color_identity || 'C' END, '')
                     FROM game_card_summary s
                     JOIN participants po ON po.id = s.participant_id AND po.role = 'opponent'
@@ -2900,7 +2949,6 @@ def dashboard_snapshot(
                 WHERE {where}
                 GROUP BY s.id
                 ORDER BY s.started_at DESC, s.id DESC
-                LIMIT 30
                 """,
                 params,
             )
@@ -2918,7 +2966,7 @@ def dashboard_snapshot(
         ]
         format_options = []
         for row in conn.execute(
-                """
+            """
                 SELECT COALESCE(format, '(unknown)') AS raw_format, MAX(COALESCE(best_of, 1))
                 FROM matches
                 WHERE COALESCE(format, '(unknown)') NOT LIKE 'Jump!_In%' ESCAPE '!'
@@ -2926,14 +2974,10 @@ def dashboard_snapshot(
                 ORDER BY raw_format COLLATE NOCASE
                 """
         ):
-            normalized = normalize_match_format(
-                row[0], default_best_of=int(row[1] or 1)
-            )
+            normalized = normalize_match_format(row[0], default_best_of=int(row[1] or 1))
             if normalized.is_midweek:
                 continue
-            format_options.append(
-                {"raw_format": row[0], "format_label": normalized.label}
-            )
+            format_options.append({"raw_format": row[0], "format_label": normalized.label})
         combat_deck_rows = _combat_deck_rows(conn, where, params)
         combat_split_rows = _combat_split_rows(conn, where, params)
         mana_readiness_rows = _mana_readiness_rows(conn, where, params)
@@ -2985,6 +3029,7 @@ def dashboard_snapshot(
         recent_deck_colors = _participant_deck_color_map(
             conn, (row.get("player_participant_id") for row in recent_rows)
         )
+        _attach_replay_availability(conn, recent_rows)
         for row in recent_rows:
             participant_id = row.pop("player_participant_id", None)
             row.pop("deck_size", None)
@@ -3035,9 +3080,7 @@ def dashboard_snapshot(
         rank_class = str(row.get("rank_class") or "Bronze")
         rank_level = int(row.get("rank_level") or 1)
         rank_step = int(
-            row.get("raw_step")
-            if row.get("raw_step") is not None
-            else row.get("rank_step") or 0
+            row.get("raw_step") if row.get("raw_step") is not None else row.get("rank_step") or 0
         )
         rank_steps = int(row.get("rank_steps") or 6)
         row["rank_step"] = rank_step
@@ -3045,9 +3088,7 @@ def dashboard_snapshot(
         row["rank_label"] = (
             f"{rank_class} {rank_level} ({rank_step}/{rank_steps})"
             if rank_class != "Mythic"
-            else f"Mythic #{row['mythic_rank']}"
-            if row.get("mythic_rank")
-            else "Mythic"
+            else f"Mythic #{row['mythic_rank']}" if row.get("mythic_rank") else "Mythic"
         )
     return {
         "summary": summary_dict,
@@ -3440,8 +3481,7 @@ def deck_detail(
         if deck_export.get("available"):
             for section in ("main_deck", "sideboard"):
                 mana_names.update(
-                    str(card.get("display_name") or "")
-                    for card in deck_export.get(section) or []
+                    str(card.get("display_name") or "") for card in deck_export.get(section) or []
                 )
         if played_mana:
             for seat in played_mana.values():
@@ -3493,9 +3533,7 @@ def deck_detail(
         except sqlite3.OperationalError:
             pass
         if deck_commanders and deck_export.get("available"):
-            deck_export["text"] = _with_commander_block(
-                deck_export.get("text"), deck_commanders
-            )
+            deck_export["text"] = _with_commander_block(deck_export.get("text"), deck_commanders)
         land_profile = _deck_land_profile(conn, where, params)
         account_rows = _dict_rows(
             conn.execute(
@@ -3520,6 +3558,7 @@ def deck_detail(
             quality = recent_quality.get(participant_id) or draw_quality_metrics([], [], 0, 60)
             row["is_flood"] = quality["is_flood"]
             row["is_screw"] = quality["is_screw"]
+        _attach_replay_availability(conn, recent_rows)
 
     for row in recent_rows:
         row["format_label"] = format_label(
@@ -3629,8 +3668,7 @@ def reset_database(db_path: Path = DEFAULT_DB_PATH) -> Dict[str, Any]:
         finally:
             backup_conn.close()
         existing = {
-            row[0]
-            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
         with conn:
             for table_name in RESET_TABLES:
@@ -3676,9 +3714,7 @@ def _latest_inventory(conn: sqlite3.Connection) -> Optional[Dict[str, Any]]:
     }
 
 
-def _deck_land_profile(
-    conn: sqlite3.Connection, where: str, params: List[Any]
-) -> Dict[str, Any]:
+def _deck_land_profile(conn: sqlite3.Connection, where: str, params: List[Any]) -> Dict[str, Any]:
     """Flood / screw / normal split across a deck's games, plus land count.
 
     Lands and deck size come from the newest submitted decklist; the per-game
@@ -3748,9 +3784,7 @@ def _deck_land_profile(
         ),
         "avg_cards_drawn": round(sum_draws / classified, 1) if classified else None,
         "avg_lands_drawn": round(sum_land_draws / classified, 1) if classified else None,
-        "lands_drawn_pct": (
-            round(100.0 * sum_land_draws / sum_draws, 1) if sum_draws else None
-        ),
+        "lands_drawn_pct": (round(100.0 * sum_land_draws / sum_draws, 1) if sum_draws else None),
         "expected_land_pct": expected_land_pct,
         "expected_lands_seen": (
             round(avg_cards_seen * expected_land_pct / 100.0, 1)
@@ -3799,9 +3833,7 @@ def _deck_turn_timing(
     return summary or None
 
 
-def _card_mana_map(
-    conn: sqlite3.Connection, names: Iterable[str]
-) -> Dict[str, Dict[str, Any]]:
+def _card_mana_map(conn: sqlite3.Connection, names: Iterable[str]) -> Dict[str, Dict[str, Any]]:
     """Map display names to Arena-derived mana costs from the cards table.
 
     Costs land in cards.mana_cost/mana_value via the Arena card-DB backfill
@@ -4115,9 +4147,7 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
         deck_size = int((player or {}).get("deck_size") or 60)
         # Shared helper: same visible-card rules, plus the submitted decklist
         # (or the deck's nearest one) for the expected land rate.
-        draw_quality = _game_draw_quality(
-            conn, game_id, player_participant_id, deck_size
-        )
+        draw_quality = _game_draw_quality(conn, game_id, player_participant_id, deck_size)
         cards_played = _dict_rows(
             conn.execute(
                 """
@@ -4169,8 +4199,9 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
 
         timeline = _dict_rows(
             conn.execute(
-                """
+                f"""
                 SELECT
+                  id,
                   turn_number,
                   phase,
                   step,
@@ -4180,7 +4211,7 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
                   player_life,
                   opponent_life
                 FROM game_events
-                WHERE game_id = ?
+                WHERE game_id = ?{_visible_events_clause(conn)}
                 ORDER BY event_time, id
                 LIMIT 10000
                 """,
@@ -4203,22 +4234,14 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
         for row in cards_played:
             aliases = _card_name_aliases(row.get("display_name"))
             row["turns_played"] = sorted(
-                turn
-                for alias in aliases
-                for turn in played_turns.get(("player", alias), [])
+                turn for alias in aliases for turn in played_turns.get(("player", alias), [])
             )
         for row in opponent_cards:
             aliases = _card_name_aliases(row.get("display_name"))
             row["turns_played"] = sorted(
-                turn
-                for alias in aliases
-                for turn in played_turns.get(("opponent", alias), [])
+                turn for alias in aliases for turn in played_turns.get(("opponent", alias), [])
             )
-            seen = [
-                turn
-                for alias in aliases
-                for turn in opponent_seen_turns.get(alias, [])
-            ]
+            seen = [turn for alias in aliases for turn in opponent_seen_turns.get(alias, [])]
             row["first_seen_turn"] = min(seen) if seen else None
         linkable_cards: Dict[str, Optional[str]] = {}
         for display_name, type_category in conn.execute(
@@ -4228,9 +4251,7 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
             """
         ):
             clean_name = _clean_card_name(display_name)
-            if clean_name and (
-                clean_name not in linkable_cards or not linkable_cards[clean_name]
-            ):
+            if clean_name and (clean_name not in linkable_cards or not linkable_cards[clean_name]):
                 linkable_cards[clean_name] = type_category
         for row in timeline:
             row["text_segments"] = _timeline_text_segments(
@@ -4418,6 +4439,12 @@ def game_detail(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str,
             )
         if len(match_games) < 2 and int(game.get("best_of") or 1) <= 1:
             match_games = []
+        replay_states = _replay_availability(
+            conn, [game_id] + [row.get("game_id") for row in match_games]
+        )
+        game["replay"] = replay_states.get(str(game_id), dict(_REPLAY_UNAVAILABLE))
+        for row in match_games:
+            row["replay"] = replay_states.get(str(row.get("game_id")), dict(_REPLAY_UNAVAILABLE))
 
     annotation = game_annotation(db_path, game_id)
     opponent_payload = dict(opponent or {})
@@ -4552,6 +4579,7 @@ def opponent_detail(
         game_deck_colors = _participant_deck_color_map(
             conn, (row.get("player_participant_id") for row in game_rows)
         )
+        _attach_replay_availability(conn, game_rows)
     for row in game_rows:
         participant_id = row.pop("player_participant_id", None)
         row["deck_colors"] = game_deck_colors.get(str(participant_id)) or deck_color_map.get(
@@ -4576,9 +4604,7 @@ def opponent_detail(
     }
 
 
-def _card_multiplicity(
-    conn: sqlite3.Connection, variants: List[str]
-) -> Dict[str, Any]:
+def _card_multiplicity(conn: sqlite3.Connection, variants: List[str]) -> Dict[str, Any]:
     """Repeat-draw analysis for one card across the player's games.
 
     For every game where the card was in the submitted maindeck (or, lacking a
@@ -4678,9 +4704,7 @@ def _card_multiplicity(
     # Always surface the 1..4+ rows: a zero-game row still shows the
     # hypergeometric expectation, which is the interesting part for 3 and 4.
     for key in (1, 2, 3, 4):
-        buckets.setdefault(
-            key, {"copies_seen": key, "games": 0, "wins": 0, "losses": 0}
-        )
+        buckets.setdefault(key, {"copies_seen": key, "games": 0, "wins": 0, "losses": 0})
 
     total_games = len(seen_rows)
     bucket_rows = []
@@ -4708,9 +4732,7 @@ def _card_multiplicity(
     return {"games": total_games, "buckets": bucket_rows}
 
 
-def _card_opponent_multiplicity(
-    conn: sqlite3.Connection, variants: List[str]
-) -> Dict[str, Any]:
+def _card_opponent_multiplicity(conn: sqlite3.Connection, variants: List[str]) -> Dict[str, Any]:
     """Repeat-copy analysis from the opponent's side of your games.
 
     Opponent decklists are unknown, so there is no hypergeometric expectation
@@ -4757,9 +4779,7 @@ def _card_opponent_multiplicity(
             bucket["losses"] += 1
 
     for key in (1, 2, 3, 4):
-        buckets.setdefault(
-            key, {"copies_seen": key, "games": 0, "wins": 0, "losses": 0}
-        )
+        buckets.setdefault(key, {"copies_seen": key, "games": 0, "wins": 0, "losses": 0})
 
     total_games = len(rows)
     bucket_rows = []
@@ -4868,9 +4888,7 @@ def _card_opponent_playable(
         ),
         "games_possible": games_possible,
         "games_played": games_played,
-        "pct": (
-            round(100.0 * games_played / games_possible, 1) if games_possible else None
-        ),
+        "pct": (round(100.0 * games_played / games_possible, 1) if games_possible else None),
     }
 
 
@@ -5007,9 +5025,7 @@ def card_detail(
         ).fetchone()
         multiplicity = _card_multiplicity(conn, variants)
         opponent_multiplicity = _card_opponent_multiplicity(conn, variants)
-        opponent_playable = _card_opponent_playable(
-            conn, variants, where, list(filter_params)
-        )
+        opponent_playable = _card_opponent_playable(conn, variants, where, list(filter_params))
 
     opponent_usage = next((row for row in by_role if row["role"] == "opponent"), None)
     opponent_games = int(opponent_usage["games_seen"] or 0) if opponent_usage else 0
@@ -5055,9 +5071,7 @@ def card_detail(
             "losses": opponent_losses,
             "win_rate": opponent_usage["win_rate"] if opponent_usage else None,
             "loss_rate": (
-                round(100.0 * opponent_losses / opponent_decided, 1)
-                if opponent_decided
-                else None
+                round(100.0 * opponent_losses / opponent_decided, 1) if opponent_decided else None
             ),
         },
         "opponent_playable": opponent_playable,
@@ -5152,6 +5166,10 @@ def all_games(
                   p.mulligans,
                   p.went_first,
                   (
+                    SELECT po.display_name FROM participants po
+                    WHERE po.game_id = g.id AND po.role = 'opponent'
+                  ) AS opponent_name,
+                  (
                     SELECT SUM(g2.outcome = 'win') FROM games g2
                     WHERE g2.match_id = g.match_id
                   ) AS match_wins,
@@ -5208,6 +5226,7 @@ def all_games(
         game_deck_colors = _participant_deck_color_map(
             conn, (row.get("player_participant_id") for row in rows)
         )
+        _attach_replay_availability(conn, rows)
 
     for row in rows:
         participant_id = row.pop("player_participant_id", None)
@@ -5280,9 +5299,11 @@ def save_game_annotation(
     clean_tags: List[str] = []
     for tag in tags or []:
         cleaned = str(tag or "").strip()[:MAX_ANNOTATION_TAG_LENGTH]
-        if cleaned and "," not in cleaned and cleaned.casefold() not in {
-            existing.casefold() for existing in clean_tags
-        }:
+        if (
+            cleaned
+            and "," not in cleaned
+            and cleaned.casefold() not in {existing.casefold() for existing in clean_tags}
+        ):
             clean_tags.append(cleaned)
         if len(clean_tags) >= MAX_ANNOTATION_TAGS:
             break
@@ -5291,9 +5312,7 @@ def save_game_annotation(
         try:
             with sqlite3.connect(db_path, timeout=5.0) as conn:
                 conn.execute("PRAGMA busy_timeout = 5000")
-                exists = conn.execute(
-                    "SELECT 1 FROM games WHERE id = ?", (game_id,)
-                ).fetchone()
+                exists = conn.execute("SELECT 1 FROM games WHERE id = ?", (game_id,)).fetchone()
                 if not exists:
                     raise LookupError(f"No recorded game for id: {game_id}")
                 conn.execute(
@@ -5307,9 +5326,7 @@ def save_game_annotation(
                     """
                 )
                 if not clean_note and not clean_tags:
-                    conn.execute(
-                        "DELETE FROM game_annotations WHERE game_id = ?", (game_id,)
-                    )
+                    conn.execute("DELETE FROM game_annotations WHERE game_id = ?", (game_id,))
                 else:
                     conn.execute(
                         """
@@ -5433,9 +5450,7 @@ def search_cards(
     if not db_path.is_file():
         raise FileNotFoundError(f"Dashboard database not found: {db_path}")
 
-    escaped_query = (
-        clean_query.replace("!", "!!").replace("%", "!%").replace("_", "!_")
-    )
+    escaped_query = clean_query.replace("!", "!!").replace("%", "!%").replace("_", "!_")
     db_uri = db_path.resolve().as_uri() + "?mode=ro"
     with sqlite3.connect(db_uri, uri=True) as conn:
         conn.execute("PRAGMA query_only = ON")
@@ -5491,11 +5506,11 @@ def search_cards(
     ranked = sorted(
         matches.values(),
         key=lambda item: (
-            0
-            if item["card_name"].casefold() == query_folded
-            else 1
-            if item["card_name"].casefold().startswith(query_folded)
-            else 2,
+            (
+                0
+                if item["card_name"].casefold() == query_folded
+                else 1 if item["card_name"].casefold().startswith(query_folded) else 2
+            ),
             -len(item["game_ids"]),
             -item["total_played"],
             item["card_name"].casefold(),
@@ -5598,9 +5613,7 @@ def render_dashboard_html(snapshot: Dict[str, Any]) -> str:
         }
         for row in snapshot["momentum"]
     ]
-    draw_quality_by_game = {
-        row["game_id"]: row for row in snapshot["draw_quality"]
-    }
+    draw_quality_by_game = {row["game_id"]: row for row in snapshot["draw_quality"]}
     recent_rows = [
         {
             "Started": row["started_at"],
@@ -5618,8 +5631,7 @@ def render_dashboard_html(snapshot: Dict[str, Any]) -> str:
             "Lands Seen": (
                 f"{draw_quality_by_game[row['game_id']]['lands_seen']} "
                 f"({math.ceil(draw_quality_by_game[row['game_id']]['land_seen_pct'])}%)"
-                if draw_quality_by_game.get(row["game_id"], {}).get("land_seen_pct")
-                is not None
+                if draw_quality_by_game.get(row["game_id"], {}).get("land_seen_pct") is not None
                 else draw_quality_by_game.get(row["game_id"], {}).get("lands_seen")
             ),
             "Game Time": f"{round((row['duration_seconds'] or 0) / 60.0)} min",
@@ -5695,9 +5707,9 @@ def render_snapshot_json(snapshot: Dict[str, Any]) -> bytes:
 
 _RESPONSE_CACHE_TTL_SECONDS = 60.0
 _RESPONSE_CACHE_MAX_ENTRIES = 64
-_response_cache: "collections.OrderedDict[Tuple[str, str, str], Tuple[Tuple[Any, ...], float, bytes]]" = (
-    collections.OrderedDict()
-)
+_response_cache: (
+    "collections.OrderedDict[Tuple[str, str, str], Tuple[Tuple[Any, ...], float, bytes]]"
+) = collections.OrderedDict()
 _response_cache_lock = threading.Lock()
 
 _FINGERPRINT_SQL = """
@@ -5732,9 +5744,7 @@ def _analytics_fingerprint(db_path: Path) -> Optional[Tuple[Any, ...]]:
         return None
 
 
-def cached_response(
-    db_path: Path, path: str, query: str, compute: "Callable[[], bytes]"
-) -> bytes:
+def cached_response(db_path: Path, path: str, query: str, compute: "Callable[[], bytes]") -> bytes:
     """Return the cached JSON body for (db, path, query) while the analytics
     fingerprint is unchanged and the entry is younger than the TTL; otherwise
     compute, store, and return it."""
@@ -5765,7 +5775,6 @@ def clear_response_cache() -> None:
     from . import live_api
 
     live_api.reset_poll_connections()
-
 
 
 def _send_bytes(
@@ -5807,7 +5816,10 @@ def _safe_static_path(static_dir: Path, request_path: str) -> Path | None:
             resolved_candidate = resolved_candidate.resolve()
         except OSError:
             return None
-        if resolved_candidate == resolved_static or resolved_static not in resolved_candidate.parents:
+        if (
+            resolved_candidate == resolved_static
+            or resolved_static not in resolved_candidate.parents
+        ):
             return None
     if not resolved_candidate.is_file():
         return None
@@ -5823,6 +5835,7 @@ def _content_type(path: Path) -> str:
 
 def _parse_common_filters(query: Dict[str, List[str]]) -> Dict[str, Any]:
     """Parse deck/format/days/since/until filter params shared across endpoints."""
+
     def first(key: str) -> Optional[str]:
         return query.get(key, [None])[0] or None
 
@@ -6026,15 +6039,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 result = reset_database(self.db_path)
             except FileNotFoundError as exc:
                 _send_bytes(
-                    self, 404, str(exc).encode("utf-8"),
-                    "text/plain; charset=utf-8", {"Cache-Control": "no-store"},
+                    self,
+                    404,
+                    str(exc).encode("utf-8"),
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
                 )
                 return
             except Exception as exc:
                 traceback.print_exc()
                 _send_bytes(
-                    self, 500, f"{type(exc).__name__}: {exc}".encode("utf-8"),
-                    "text/plain; charset=utf-8", {"Cache-Control": "no-store"},
+                    self,
+                    500,
+                    f"{type(exc).__name__}: {exc}".encode("utf-8"),
+                    "text/plain; charset=utf-8",
+                    {"Cache-Control": "no-store"},
                 )
                 return
             print(f"⚠️  Database reset by dashboard request — backup: {result['backup']}")
@@ -6143,6 +6162,43 @@ class DashboardHandler(BaseHTTPRequestHandler):
             },
         )
 
+    def _send_replay(self, parsed: Any) -> None:
+        """GET /api/replay?id=<game_id>: the replay stream (docs/REPLAY_FORMAT.md §2)."""
+        from .replay_builder import replay_for_game
+        from .replay_stream import ReplayUnavailable, encode_stream
+
+        json_type = "application/json; charset=utf-8"
+        no_store = {"Cache-Control": "no-store"}
+        game_id = parse_qs(parsed.query).get("id", [None])[0]
+        if not game_id:
+            _send_bytes(
+                self,
+                400,
+                b"Missing required query parameter: id",
+                "text/plain; charset=utf-8",
+                no_store,
+            )
+            return
+        try:
+            body = cached_response(
+                self.db_path,
+                "/api/replay",
+                parsed.query,
+                lambda: encode_stream(replay_for_game(self.db_path, game_id)),
+            )
+        except ReplayUnavailable as exc:
+            error = {"error": "replay_unavailable", "reason": exc.reason}
+            _send_bytes(self, 404, json.dumps(error).encode("utf-8"), json_type, no_store)
+            return
+        except (FileNotFoundError, LookupError) as exc:
+            error = {"error": "not_found", "reason": str(exc)}
+            _send_bytes(self, 404, json.dumps(error).encode("utf-8"), json_type, no_store)
+            return
+        except Exception as exc:  # noqa: BLE001 - report, never crash the server
+            _send_bytes(self, 500, str(exc).encode("utf-8"), "text/plain; charset=utf-8", no_store)
+            return
+        _send_bytes(self, 200, body, json_type, no_store)
+
     def do_GET(self) -> None:  # noqa: N802 - http.server API
         parsed = urlparse(self.path)
         request_path = parsed.path
@@ -6190,7 +6246,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if handled is not None:
                 status, body = handled
                 payload = json.dumps(body, separators=(",", ":")).encode("utf-8")
-                _send_bytes(self, status, payload, "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+                _send_bytes(
+                    self,
+                    status,
+                    payload,
+                    "application/json; charset=utf-8",
+                    {"Cache-Control": "no-store"},
+                )
                 return
         if request_path == "/api/backup":
             from . import backup_api
@@ -6223,9 +6285,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if request_path.startswith("/api/collection/"):
             from . import collection_api
 
-            handled = collection_api.handle_get(
-                request_path, parse_qs(parsed.query), self.db_path
-            )
+            handled = collection_api.handle_get(request_path, parse_qs(parsed.query), self.db_path)
             if handled is not None:
                 status, body = handled
                 if status == 200 and isinstance(body, dict) and "_file" in body:
@@ -6278,18 +6338,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     request_path,
                     parsed.query,
                     lambda: render_snapshot_json(
-                    dashboard_snapshot(
-                        self.db_path,
-                        deck=common["deck"],
-                        fmt=common["fmt"],
-                        days=common["days"],
-                        season=season,
-                        since=common["since"],
-                        until=common["until"],
-                        trend_days=trend_days,
-                        trend_games=trend_games,
-                    )
-                ),
+                        dashboard_snapshot(
+                            self.db_path,
+                            deck=common["deck"],
+                            fmt=common["fmt"],
+                            days=common["days"],
+                            season=season,
+                            since=common["since"],
+                            until=common["until"],
+                            trend_days=trend_days,
+                            trend_games=trend_games,
+                        )
+                    ),
                 )
             except FileNotFoundError as exc:
                 _send_bytes(
@@ -6309,7 +6369,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     {"Cache-Control": "no-store"},
                 )
                 return
-            _send_bytes(self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            _send_bytes(
+                self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"}
+            )
             return
         if request_path == "/api/deck":
             query = parse_qs(parsed.query)
@@ -6332,15 +6394,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     request_path,
                     parsed.query,
                     lambda: render_snapshot_json(
-                    deck_detail(
-                        self.db_path,
-                        deck_name,
-                        fmt=fmt,
-                        days=days,
-                        since=common["since"],
-                        until=common["until"],
-                    )
-                ),
+                        deck_detail(
+                            self.db_path,
+                            deck_name,
+                            fmt=fmt,
+                            days=days,
+                            since=common["since"],
+                            until=common["until"],
+                        )
+                    ),
                 )
             except (FileNotFoundError, LookupError) as exc:
                 _send_bytes(
@@ -6360,7 +6422,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     {"Cache-Control": "no-store"},
                 )
                 return
-            _send_bytes(self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            _send_bytes(
+                self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"}
+            )
             return
         if request_path == "/api/game":
             query = parse_qs(parsed.query)
@@ -6399,7 +6463,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     {"Cache-Control": "no-store"},
                 )
                 return
-            _send_bytes(self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            _send_bytes(
+                self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"}
+            )
+            return
+        if request_path == "/api/replay":
+            self._send_replay(parsed)
             return
         if request_path == "/api/opponents":
             try:
@@ -6418,7 +6487,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     {"Cache-Control": "no-store"},
                 )
                 return
-            _send_bytes(self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            _send_bytes(
+                self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"}
+            )
             return
         if request_path == "/api/opponent":
             query = parse_qs(parsed.query)
@@ -6439,16 +6510,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     request_path,
                     parsed.query,
                     lambda: render_snapshot_json(
-                    opponent_detail(
-                        self.db_path,
-                        name,
-                        deck=common["deck"],
-                        fmt=common["fmt"],
-                        days=common["days"],
-                        since=common["since"],
-                        until=common["until"],
-                    )
-                ),
+                        opponent_detail(
+                            self.db_path,
+                            name,
+                            deck=common["deck"],
+                            fmt=common["fmt"],
+                            days=common["days"],
+                            since=common["since"],
+                            until=common["until"],
+                        )
+                    ),
                 )
             except (FileNotFoundError, LookupError) as exc:
                 _send_bytes(
@@ -6468,7 +6539,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     {"Cache-Control": "no-store"},
                 )
                 return
-            _send_bytes(self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            _send_bytes(
+                self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"}
+            )
             return
         if request_path == "/api/card":
             query = parse_qs(parsed.query)
@@ -6489,16 +6562,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     request_path,
                     parsed.query,
                     lambda: render_snapshot_json(
-                    card_detail(
-                        self.db_path,
-                        name,
-                        deck=common["deck"],
-                        fmt=common["fmt"],
-                        days=common["days"],
-                        since=common["since"],
-                        until=common["until"],
-                    )
-                ),
+                        card_detail(
+                            self.db_path,
+                            name,
+                            deck=common["deck"],
+                            fmt=common["fmt"],
+                            days=common["days"],
+                            since=common["since"],
+                            until=common["until"],
+                        )
+                    ),
                 )
             except (FileNotFoundError, LookupError) as exc:
                 _send_bytes(
@@ -6518,7 +6591,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     {"Cache-Control": "no-store"},
                 )
                 return
-            _send_bytes(self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            _send_bytes(
+                self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"}
+            )
             return
         if request_path == "/api/games":
             query = parse_qs(parsed.query)
@@ -6529,15 +6604,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     request_path,
                     parsed.query,
                     lambda: render_snapshot_json(
-                    all_games(
-                        self.db_path,
-                        deck=common["deck"],
-                        fmt=common["fmt"],
-                        days=common["days"],
-                        since=common["since"],
-                        until=common["until"],
-                    )
-                ),
+                        all_games(
+                            self.db_path,
+                            deck=common["deck"],
+                            fmt=common["fmt"],
+                            days=common["days"],
+                            since=common["since"],
+                            until=common["until"],
+                        )
+                    ),
                 )
             except FileNotFoundError as exc:
                 _send_bytes(
@@ -6557,7 +6632,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     {"Cache-Control": "no-store"},
                 )
                 return
-            _send_bytes(self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            _send_bytes(
+                self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"}
+            )
             return
         if request_path == "/api/audit":
             try:
@@ -6580,7 +6657,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     {"Cache-Control": "no-store"},
                 )
                 return
-            _send_bytes(self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            _send_bytes(
+                self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"}
+            )
             return
         if request_path == "/api/search":
             query = parse_qs(parsed.query)
@@ -6619,7 +6698,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     {"Cache-Control": "no-store"},
                 )
                 return
-            _send_bytes(self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            _send_bytes(
+                self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"}
+            )
             return
         if request_path == "/api/cards":
             query = parse_qs(parsed.query)
@@ -6658,7 +6739,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     {"Cache-Control": "no-store"},
                 )
                 return
-            _send_bytes(self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            _send_bytes(
+                self, 200, body, "application/json; charset=utf-8", {"Cache-Control": "no-store"}
+            )
             return
         if self.static_dir:
             static_path = _safe_static_path(Path(self.static_dir), request_path)

@@ -399,16 +399,25 @@ def _delete_unknown_card_label(conn: sqlite3.Connection, table_name: str, row_id
     return int(deleted or 0)
 
 
+# Silent replay rows (visible = 0) store no session_id (''): their session is
+# the prefix of their game id, "<session>:match:<n>:game:<m>".
+_EVENT_SESSION_SQL = (
+    "CASE WHEN COALESCE(e.session_id, '') = '' "
+    "THEN substr(e.game_id, 1, instr(e.game_id, ':match:') - 1) ELSE e.session_id END"
+)
+
+
 def _game_event_assignment_findings(conn: sqlite3.Connection) -> Iterable[AuditFinding]:
+    event_session = _EVENT_SESSION_SQL
     row = conn.execute(
-        """
+        f"""
         WITH assignments AS (
             SELECT
                 e.game_id AS current_game_id,
                 (
                     SELECT g.id
                     FROM games g
-                    WHERE g.session_id = e.session_id
+                    WHERE g.session_id = {event_session}
                       AND g.started_at IS NOT NULL
                       AND g.ended_at IS NOT NULL
                       AND e.event_time >= g.started_at
@@ -773,15 +782,16 @@ def _repair_game_event_assignments(conn: sqlite3.Connection) -> int:
         )
         """
     )
+    event_session = _EVENT_SESSION_SQL
     conn.execute(
-        """
+        f"""
         INSERT INTO game_event_assignment_repairs (event_id, game_id, match_id)
         SELECT
             e.id,
             (
                 SELECT g.id
                 FROM games g
-                WHERE g.session_id = e.session_id
+                WHERE g.session_id = {event_session}
                   AND g.started_at IS NOT NULL
                   AND g.ended_at IS NOT NULL
                   AND e.event_time >= g.started_at
@@ -792,7 +802,7 @@ def _repair_game_event_assignments(conn: sqlite3.Connection) -> int:
             (
                 SELECT g.match_id
                 FROM games g
-                WHERE g.session_id = e.session_id
+                WHERE g.session_id = {event_session}
                   AND g.started_at IS NOT NULL
                   AND g.ended_at IS NOT NULL
                   AND e.event_time >= g.started_at
@@ -814,8 +824,12 @@ def _repair_game_event_assignments(conn: sqlite3.Connection) -> int:
         ).fetchone()[0]
         or 0
     )
+    # Silent replay rows (visible = 0) move with their game but keep a NULL
+    # participant_id: their seat column already says who acted.
+    has_visible = any(row[1] == "visible" for row in conn.execute("PRAGMA table_info(game_events)"))
+    printed_only = "AND visible = 1 " if has_visible else ""
     conn.execute(
-        """
+        f"""
         UPDATE game_events
         SET
             game_id = (
@@ -829,7 +843,7 @@ def _repair_game_event_assignments(conn: sqlite3.Connection) -> int:
                 WHERE r.event_id = game_events.id
             ),
             participant_id = CASE
-                WHEN actor_role IN ('player', 'opponent') THEN (
+                WHEN actor_role IN ('player', 'opponent') {printed_only}THEN (
                     SELECT r.game_id || ':participant:' || actor_role
                     FROM game_event_assignment_repairs r
                     WHERE r.event_id = game_events.id AND r.game_id IS NOT NULL

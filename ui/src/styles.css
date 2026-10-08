@@ -16,6 +16,8 @@
   --danger: #f28b82;
   --success: #7bd88f;
   --draw: #8ab4f8;
+  /* Teal is reserved for replay affordances only. */
+  --replay: #2bb3a3;
   --on-play: #5fd4c4;
   --on-draw: #b79df7;
   --tie: #d48fe8;
@@ -50,6 +52,7 @@
   --danger: #d3222a;
   --success: #0d8040;
   --draw: #155fd0;
+  --replay: #0f8f82;
   --on-play: #0b7d6e;
   --on-draw: #6b46c1;
   --tie: #9333b8;
@@ -1342,6 +1345,89 @@ a.best-deck-name:focus-visible {
   height: 17px;
 }
 
+.table-pagination-summary {
+  display: grid;
+  flex-shrink: 0;
+  gap: 4px;
+}
+
+.table-pagination-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px 16px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.table-pagination-full {
+  flex-wrap: wrap;
+}
+
+.table-pagination-full .table-pagination-controls {
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+}
+
+.table-pagination-full .table-pagination-controls button {
+  min-width: 30px;
+  width: auto;
+  padding: 0 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.table-pagination-controls .table-page-ellipsis {
+  min-width: 16px;
+  color: var(--muted);
+}
+
+.table-pagination-controls .table-page-current {
+  border-color: var(--accent);
+  background: var(--nav-active-bg);
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+
+.table-pagination-jump,
+.table-pagination-jump label {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.table-pagination-jump input,
+.table-pagination-jump button {
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-strong);
+  color: var(--text);
+  font: inherit;
+}
+
+.table-pagination-jump input {
+  width: 4.5rem;
+}
+
+.table-pagination-jump button {
+  cursor: pointer;
+}
+
+.table-pagination-jump button:hover {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.table-pagination-jump input:focus-visible,
+.table-pagination-jump button:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+
 table {
   width: 100%;
   min-width: 620px;
@@ -1568,6 +1654,25 @@ tbody tr:hover {
   font-size: 0.95rem;
 }
 
+/* Inside a 40 px stack chip the name alone fits; the notice line does not. */
+.replay-stack-chip .card-preview-loading,
+.replay-stack-chip .card-preview-fallback {
+  gap: 0;
+  max-width: 100%;
+  padding: 2px;
+  font-size: 0.42rem;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.replay-stack-chip .card-preview-fallback strong {
+  font-size: 0.46rem;
+}
+
+.replay-stack-chip .card-preview-fallback span {
+  display: none;
+}
+
 .metric-link {
   color: inherit;
   text-decoration: none;
@@ -1667,7 +1772,7 @@ tbody tr:hover {
 }
 
 /* Neutral sibling of .deck-export-button — same size and shape, no gold
-   (the Deck Finder drawer's Source link). */
+   (the Deck Finder selected deck's Source link). */
 .deck-neutral-button {
   display: inline-flex;
   flex: 0 0 auto;
@@ -2318,6 +2423,21 @@ tbody tr:hover {
   .table-pagination-controls {
     width: 100%;
     justify-content: space-between;
+  }
+
+  .table-pagination-full .table-pagination-controls {
+    gap: 3px;
+  }
+
+  .table-pagination-full .table-pagination-controls button {
+    min-width: 24px;
+    width: auto;
+    padding: 0;
+    font-size: 0.75rem;
+  }
+
+  .table-pagination-full .table-pagination-controls .table-page-ellipsis {
+    min-width: 10px;
   }
 
   .sidebar {
@@ -3974,6 +4094,61 @@ tr.deck-change-row-out .card-link {
   color: color-mix(in srgb, var(--draw) 70%, var(--text));
 }
 
+/* Replay tile: the Deck Finder box, in replay teal, directly above it. */
+.sidebar-replay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--replay) 45%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--replay) 10%, transparent);
+  color: var(--replay);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.sidebar-replay svg {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+}
+
+.sidebar-replay:hover,
+.sidebar-replay:focus-visible,
+.sidebar-replay-active {
+  border-color: var(--replay);
+  color: color-mix(in srgb, var(--replay) 70%, var(--text));
+}
+
+.sidebar-replay-active {
+  background: color-mix(in srgb, var(--replay) 24%, transparent);
+  box-shadow: inset 0 0 0 1px var(--replay);
+}
+
+/* Collapsed sidebar: the two launcher boxes stack at the bottom. */
+.sidebar-bottom-mini {
+  gap: 8px;
+}
+
+.sidebar-bottom-mini .sidebar-deck-finder-mini {
+  margin-top: 0;
+}
+
+.sidebar-replay-mini {
+  padding: 8px 0;
+}
+
+.sidebar-replay-mini svg {
+  width: 17px;
+  height: 17px;
+}
+
 .sidebar-deck-finder-status {
   margin: 0;
   font-size: 0.78rem;
@@ -4002,6 +4177,23 @@ tr.deck-change-row-out .card-link {
 }
 
 /* ---- Deck Finder page ---- */
+.deckfinder-page {
+  --deckfinder-color: var(--accent);
+  --deckfinder-text-color: var(--deckfinder-color);
+}
+
+:root[data-theme="light"] .deckfinder-page {
+  --deckfinder-text-color: color-mix(in srgb, var(--deckfinder-color) 58%, var(--text));
+}
+
+.deckfinder-page[data-provider="aetherhub"], .deckfinder-provider[data-provider="aetherhub"] { --deckfinder-color: #71acf0; }
+.deckfinder-page[data-provider="magic_gg"], .deckfinder-provider[data-provider="magic_gg"] { --deckfinder-color: #e79349; }
+.deckfinder-page[data-provider="moxfield"], .deckfinder-provider[data-provider="moxfield"] { --deckfinder-color: #c081d5; }
+.deckfinder-page[data-provider="mtgo"], .deckfinder-provider[data-provider="mtgo"] { --deckfinder-color: #e59c68; }
+.deckfinder-page[data-provider="tcgplayer"], .deckfinder-provider[data-provider="tcgplayer"] { --deckfinder-color: #62b9e7; }
+.deckfinder-page[data-provider="untapped"], .deckfinder-provider[data-provider="untapped"] { --deckfinder-color: #f3a24b; }
+.deckfinder-page[data-provider="youtube"], .deckfinder-provider[data-provider="youtube"] { --deckfinder-color: #ff5e68; }
+
 .deckfinder-toolbar {
   display: flex;
   align-items: center;
@@ -4019,16 +4211,27 @@ tr.deck-change-row-out .card-link {
   text-transform: uppercase;
 }
 
-/* One row per follow-up choice: label above, chips below. */
+/* Keep the dashboard's existing pill controls, with site-colored selection. */
 .deckfinder-filter-row {
-  display: grid;
-  gap: 2px;
-  margin: 4px 16px 12px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 10px 16px 12px;
+  border-top: 1px solid var(--border);
+}
+
+.deckfinder-page .quick-filter-active,
+.deckfinder-chips .quick-filter:hover,
+.deckfinder-chips .quick-filter:focus-visible {
+  border-color: color-mix(in srgb, var(--deckfinder-color) 55%, var(--border));
+  background: color-mix(in srgb, var(--deckfinder-color) 8%, var(--panel));
+  color: var(--text);
 }
 
 .deckfinder-filter-row .quick-filters,
 .deckfinder-chips {
-  padding: 6px 0 0;
+  padding: 0;
 }
 
 .deckfinder-state {
@@ -4073,6 +4276,7 @@ tr.deck-change-row-out .card-link {
 
 .deckfinder-surprise svg,
 .deckfinder-heading-action svg,
+.deckfinder-title-export svg,
 .deckfinder-detail-actions svg {
   width: 15px;
   height: 15px;
@@ -4088,19 +4292,20 @@ tr.deck-change-row-out .card-link {
 
 .deckfinder-providers {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 128px), 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 8px;
   margin: 10px 16px 16px;
 }
 
 .deckfinder-provider {
+  position: relative;
   display: grid;
   align-content: start;
   min-width: 0;
   gap: 4px;
   padding: 10px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--panel);
   color: var(--text);
   text-align: left;
@@ -4108,30 +4313,65 @@ tr.deck-change-row-out .card-link {
 }
 
 .deckfinder-provider strong {
-  font-size: 0.875rem;
+  font-size: clamp(0.72rem, 1vw, 0.875rem);
   overflow-wrap: anywhere;
 }
 
-.deckfinder-provider span {
+.deckfinder-site-subtitle {
   color: var(--muted);
   font-size: 0.8rem;
   line-height: 1.35;
 }
 
 .deckfinder-provider:hover {
-  border-color: var(--accent);
+  border-color: color-mix(in srgb, var(--deckfinder-color) 65%, var(--border));
 }
 
 .deckfinder-provider-active {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+  border-color: color-mix(in srgb, var(--deckfinder-color) 75%, var(--border));
+  background: color-mix(in srgb, var(--deckfinder-color) 8%, var(--panel));
+}
+
+.deckfinder-provider-active::after {
+  content: '';
+  position: absolute;
+  top: 12px;
+  right: 10px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--deckfinder-color);
+}
+
+.deckfinder-site-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  margin-bottom: 3px;
+  border: 1px solid color-mix(in srgb, var(--deckfinder-color) 30%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--deckfinder-color) 16%, var(--panel));
+  color: var(--deckfinder-color);
+}
+
+.deckfinder-site-icon img, .deckfinder-site-icon svg {
+  display: block;
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+.deckfinder-provider[data-provider="youtube"] .deckfinder-site-icon {
+  background: #fa2031;
+  border-color: #ff6f78;
 }
 
 .deckfinder-deck-link {
   padding: 0;
   border: 0;
   background: none;
-  color: var(--accent-strong);
+  color: var(--deckfinder-text-color);
   font: inherit;
   text-align: left;
   cursor: pointer;
@@ -4141,24 +4381,151 @@ tr.deck-change-row-out .card-link {
   text-decoration: underline;
 }
 
-.deckfinder-detail {
-  margin: 18px 16px 16px;
-  padding: 14px 16px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel);
+.deckfinder-results-heading {
+  padding: 12px 16px;
 }
 
-/* The detail card provides its own padding; the global section-heading
-   padding would double it up inside. */
-.deckfinder-detail .section-heading {
+.deckfinder-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  border-top: 1px solid var(--border);
+}
+
+.deckfinder-workspace-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.deckfinder-browser {
+  min-width: 0;
+}
+
+.deckfinder-browser table {
+  min-width: 0;
+}
+
+.deckfinder-browser th.num, .deckfinder-browser td.num {
+  min-width: 36px;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.deckfinder-browser td {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.deckfinder-browser .deckfinder-row-selected {
+  background: color-mix(in srgb, var(--deckfinder-color) 8%, var(--panel));
+}
+
+.deckfinder-row-meta {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+
+.deckfinder-detail {
+  min-width: 0;
+  padding: 16px 20px 20px;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.deckfinder-workspace-single .deckfinder-detail {
+  border-left: 0;
+}
+
+.deckfinder-detail-heading {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.deckfinder-detail-heading .section-description {
+  margin: 0;
+}
+
+.deckfinder-detail-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.deckfinder-detail-title-row h3 {
+  flex: 1;
+  min-width: 0;
+}
+
+.deckfinder-detail h3 {
+  margin: 0;
+  color: var(--deckfinder-text-color);
+  font-size: 1.375rem;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.deckfinder-import-section h4 {
+  margin: 16px 0 8px;
+  font-size: 0.85rem;
+}
+
+.deckfinder-card-list {
+  margin: 0;
   padding: 0;
+  list-style: none;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.deckfinder-card-list li {
+  display: flex;
+  gap: 12px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+
+.deckfinder-card-list li:nth-child(odd) {
+  background: var(--row-alt-bg);
+}
+
+.deckfinder-card-list li:last-child {
+  border-bottom: 0;
+}
+
+.deckfinder-card-quantity {
+  flex: 0 0 18px;
+  color: var(--muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .deckfinder-detail-actions {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.deckfinder-detail .deck-export-button {
+  border-radius: 999px;
+  background: var(--nav-active-bg);
+}
+
+.deckfinder-detail-actions .deck-neutral-button {
+  min-height: auto;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 400;
 }
 
 .deckfinder-decklist {
@@ -4166,11 +4533,82 @@ tr.deck-change-row-out .card-link {
   padding: 12px 14px;
   overflow-x: auto;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
+  border-radius: 6px;
+  background: var(--panel);
   font-size: 0.85rem;
   line-height: 1.5;
   white-space: pre;
+}
+
+.deckfinder-detail-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 230px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.deckfinder-detail-empty > svg {
+  width: 26px;
+  height: 26px;
+}
+
+.deckfinder-detail-empty h3 {
+  font-size: 1rem;
+  color: var(--text);
+}
+
+.deckfinder-detail-empty p {
+  margin: 0;
+  max-width: 270px;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 1100px) {
+  .deckfinder-providers {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 128px), 1fr));
+  }
+}
+
+@media (max-width: 980px) {
+  /* Keep the expanded navigation above Deck Finder on narrow screens. The
+     later desktop sidebar sizing otherwise overrides the shared breakpoint. */
+  .app-layout:not(.app-layout-collapsed):has(.deckfinder-page) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .deckfinder-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .deckfinder-detail {
+    border-left: 0;
+    border-top: 1px solid var(--border);
+    padding: 16px;
+  }
+}
+
+@media (max-width: 620px) {
+  .deckfinder-results-heading {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .deckfinder-detail-title-row {
+    flex-wrap: wrap;
+  }
+
+  .deckfinder-detail-title-row h3 {
+    flex-basis: 180px;
+  }
+
+  .deckfinder-title-export {
+    margin-left: auto;
+  }
 }
 
 /* Settings page forms (Deck AI + Deck Finder creators). */
@@ -4719,9 +5157,12 @@ a.settings-link-button {
   color: var(--warning, #d9a53f);
 }
 
-/* Right-aligned chip group: rank + format live at the row's far right. */
+/* Rank, format and the between-game status sit at the row's far right. */
 .live-chips-right {
   display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
   gap: 8px;
   margin-left: auto;
 }
@@ -5716,4 +6157,366 @@ a.sidebar-deck-finder {
 
 .backup-confirm {
   max-width: 320px;
+}
+
+/* ---------------------------------------------------------------------------
+   Replay entry points. Teal (--replay) means "watch this game" everywhere. */
+.replay-link {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--replay);
+  border-radius: 6px;
+  background: var(--replay);
+  color: #ffffff;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 750;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.replay-link-glyph {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+.replay-link-button {
+  min-height: 34px;
+  padding: 0 14px;
+}
+
+.replay-link-icon {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 999px;
+}
+
+.replay-link-icon .replay-link-glyph {
+  width: 12px;
+  height: 12px;
+  margin-left: 1px;
+}
+
+.replay-link:hover,
+.replay-link:focus-visible {
+  border-color: color-mix(in srgb, var(--replay) 80%, var(--text));
+  background: color-mix(in srgb, var(--replay) 85%, var(--text));
+  color: #ffffff;
+}
+
+.replay-link:focus-visible {
+  outline: 2px solid var(--replay);
+  outline-offset: 2px;
+}
+
+/* Reconstructed (older game, approximate board): outline instead of fill. */
+.replay-link-reconstructed {
+  border-color: color-mix(in srgb, var(--replay) 70%, var(--border));
+  background: color-mix(in srgb, var(--replay) 10%, transparent);
+  color: var(--replay);
+}
+
+.replay-link-reconstructed:hover,
+.replay-link-reconstructed:focus-visible {
+  border-color: var(--replay);
+  background: color-mix(in srgb, var(--replay) 20%, transparent);
+  color: color-mix(in srgb, var(--replay) 70%, var(--text));
+}
+
+.replay-link-unavailable,
+.replay-link-unavailable:hover {
+  border-color: var(--border);
+  background: transparent;
+  color: var(--subtle);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* Game Detail: back link row above the summary title. */
+.game-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* Game Detail timeline: each row's elapsed time ("▶ 4:27") opens the replay
+   at that event (`?row=`). Rows without a time get an icon at the end. */
+.timeline-replay-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-right: 6px;
+  padding: 0 5px 0 4px;
+  border: 1px solid color-mix(in srgb, var(--replay) 35%, transparent);
+  border-radius: 999px;
+  color: var(--replay);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  line-height: 1.35;
+  text-decoration: none;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+
+.timeline-replay-link svg {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  fill: currentColor;
+}
+
+.timeline-replay-link:hover,
+.timeline-replay-link:focus-visible {
+  border-color: var(--replay);
+  background: color-mix(in srgb, var(--replay) 14%, transparent);
+}
+
+.timeline-replay-link:focus-visible {
+  outline: 2px solid var(--replay);
+  outline-offset: 1px;
+}
+
+.timeline-replay-link-icon {
+  align-self: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin: 0 0 0 auto;
+  padding: 0 0 0 1px;
+}
+
+.replay-narrow-only {
+  display: none;
+}
+
+.timeline-end .replay-link {
+  margin-left: auto;
+  align-self: center;
+}
+
+/* Live page: Today's Games rows carry the icon beside the row link. */
+.live-game-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.live-game-item .live-game-row {
+  flex: 1;
+  min-width: 0;
+  gap: 8px;
+  padding-inline: 6px;
+}
+
+.live-game-item .replay-link-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.live-game-item .replay-link-icon .replay-link-glyph {
+  width: 9px;
+  height: 9px;
+}
+
+.live-scoreboard-meta .replay-link-button {
+  min-height: 0;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: inherit;
+}
+
+.live-scoreboard-meta .replay-link-button:not(:disabled) {
+  border-color: color-mix(in srgb, var(--replay) 50%, var(--border));
+  background: var(--surface);
+  color: var(--replay);
+}
+
+.live-scoreboard-meta .replay-link-button:not(:disabled):hover,
+.live-scoreboard-meta .replay-link-button:focus-visible {
+  border-color: var(--replay);
+  background: color-mix(in srgb, var(--replay) 12%, var(--surface));
+}
+
+.live-scoreboard-meta .replay-link-glyph {
+  width: 12px;
+  height: 12px;
+}
+
+/* Replay list page (#/replay). */
+.replay-list-intro {
+  margin: 14px 16px 10px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.replay-list-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 16px 4px;
+}
+
+.replay-list-controls input {
+  min-width: 240px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.replay-list-controls input:focus {
+  border-color: var(--replay);
+  outline: none;
+}
+
+.replay-list-table tbody tr {
+  cursor: pointer;
+}
+
+.replay-list-table tbody tr:hover,
+.replay-list-table tbody tr:focus-visible {
+  background: color-mix(in srgb, var(--replay) 8%, var(--panel-strong));
+}
+
+.replay-list-table tbody tr:focus-visible {
+  outline: 2px solid var(--replay);
+  outline-offset: -2px;
+}
+
+.replay-list-table tbody tr.replay-row-unavailable {
+  cursor: default;
+  color: var(--muted);
+}
+
+.replay-list-table td.replay-cell-deck {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.replay-opponent {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.replay-opponent-name {
+  min-width: 0;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Narrower desktops: drop Turns so the list stays within the content width. */
+@media (max-width: 1280px) {
+  .replay-list-table .replay-col-turns {
+    display: none;
+  }
+}
+
+.replay-list-table td.replay-cell-action {
+  width: 1%;
+  text-align: right;
+}
+
+.replay-state {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.replay-state-recorded {
+  border-color: var(--replay);
+  background: color-mix(in srgb, var(--replay) 16%, transparent);
+  color: var(--replay);
+}
+
+.replay-state-reconstructed {
+  border-color: color-mix(in srgb, var(--replay) 50%, var(--border));
+  color: color-mix(in srgb, var(--replay) 75%, var(--muted));
+}
+
+.replay-state-unavailable {
+  color: var(--subtle);
+}
+
+.replay-list-more {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 4px 16px 16px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.replay-list-more button {
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid color-mix(in srgb, var(--replay) 55%, var(--border));
+  border-radius: 6px;
+  background: transparent;
+  color: var(--replay);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.replay-list-more button:hover {
+  border-color: var(--replay);
+}
+
+.replay-narrow-notice {
+  display: none;
+}
+
+/* Replay is not a phone feature: below tablet width every replay link,
+   button, and the sidebar tile disappear. */
+@media (max-width: 899px) {
+  .replay-wide-only {
+    display: none !important;
+  }
+
+  .replay-narrow-notice {
+    display: block;
+  }
+
+  .replay-narrow-only {
+    display: inline;
+  }
+}
+
+/* Game Detail: right-aligned page actions (Watch replay) directly above the
+   metric cards, matching the Deck page's Copy Arena Deck slot. The row is
+   `replay-wide-only` too, so it adds no space below tablet width. */
+.game-detail-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-bottom: 10px;
 }

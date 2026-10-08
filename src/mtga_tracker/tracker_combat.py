@@ -149,10 +149,16 @@ class TrackerCombatMixin:
     def _handle_attack_state_objects(self, game_objects: List[Dict[str, Any]]) -> None:
         """Handle combat attacks emitted as gameObjects with attackState."""
         game_objects_by_id: Dict[int, Dict[str, Any]] = {}
+        blocking = False
         for obj in game_objects:
             instance_id = obj.get("instanceId")
             if instance_id is not None:
                 game_objects_by_id[instance_id] = obj
+            if obj.get("blockState") in ("BlockState_Declared", "BlockState_Blocking"):
+                blocking = True
+        if blocking:
+            # Replay: Arena often reports blocks only on the blocker objects.
+            self._replay_observe_block_states(game_objects)
 
         for obj in game_objects:
             attack_state = str(obj.get("attackState", ""))
@@ -202,15 +208,18 @@ class TrackerCombatMixin:
             self._ensure_turn_header_for_event(owner_seat, turn_for_display)
             turn_prefix = self._turn_prefix_for_number(turn_for_display)
 
+            attack_fact = self._replay_attack_fact(instance_id, owner_seat, target_id)
             if target_label:
-                self._print_event(
+                self._print_event_fact(
                     f"{turn_prefix}{player} attacking [{target_label}] with [{card_name} ({power}/{toughness})]",
                     "attack",
+                    attack_fact,
                 )
             else:
-                self._print_event(
+                self._print_event_fact(
                     f"{turn_prefix}{player} attacking with [{card_name} ({power}/{toughness})]",
                     "attack",
+                    attack_fact,
                 )
 
     def _process_blocker_requests_from_line(self, line: str) -> None:
@@ -308,9 +317,10 @@ class TrackerCombatMixin:
                     attacker_name = f"ID {attacker_id}"
 
                 turn_prefix = self._turn_prefix_for_number(inferred_turn)
-                self._print_event(
+                self._print_event_fact(
                     f"\t{turn_prefix}{player} blocking [{attacker_name}] with [{blocker_name} ({blocker_pt})]",
                     "block",
+                    self._replay_block_fact(blocker_id, attacker_id, blocker_owner_seat),
                 )
 
                 if attacker_id not in blocker_targets:
@@ -397,15 +407,18 @@ class TrackerCombatMixin:
                         self._ensure_turn_header_for_event(owner_seat, turn_for_display)
                         turn_prefix = self._turn_prefix_for_number(turn_for_display)
 
+                        attack_fact = self._replay_attack_fact(instance_id, owner_seat, target_id)
                         if target_label:
-                            self._print_event(
+                            self._print_event_fact(
                                 f"{turn_prefix}{player} attacking [{target_label}] with [{card_name} ({power}/{toughness})]",
                                 "attack",
+                                attack_fact,
                             )
                         else:
-                            self._print_event(
+                            self._print_event_fact(
                                 f"{turn_prefix}{player} attacking with [{card_name} ({power}/{toughness})]",
                                 "attack",
+                                attack_fact,
                             )
                         break
 
@@ -479,6 +492,12 @@ class TrackerCombatMixin:
             attacker_obj = self._lookup_object(attacker_id, game_objects_by_id)
             attackers_by_id[attacker_id] = self._object_display_name(attacker_obj, attacker_id)
 
+        if blocker_owner_seat is None:
+            # Nothing is printed for an unknown blocker; replay still records it.
+            for attacker_id in attacker_ids:
+                fact = self._replay_block_fact(blocker_id, attacker_id, None)
+                if fact is not None:
+                    self._record_silent_event(fact)
         if blocker_owner_seat is not None:
             self._flush_pending_turn_header_for_seat(blocker_owner_seat)
             if blocker_owner_seat == self.game_state.player_seat_id:
@@ -516,15 +535,18 @@ class TrackerCombatMixin:
                 attacker_name = (
                     attackers_by_id.get(attacker_id) if attacker_id is not None else None
                 )
+                block_fact = self._replay_block_fact(blocker_id, attacker_id, blocker_owner_seat)
                 if attacker_name:
-                    self._print_event(
+                    self._print_event_fact(
                         f"\t{turn_prefix}{player} blocking [{attacker_name}] with [{blocker_name} ({blocker_pt})]",
                         "block",
+                        block_fact,
                     )
                 else:
-                    self._print_event(
+                    self._print_event_fact(
                         f"\t{turn_prefix}{player} blocking with [{blocker_name} ({blocker_pt})]",
                         "block",
+                        block_fact,
                     )
 
                 if attacker_id is not None and attacker_id not in blocker_targets:
@@ -600,7 +622,23 @@ class TrackerCombatMixin:
                     self.game_state.opponent_seat_id,
                 ):
                     self._record_damage_dealt(int(damage_amount), source_seat, instance_id)
+                    # Player damage prints nothing (the life line follows).
+                    damage_fact = self._replay_damage_fact(
+                        source_id,
+                        None,
+                        damage_amount,
+                        combat=is_combat_damage,
+                        target_seat=int(instance_id),
+                    )
+                    if damage_fact is not None:
+                        self._record_silent_event(damage_fact)
                     continue
+                damage_fact = self._replay_damage_fact(
+                    source_id, instance_id, damage_amount, combat=is_combat_damage
+                )
+                if damage_fact is not None and instance_id not in game_objects_by_id:
+                    # The damaged object is not in this payload: no line prints.
+                    self._record_silent_event(damage_fact)
                 for obj in game_objects:
                     if obj.get("instanceId") == instance_id:
                         grp_id = obj.get("grpId")
@@ -664,14 +702,16 @@ class TrackerCombatMixin:
                                 self._event_turn_number(event_seat)
                             )
                             if source_name:
-                                self._print_event(
+                                self._print_event_fact(
                                     f"\t{turn_prefix}Combat: [{source_name}] dealt {damage_amount} damage to [{target_label}] ({owner})",
                                     "combat_damage",
+                                    damage_fact,
                                 )
                             else:
-                                self._print_event(
+                                self._print_event_fact(
                                     f"\t{turn_prefix}Combat: [{target_label}] ({owner}) took {damage_amount} damage",
                                     "combat_damage",
+                                    damage_fact,
                                 )
                         else:
                             event_seat = (
@@ -686,8 +726,9 @@ class TrackerCombatMixin:
                             turn_prefix = self._turn_prefix_for_number(
                                 self._event_turn_number(event_seat)
                             )
-                            self._print_event(
+                            self._print_event_fact(
                                 f"{turn_prefix}[{card_name}] ({owner}) took {damage_amount} damage",
                                 "damage",
+                                damage_fact,
                             )
                         break

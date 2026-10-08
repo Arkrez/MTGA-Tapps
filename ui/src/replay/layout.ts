@@ -1,0 +1,715 @@
+/**
+ * Deterministic table layout: BoardState -> placed cards and piles
+ * (docs/REPLAY_FORMAT.md §3). Renderer-agnostic; the WebGL scene only draws
+ * what this returns.
+ *
+ * Units: the table is TABLE_DEPTH deep (y) and `tableWidth` wide (x; it
+ * follows the stage's aspect, see scene/cameraFit `fitTableForView`),
+ * origin at the center, +y toward the opponent, z up. Each seat has two
+ * battlefield tiers (Arena style): creatures in front with planeswalkers to
+ * their right (after a gap), then after a clear gap a back row of lands
+ * followed by the other permanents; the hand sits on an apron just past the
+ * near rail, off the felt (the camera frames the aprons too, see
+ * scene/cameraFit), and the library/graveyard/exile/command piles stand in a
+ * lane on the left, keeping the right side free for the stack preview. Positions are
+ * computed in "seat-local" coordinates for the player's half (y < 0) and
+ * mapped to the opponent's half by reflecting y, or by a full 180° turn (x and
+ * y, plus rotZ + π) when `mirrorOpponent` is on (piles stay in the left lane).
+ */
+import type { BoardState, ObjectState, StackItem } from './reducer';
+import type { CardKey, ObjId, ReplayCard, ReplayStream, Zone } from './types';
+
+export const CARD_WIDTH = 0.86;
+export const CARD_HEIGHT = 1.2;
+/** Rotation (radians) of a tapped card. */
+export const TAPPED_ROTATION = Math.PI / 2;
+
+/** Felt depth: two battlefield tiers per seat. Fixed, so card size on screen is set by the stage height. */
+export const TABLE_DEPTH = 6.4;
+/** Wooden rail around the felt; the hands rest just past it. */
+export const RAIL_WIDTH = 0.3;
+/** Width used until the stage has been measured (and by tests). */
+export const DEFAULT_TABLE_WIDTH = 12;
+/** Narrowest table: the pile lane plus a row of six untapped creatures. */
+export const MIN_TABLE_WIDTH = 7.2;
+/** Ultra-wide stages stop widening the felt here. */
+export const MAX_TABLE_WIDTH = 22;
+
+/** Half the gap between the two creature rows (attackers step into it). */
+const CENTER_GAP = 0.26;
+const ATTACK_OFFSET = 0.3;
+/** Clear gap between the creature row and the lands/permanents row. */
+const BACK_ROW_GAP = 0.36;
+/** Lands and other permanents are drawn slightly smaller than creatures. */
+export const BACK_ROW_SCALE = 0.84;
+/**
+ * Hand card scale. The stage decides it (scene/cameraFit `fitTableForView`):
+ * at least HAND_SCALE_MIN when the table alone fills the stage height, up to
+ * HAND_SCALE_MAX when a tall stage leaves room past the rails.
+ */
+export const HAND_SCALE_MIN = 1;
+export const HAND_SCALE_MAX = 1.7;
+/** A crowded hand shrinks down to this before its cards hide more of each other. */
+export const HAND_SCALE_FLOOR = 0.6;
+/** Fanned hand cards keep at least this fraction of their width visible before the hand shrinks. */
+export const HAND_MIN_VISIBLE = 0.55;
+const HAND_STEP_GAP = 0.05;
+/** The fan may use the table's width (it is off the felt, clear of the piles) up to this margin at each side. */
+const HAND_SIDE_MARGIN = 0.5;
+/** The hand leans this far over the rail toward the felt. */
+const HAND_RAIL_OVERLAP = 0.12;
+/** Free apron past the hand's outer edge. */
+const APRON_MARGIN = 0.08;
+/** Hand cards float above the rail. */
+const HAND_Z = 0.12;
+const ROW_GAP = 0.12;
+const LAND_GAP = 0.06;
+/** Space between the lands and the other permanents in the back row. */
+const GROUP_GAP = 0.5;
+/** Space between the last creature and the first planeswalker in the front row. */
+const PLANESWALKER_GAP = 0.36;
+/** Planeswalkers never take more than this share of the row; beyond it they overlap. */
+const MAX_PLANESWALKER_SHARE = 0.45;
+/** Overlapped cards keep at least this fraction of their width visible. */
+const MIN_VISIBLE = 0.32;
+
+/** Seat-local row centers (player half, y < 0). */
+export const ROW_Y = {
+  creatures: -(CENTER_GAP + CARD_HEIGHT / 2),
+  back: -(CENTER_GAP + CARD_HEIGHT + BACK_ROW_GAP + (CARD_HEIGHT * BACK_ROW_SCALE) / 2),
+} as const;
+export function clampHandScale(scale: number | undefined): number {
+  if (scale === undefined || !Number.isFinite(scale)) return HAND_SCALE_MIN;
+  return Math.min(HAND_SCALE_MAX, Math.max(HAND_SCALE_MIN, scale));
+}
+
+/** Seat-local center y of a hand drawn at `scale`: its inner edge rests just over the rail. */
+export function handY(scale: number): number {
+  return -(TABLE_DEPTH / 2 + RAIL_WIDTH - HAND_RAIL_OVERLAP + (CARD_HEIGHT * scale) / 2);
+}
+
+/** Apron past each rail that holds a hand drawn at `scale`; the camera frames it with the table. */
+export function apronDepth(scale: number): number {
+  return CARD_HEIGHT * scale - HAND_RAIL_OVERLAP + APRON_MARGIN;
+}
+
+const ATTACH_DX = 0.16;
+const ATTACH_DY = 0.2;
+const BASE_Z = 0.02;
+const STACK_Z = 0.9;
+/** In-scene stack cards: the motion anchor under the DOM stack preview. */
+export const STACK_SCALE = 0.6;
+/**
+ * Triggered and activated abilities are a small chip showing their source's
+ * card, never a second full-size copy of a card that is already on the table
+ * or the stack.
+ */
+export const ABILITY_CHIP_SCALE = 0.5;
+const STACK_EDGE = 0.3;
+/** The column sits on the opponent's side of center, under the preview's top card. */
+export const STACK_ANCHOR_Y = 1.3;
+
+/** Pile lane on the left: three piles, or four in commander formats. */
+const PILE_MARGIN = 0.16;
+const PILE_GAP = 0.14;
+const PILE_SCALE = { 3: 0.74, 4: 0.54 } as const;
+const LANE_PAD = 0.14;
+const RIGHT_MARGIN = 0.2;
+
+export type PlacementRow = 'lands' | 'creatures' | 'planeswalkers' | 'other' | 'hand' | 'stack' | 'pile';
+/** The rows a battlefield host can be placed in. */
+export type BattlefieldRow = 'lands' | 'creatures' | 'planeswalkers' | 'other';
+export type PlacementHighlight = 'attacking' | 'blocking' | 'damaged' | 'targeted' | null;
+export type PileZone = 'library' | 'graveyard' | 'exile' | 'command';
+
+export interface LayoutOptions {
+  /** Real-table view: the opponent's half is turned 180° (their cards face them). */
+  mirrorOpponent: boolean;
+  /** Show hand cards whose identity is revealed later in the game face-up. */
+  hindsight: boolean;
+  playerSeat: number;
+  /** Felt width (from the stage aspect); DEFAULT_TABLE_WIDTH when omitted. */
+  tableWidth?: number;
+  /** Hand card scale the stage has room for (clamped to HAND_SCALE_MIN..MAX); the minimum when omitted. */
+  handScale?: number;
+  /** Reserve a command-zone pile (commander formats, see `usesCommandZone`). */
+  commandZone?: boolean;
+}
+
+export interface CardPlacement {
+  /** Mesh key: the object id, `stack:<stack_id>` for abilities, `hidden:<seat>:hand:<i>`. */
+  obj: string;
+  card: CardKey | null;
+  faceUp: boolean;
+  x: number;
+  y: number;
+  z: number;
+  rotZ: number;
+  /** 0 face up, π face down; the renderer animates the flip. */
+  rotY: number;
+  scale: number;
+  zone: Zone;
+  seat: number;
+  row: PlacementRow;
+  highlight: PlacementHighlight;
+  tapped: boolean;
+  inferred: boolean;
+  counters: Readonly<Record<string, number>>;
+  power: string | null;
+  toughness: string | null;
+}
+
+export interface PilePlacement {
+  seat: number;
+  zone: PileZone;
+  count: number;
+  topCard: CardKey | null;
+  x: number;
+  y: number;
+  /** Pile cards are drawn at this scale of a full card. */
+  scale: number;
+  /** π for a mirrored opponent pile, else 0. */
+  rotZ: number;
+}
+
+export interface TableGeometry {
+  width: number;
+  depth: number;
+  /** Battlefield and hand cards stay within [rowLeft, rowRight] (right of the pile lane). */
+  rowLeft: number;
+  rowRight: number;
+  /** x of the in-scene stack column (under the DOM stack preview). */
+  stackX: number;
+  /** Largest hand card scale (a crowded hand may draw smaller); sizes the camera's hand aprons. */
+  handScale: number;
+}
+
+export interface Layout {
+  cards: CardPlacement[];
+  piles: PilePlacement[];
+  table: TableGeometry;
+}
+
+export function clampTableWidth(width: number): number {
+  if (!Number.isFinite(width)) return DEFAULT_TABLE_WIDTH;
+  return Math.min(MAX_TABLE_WIDTH, Math.max(MIN_TABLE_WIDTH, width));
+}
+
+function pileScale(commandZone: boolean): number {
+  return commandZone ? PILE_SCALE[4] : PILE_SCALE[3];
+}
+
+export function tableGeometry(width: number = DEFAULT_TABLE_WIDTH, commandZone = false, handScale?: number): TableGeometry {
+  const w = clampTableWidth(width);
+  const lane = PILE_MARGIN * 2 + CARD_WIDTH * pileScale(commandZone) + LANE_PAD;
+  return {
+    width: w,
+    depth: TABLE_DEPTH,
+    rowLeft: -w / 2 + lane,
+    rowRight: w / 2 - RIGHT_MARGIN,
+    stackX: w / 2 - STACK_EDGE - (CARD_WIDTH * STACK_SCALE) / 2,
+    handScale: clampHandScale(handScale),
+  };
+}
+
+/** Commander formats get a fourth pile: any seat has commanders or any card visits the command zone. */
+export function usesCommandZone(stream: Pick<ReplayStream, 'seats' | 'events'>): boolean {
+  if (Object.values(stream.seats).some((seat) => (seat.commanders ?? []).length > 0)) return true;
+  return stream.events.some((event) => event.kind === 'move' && (event.from === 'command' || event.to === 'command'));
+}
+
+interface Frame {
+  seat: number;
+  opponent: boolean;
+  mirror: boolean;
+}
+
+function toTable(frame: Frame, x: number, y: number): { x: number; y: number } {
+  if (!frame.opponent) return { x, y };
+  return frame.mirror ? { x: -x, y: -y } : { x, y: -y };
+}
+
+function frameRotation(frame: Frame): number {
+  return frame.opponent && frame.mirror ? Math.PI : 0;
+}
+
+/**
+ * Battlefield row for a permanent: lands in the back row, creatures in front,
+ * non-creature planeswalkers in front to the right of the creatures, and
+ * every other permanent in the back row after the lands.
+ */
+export function rowOf(object: ObjectState, cards: Readonly<Record<CardKey, ReplayCard>>): BattlefieldRow {
+  const card = object.card && !object.faceDown ? cards[object.card] : undefined;
+  if (!card) return 'creatures';
+  const primary = (card.primary_type ?? '').toLowerCase();
+  const typeLine = (card.type_line ?? '').toLowerCase();
+  if (primary === 'land' || (!primary && typeLine.includes('land'))) return 'lands';
+  if (primary === 'creature' || typeLine.includes('creature') || object.power !== null) {
+    return 'creatures';
+  }
+  if (primary === 'planeswalker' || typeLine.includes('planeswalker')) return 'planeswalkers';
+  return 'other';
+}
+
+interface Context {
+  state: BoardState;
+  opts: LayoutOptions;
+  table: TableGeometry;
+  targeted: ReadonlySet<ObjId>;
+  damaged: ObjId | null;
+  blockers: ReadonlySet<ObjId>;
+  /** host obj -> attached battlefield objects, across both seats (auras on enemy creatures). */
+  attachments: ReadonlyMap<ObjId, ObjectState[]>;
+  out: CardPlacement[];
+}
+
+function highlightOf(ctx: Context, obj: ObjId): PlacementHighlight {
+  if (ctx.damaged === obj) return 'damaged';
+  if (ctx.targeted.has(obj)) return 'targeted';
+  if (ctx.state.attackers.has(obj)) return 'attacking';
+  if (ctx.blockers.has(obj)) return 'blocking';
+  return null;
+}
+
+function printedStat(ctx: Context, object: ObjectState, key: 'power' | 'toughness'): string | null {
+  const value = object[key];
+  if (value !== null) return String(value);
+  const card = object.card ? ctx.state.cards[object.card] : undefined;
+  return card ? card[key] : null;
+}
+
+function placeObject(
+  ctx: Context,
+  frame: Frame,
+  object: ObjectState,
+  local: { x: number; y: number; z: number; rotZ?: number; scale?: number },
+  row: PlacementRow,
+  faceCard: CardKey | null = object.card,
+  seat: number = frame.seat,
+): void {
+  const { x, y } = toTable(frame, local.x, local.y);
+  const faceUp = faceCard !== null && !object.faceDown;
+  ctx.out.push({
+    obj: object.obj,
+    card: faceCard,
+    faceUp,
+    x,
+    y,
+    z: local.z,
+    rotZ: (local.rotZ ?? 0) + (object.tapped ? TAPPED_ROTATION : 0) + frameRotation(frame),
+    rotY: faceUp ? 0 : Math.PI,
+    scale: local.scale ?? 1,
+    zone: object.zone,
+    seat,
+    row,
+    highlight: highlightOf(ctx, object.obj),
+    tapped: object.tapped,
+    inferred: object.inferred,
+    counters: object.counters,
+    power: printedStat(ctx, object, 'power'),
+    toughness: printedStat(ctx, object, 'toughness'),
+  });
+}
+
+function footprint(object: ObjectState, attachments: number, scale: number): number {
+  return ((object.tapped ? CARD_HEIGHT : CARD_WIDTH) + attachments * ATTACH_DX) * scale;
+}
+
+function naturalWidth(widths: readonly number[], gap: number): number {
+  return widths.length ? widths.reduce((sum, w) => sum + w, 0) + gap * (widths.length - 1) : 0;
+}
+
+/**
+ * Centers for one group of cards starting at `start` and spanning `span`:
+ * packed with `gap` when that fits, else overlapped with evenly spaced left
+ * edges. A tapped (wider) card is clamped so it never pokes past the end.
+ */
+function groupCenters(widths: readonly number[], gap: number, start: number, span: number): number[] {
+  const n = widths.length;
+  if (!n) return [];
+  if (span >= naturalWidth(widths, gap) - 1e-9 || n === 1) {
+    let x = start;
+    return widths.map((w) => {
+      const center = x + w / 2;
+      x += w + gap;
+      return center;
+    });
+  }
+  const end = start + span;
+  const step = (end - widths[n - 1] - start) / (n - 1);
+  return widths.map((w, i) => Math.min(start + step * i + w / 2, end - w / 2));
+}
+
+/** Narrowest a group may be squeezed to (each card keeps MIN_VISIBLE of its width). */
+function minimumWidth(widths: readonly number[]): number {
+  if (!widths.length) return 0;
+  const last = widths[widths.length - 1];
+  return widths.slice(0, -1).reduce((sum, w) => sum + w * MIN_VISIBLE, 0) + last;
+}
+
+export interface RowGroup {
+  widths: readonly number[];
+  gap: number;
+}
+
+/**
+ * Places one row made of consecutive groups (back row: lands, then other
+ * permanents). Centered on the table while it fits between the pile lane
+ * and its mirror image, then across the whole free span, and only when even
+ * that overflows are cards overlapped: the earlier groups (lands) give up
+ * width first, down to MIN_VISIBLE of each card.
+ */
+export function placeRow(groups: readonly RowGroup[], left: number, right: number, groupGap = GROUP_GAP): number[][] {
+  const live = groups.filter((g) => g.widths.length > 0);
+  const natural = live.map((g) => naturalWidth(g.widths, g.gap));
+  const gaps = Math.max(0, live.length - 1) * groupGap;
+  const total = natural.reduce((sum, w) => sum + w, 0) + gaps;
+  const available = right - left;
+  const symmetric = Math.max(0, Math.min(-left, right)) * 2;
+  let start: number;
+  const spans = [...natural];
+  if (total <= symmetric) start = -total / 2;
+  else if (total <= available) start = left + (available - total) / 2;
+  else {
+    start = left;
+    let excess = total - available;
+    for (let i = 0; i < live.length && excess > 0; i += 1) {
+      const give = Math.min(excess, natural[i] - minimumWidth(live[i].widths));
+      spans[i] -= give;
+      excess -= give;
+    }
+    if (excess > 0) {
+      // Even fully squeezed it overflows (dozens of tokens): share the rest evenly.
+      const squeezed = spans.reduce((sum, w) => sum + w, 0);
+      const room = Math.max(0.01, available - gaps);
+      for (let i = 0; i < spans.length; i += 1) spans[i] *= room / squeezed;
+    }
+  }
+  const out: number[][] = [];
+  let x = start;
+  let liveIndex = 0;
+  for (const group of groups) {
+    if (!group.widths.length) {
+      out.push([]);
+      continue;
+    }
+    out.push(groupCenters(group.widths, group.gap, x, spans[liveIndex]));
+    x += spans[liveIndex] + groupGap;
+    liveIndex += 1;
+  }
+  return out;
+}
+
+/** Centers for a single row inside [-halfWidth, halfWidth] (overlapping evenly once it overflows). */
+export function rowCenters(widths: readonly number[], halfWidth: number): number[] {
+  const n = widths.length;
+  if (!n) return [];
+  const total = naturalWidth(widths, ROW_GAP);
+  if (total <= halfWidth * 2) return groupCenters(widths, ROW_GAP, -total / 2, total);
+  return groupCenters(widths, ROW_GAP, -halfWidth, halfWidth * 2);
+}
+
+function attachedHost(state: BoardState, object: ObjectState): ObjectState | undefined {
+  const host = object.attachedTo ? state.objects.get(object.attachedTo) : undefined;
+  return host && host.zone === 'battlefield' && host.obj !== object.obj && !host.attachedTo ? host : undefined;
+}
+
+function collectAttachments(state: BoardState, seatIds: number[]): Map<ObjId, ObjectState[]> {
+  const attachments = new Map<ObjId, ObjectState[]>();
+  for (const seatId of seatIds) {
+    for (const obj of state.seats[seatId].zones.battlefield) {
+      const object = state.objects.get(obj);
+      const host = object && attachedHost(state, object);
+      if (object && host) {
+        const list = attachments.get(host.obj) ?? [];
+        list.push(object);
+        attachments.set(host.obj, list);
+      }
+    }
+  }
+  return attachments;
+}
+
+function placeGroup(
+  ctx: Context,
+  frame: Frame,
+  list: readonly ObjectState[],
+  centers: readonly number[],
+  widths: readonly number[],
+  row: BattlefieldRow,
+  y: number,
+  scale: number,
+): void {
+  list.forEach((object, i) => {
+    const attached = ctx.attachments.get(object.obj) ?? [];
+    const ownWidth = footprint(object, 0, scale);
+    const x = centers[i] - widths[i] / 2 + ownWidth / 2;
+    const cardY = y + (ctx.state.attackers.has(object.obj) ? ATTACK_OFFSET : 0);
+    const z = BASE_Z + 0.004 * (attached.length + 1) + i * 0.0005;
+    placeObject(ctx, frame, object, { x, y: cardY, z, scale }, row);
+    attached.forEach((child, k) => {
+      // Attachments tuck in behind (away from the viewer) and under the host.
+      const local = {
+        x: x + ATTACH_DX * scale * (k + 1),
+        y: cardY + ATTACH_DY * scale * (k + 1),
+        z: z - 0.004 * (k + 1),
+        scale,
+      };
+      placeObject(ctx, frame, child, local, row, child.card, child.controller);
+    });
+  });
+}
+
+/**
+ * Seat-local span for battlefield rows. A mirrored opponent's x is negated on
+ * the way to the table, so its rows are laid out in the reflected span and
+ * land right of the pile lane like everyone else's.
+ */
+function rowSpan(table: TableGeometry, frame: Frame): { left: number; right: number } {
+  return frame.opponent && frame.mirror
+    ? { left: -table.rowRight, right: -table.rowLeft }
+    : { left: table.rowLeft, right: table.rowRight };
+}
+
+function layoutBattlefield(ctx: Context, frame: Frame, objects: ObjectState[]): void {
+  const { attachments } = ctx;
+  const span = rowSpan(ctx.table, frame);
+  const hosts: Record<BattlefieldRow, ObjectState[]> = { lands: [], creatures: [], planeswalkers: [], other: [] };
+  for (const object of objects) {
+    if (!attachedHost(ctx.state, object)) hosts[rowOf(object, ctx.state.cards)].push(object);
+  }
+  const widthsOf = (list: ObjectState[], scale: number) =>
+    list.map((o) => footprint(o, attachments.get(o.obj)?.length ?? 0, scale));
+  // Front row: creatures centered as before; planeswalkers at full size,
+  // anchored to the viewer's right edge of the row (Arena puts them beside
+  // the creatures, out to the right), with a gap kept between the two.
+  const creatureWidths = widthsOf(hosts.creatures, 1);
+  const walkerWidths = widthsOf(hosts.planeswalkers, 1);
+  let creatureCenters: number[];
+  let walkerCenters: number[];
+  if (!walkerWidths.length) {
+    [creatureCenters] = placeRow([{ widths: creatureWidths, gap: ROW_GAP }], span.left, span.right);
+    walkerCenters = [];
+  } else {
+    const available = span.right - span.left;
+    // Many planeswalkers overlap rather than push the creatures off the table.
+    const walkerSpan = Math.min(naturalWidth(walkerWidths, ROW_GAP), available * MAX_PLANESWALKER_SHARE);
+    // A mirrored opponent's seat-local x is negated, so the viewer's right is its left.
+    const viewerRightIsLocalRight = !(frame.opponent && frame.mirror);
+    const walkerStart = viewerRightIsLocalRight ? span.right - walkerSpan : span.left;
+    walkerCenters = groupCenters(walkerWidths, ROW_GAP, walkerStart, walkerSpan);
+    const creatureLeft = viewerRightIsLocalRight ? span.left : span.left + walkerSpan + PLANESWALKER_GAP;
+    const creatureRight = viewerRightIsLocalRight ? span.right - walkerSpan - PLANESWALKER_GAP : span.right;
+    [creatureCenters] = placeRow([{ widths: creatureWidths, gap: ROW_GAP }], creatureLeft, creatureRight);
+  }
+  placeGroup(ctx, frame, hosts.creatures, creatureCenters, creatureWidths, 'creatures', ROW_Y.creatures, 1);
+  placeGroup(ctx, frame, hosts.planeswalkers, walkerCenters, walkerWidths, 'planeswalkers', ROW_Y.creatures, 1);
+
+  const landWidths = widthsOf(hosts.lands, BACK_ROW_SCALE);
+  const otherWidths = widthsOf(hosts.other, BACK_ROW_SCALE);
+  const [landCenters, otherCenters] = placeRow(
+    [
+      { widths: landWidths, gap: LAND_GAP },
+      { widths: otherWidths, gap: ROW_GAP },
+    ],
+    span.left,
+    span.right,
+  );
+  placeGroup(ctx, frame, hosts.lands, landCenters, landWidths, 'lands', ROW_Y.back, BACK_ROW_SCALE);
+  placeGroup(ctx, frame, hosts.other, otherCenters, otherWidths, 'other', ROW_Y.back, BACK_ROW_SCALE);
+}
+
+function layoutHand(ctx: Context, frame: Frame, objects: ObjectState[], hidden: number): void {
+  const n = hidden + objects.length;
+  if (!n) return;
+  // Off the felt, the fan may run nearly the table's width (centered).
+  const maxWidth = Math.max(CARD_WIDTH * HAND_SCALE_FLOOR, ctx.table.width - 2 * HAND_SIDE_MARGIN);
+  // Cards overlap down to HAND_MIN_VISIBLE first; a hand too crowded even
+  // then shrinks (to the floor), and past that overlaps further.
+  const fitScale = maxWidth / ((HAND_MIN_VISIBLE * (n - 1) + 1) * CARD_WIDTH);
+  const scale = Math.max(HAND_SCALE_FLOOR, Math.min(ctx.table.handScale, fitScale));
+  const cardWidth = CARD_WIDTH * scale;
+  const step = n > 1 ? Math.min(cardWidth + HAND_STEP_GAP, (maxWidth - cardWidth) / (n - 1)) : 0;
+  const y = handY(scale);
+  const slot = (i: number) => {
+    const offset = i - (n - 1) / 2;
+    return {
+      x: offset * step,
+      y: y - Math.min(0.04, offset * offset * 0.005),
+      z: HAND_Z + i * 0.003,
+      rotZ: -offset * 0.03,
+      scale,
+    };
+  };
+  for (let i = 0; i < hidden; i += 1) {
+    const placeholder: ObjectState = {
+      obj: `hidden:${frame.seat}:hand:${i}`,
+      card: null,
+      owner: frame.seat,
+      controller: frame.seat,
+      zone: 'hand',
+      tapped: false,
+      counters: {},
+      power: null,
+      toughness: null,
+      attachedTo: null,
+      faceDown: false,
+      inferred: false,
+      revealedAt: null,
+    };
+    placeObject(ctx, frame, placeholder, slot(i), 'hand', null);
+  }
+  objects.forEach((object, i) => {
+    const face = object.card ?? (ctx.opts.hindsight ? (ctx.state.hindsight.get(object.obj) ?? null) : null);
+    placeObject(ctx, frame, object, slot(hidden + i), 'hand', face);
+  });
+}
+
+/** Seat-local pile slots in the left lane, from the table edge toward the center line. */
+export function pileSlots(table: TableGeometry, commandZone: boolean): Array<{ zone: PileZone; x: number; y: number; scale: number }> {
+  const zones: PileZone[] = commandZone ? ['library', 'graveyard', 'exile', 'command'] : ['library', 'graveyard', 'exile'];
+  const scale = pileScale(commandZone);
+  const height = CARD_HEIGHT * scale;
+  const x = -table.width / 2 + PILE_MARGIN + (CARD_WIDTH * scale) / 2;
+  return zones.map((zone, i) => ({
+    zone,
+    x,
+    y: -(table.depth / 2 - PILE_MARGIN - height / 2 - i * (height + PILE_GAP)),
+    scale,
+  }));
+}
+
+function layoutPiles(ctx: Context, frame: Frame, piles: PilePlacement[]): void {
+  const seat = ctx.state.seats[frame.seat];
+  // Piles always stand in the left lane: a mirrored opponent's are turned, not moved.
+  const pileFrame: Frame = { ...frame, mirror: false };
+  const rotZ = frameRotation(frame);
+  for (const slot of pileSlots(ctx.table, ctx.opts.commandZone ?? false)) {
+    const { zone, scale } = slot;
+    const objs = zone === 'library' ? [] : seat.zones[zone];
+    const count = zone === 'library' ? seat.librarySize : objs.length;
+    const { x, y } = toTable(pileFrame, slot.x, slot.y);
+    const top = objs.length ? ctx.state.objects.get(objs[objs.length - 1]) : undefined;
+    piles.push({ seat: frame.seat, zone, count, topCard: top?.card ?? null, x, y, scale, rotZ });
+    // Visible pile cards: every command-zone card, the top graveyard/exile card.
+    const shown = zone === 'command' ? objs : objs.slice(-1);
+    shown.forEach((obj, i) => {
+      const object = ctx.state.objects.get(obj);
+      if (!object) return;
+      const z = BASE_Z + Math.min(count, 60) * 0.004 + i * 0.004;
+      placeObject(ctx, pileFrame, object, { x: slot.x + i * 0.18, y: slot.y, z, scale, rotZ }, 'pile');
+    });
+  }
+}
+
+export interface StackEntryKey {
+  /** Placement `obj`: the spell's own object id, or `stack:<stack_id>` for an ability chip. */
+  key: string;
+  item: StackItem;
+  /** True for triggered and activated abilities (drawn as a chip). */
+  ability: boolean;
+}
+
+/**
+ * Which placement shows each stack item (shared with the scene labels). A
+ * spell is its own card on the stack. An ability is always its own chip, even
+ * when its source is a spell still on the stack: reconstructed streams push a
+ * spell's "when you cast" trigger before that spell resolves, and keying the
+ * trigger by the spell's object drew the spell labelled "Trigger".
+ */
+export function stackEntryKeys(state: BoardState): StackEntryKey[] {
+  const keys: StackEntryKey[] = [];
+  const claimed = new Set<ObjId>();
+  for (const item of state.stack) {
+    const object = item.obj ? state.objects.get(item.obj) : undefined;
+    if (item.kind === 'spell' && object && object.zone === 'stack' && !claimed.has(object.obj)) {
+      claimed.add(object.obj);
+      keys.push({ key: object.obj, item, ability: false });
+    } else {
+      keys.push({ key: `stack:${item.stackId}`, item, ability: item.kind !== 'spell' });
+    }
+  }
+  return keys;
+}
+
+/**
+ * The in-scene stack is a small column at the right edge, underneath the DOM
+ * stack preview: it is the motion anchor (a cast card flies from the hand
+ * into the preview and later from there onto the battlefield), while the
+ * preview is what the viewer reads.
+ */
+function layoutStack(ctx: Context): void {
+  const { state, table } = ctx;
+  const entries: Array<{ key: string; object: ObjectState | null; item: StackItem | null; ability: boolean }> = [];
+  const covered = new Set<ObjId>();
+  for (const { key, item, ability } of stackEntryKeys(state)) {
+    const object = key === item.obj ? (state.objects.get(key) ?? null) : null;
+    if (object) covered.add(object.obj);
+    entries.push({ key, object, item, ability });
+  }
+  for (const seatId of Object.keys(state.seats).map(Number).sort((a, b) => a - b)) {
+    for (const obj of state.seats[seatId].zones.stack) {
+      const object = state.objects.get(obj);
+      if (object && !covered.has(obj)) entries.push({ key: obj, object, item: null, ability: false });
+    }
+  }
+  const n = entries.length;
+  const step = n > 1 ? Math.min(0.25, 1 / (n - 1)) : 0;
+  entries.forEach((entry, i) => {
+    const controller = entry.item?.controller ?? entry.object?.controller ?? ctx.opts.playerSeat;
+    const frame: Frame = { seat: controller, opponent: controller !== ctx.opts.playerSeat, mirror: ctx.opts.mirrorOpponent };
+    const y = STACK_ANCHOR_Y + ((n - 1) / 2 - i) * step;
+    const scale = entry.ability ? STACK_SCALE * ABILITY_CHIP_SCALE : STACK_SCALE;
+    const local = { x: table.stackX, y, z: STACK_Z + i * 0.06, scale };
+    const source = entry.item?.obj ? state.objects.get(entry.item.obj) : undefined;
+    const object: ObjectState = entry.object ?? {
+      obj: entry.key,
+      card: entry.item?.card ?? (source && !source.faceDown ? source.card : null),
+      owner: controller,
+      controller,
+      zone: 'stack',
+      tapped: false,
+      counters: {},
+      power: null,
+      toughness: null,
+      attachedTo: null,
+      faceDown: false,
+      inferred: false,
+      revealedAt: null,
+    };
+    // The stack column is shared by both seats, so it is not side-mapped.
+    placeObject(ctx, { ...frame, opponent: false }, object, local, 'stack');
+    ctx.out[ctx.out.length - 1].rotZ += frameRotation(frame);
+  });
+}
+
+function compareKeys(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+export function layoutBoard(state: BoardState, opts: LayoutOptions): Layout {
+  const blockers = new Set(state.blocks.keys());
+  const targeted = new Set<ObjId>();
+  for (const item of state.stack) item.targets.forEach((obj) => targeted.add(obj));
+  const last = state.lastEvent;
+  const damaged = last?.kind === 'damage' ? last.target_obj : null;
+  const seatIds = Object.keys(state.seats).map(Number).sort((a, b) => a - b);
+  const attachments = collectAttachments(state, seatIds);
+  const table = tableGeometry(opts.tableWidth, opts.commandZone ?? false, opts.handScale);
+  const ctx: Context = { state, opts, table, targeted, damaged, blockers, attachments, out: [] };
+  const piles: PilePlacement[] = [];
+
+  for (const seatId of seatIds) {
+    const frame: Frame = { seat: seatId, opponent: seatId !== opts.playerSeat, mirror: opts.mirrorOpponent };
+    const seat = state.seats[seatId];
+    const resolve = (obj: ObjId) => state.objects.get(obj);
+    const battlefield = seat.zones.battlefield.map(resolve).filter((o): o is ObjectState => !!o);
+    const hand = seat.zones.hand.map(resolve).filter((o): o is ObjectState => !!o);
+    layoutBattlefield(ctx, frame, battlefield);
+    layoutHand(ctx, frame, hand, seat.hiddenHand);
+    layoutPiles(ctx, frame, piles);
+  }
+  layoutStack(ctx);
+  ctx.out.sort((a, b) => compareKeys(a.obj, b.obj));
+  return { cards: ctx.out, piles, table };
+}

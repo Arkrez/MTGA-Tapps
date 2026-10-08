@@ -1,3 +1,7 @@
+import type { ReplayAvailability, ReplayStream } from './replay/types';
+
+export type { ReplayAvailability, ReplayStream } from './replay/types';
+
 export interface DeckVisual {
   card_id: number | null;
   card_name: string | null;
@@ -278,6 +282,10 @@ export interface RecentGameRow {
   opponent_commander?: string | null;
   player_commander_colors?: string | null;
   opponent_commander_colors?: string | null;
+  /** Opponent's display name; absent on older servers. */
+  opponent_name?: string | null;
+  /** Replay availability (also inherited by AllGamesRow). */
+  replay?: ReplayAvailability;
 }
 
 export interface AllGamesRow extends RecentGameRow {
@@ -475,6 +483,7 @@ export interface DeckGameRow {
   mulligans: number | null;
   play_draw: string | null;
   opp_colors?: string;
+  replay?: ReplayAvailability;
 }
 
 export interface DeckPlayedManaCard {
@@ -721,6 +730,7 @@ export interface GameHeader {
   raw_format: string | null;
   format_label: string;
   best_of: number | null;
+  replay?: ReplayAvailability;
 }
 
 export interface CommanderRef {
@@ -792,6 +802,8 @@ export type TimelineTextSegment =
   | { kind: 'card'; text: string; card_name: string; card_type?: string | null };
 
 export interface GameTimelineRow {
+  /** `game_events.id`; replay stream events carry it as `row_id` for deep links. */
+  id?: number | null;
   turn_number: number | null;
   phase: string | null;
   step: string | null;
@@ -1012,6 +1024,7 @@ export interface OpponentGameRow {
   play_draw: string;
   player_final_life: number | null;
   opponent_final_life: number | null;
+  replay?: ReplayAvailability;
 }
 
 export interface OpponentDetail {
@@ -1167,6 +1180,38 @@ export async function fetchGameDetail(gameId: string, signal?: AbortSignal): Pro
     throw new Error(`Dashboard API returned ${response.status}`);
   }
   return response.json() as Promise<GameDetail>;
+}
+
+/** Thrown by fetchReplay when the game exists but has nothing to replay. */
+export class ReplayUnavailableError extends Error {
+  readonly reason: string | null;
+
+  constructor(reason: string | null) {
+    super(reason ? `Replay unavailable: ${reason}` : 'Replay unavailable');
+    this.name = 'ReplayUnavailableError';
+    this.reason = reason;
+  }
+}
+
+export async function fetchReplay(gameId: string, signal?: AbortSignal): Promise<ReplayStream> {
+  const params = new URLSearchParams({ id: gameId });
+  const response = await fetch(`/api/replay?${params.toString()}`, { signal });
+  if (!response.ok) {
+    if (response.status === 404) {
+      let body: { error?: string; reason?: string | null } | null;
+      try {
+        body = (await response.json()) as { error?: string; reason?: string | null };
+      } catch {
+        body = null;
+      }
+      if (body?.error === 'replay_unavailable') {
+        throw new ReplayUnavailableError(body.reason ?? null);
+      }
+      throw new Error(`No recorded game for id: ${gameId}`);
+    }
+    throw new Error(`Dashboard API returned ${response.status}`);
+  }
+  return response.json() as Promise<ReplayStream>;
 }
 
 function appendDetailFilters(params: URLSearchParams, filters: SnapshotFilters): void {
@@ -1626,6 +1671,7 @@ export interface LiveGameRow {
   best_of: number | null;
   deck_name: string | null;
   opponent_name: string | null;
+  replay?: ReplayAvailability;
 }
 
 /** One live feed row — a GameTimelineRow (same shape the /game Timeline

@@ -50,7 +50,7 @@ class TrackerLifecycleMixin:
 
         Priority guide:
           4: Structured game-over JSON (authoritative)
-          3: Local client concede request
+          3: LossOfGame annotation / local client concede request
           2: Seat-specific concede / generic JSON hints
           1: Text heuristics (left/disconnect/concede phrases)
         """
@@ -75,8 +75,8 @@ class TrackerLifecycleMixin:
 
         return True
 
-    def _try_parse_winner_from_json(self, data: Optional[Dict[str, Any]]) -> Optional[int]:
-        """Try to get winner seat (1 or 2) from parsed game-end JSON. Returns None if not found."""
+    def _explicit_winner_from_json(self, data: Optional[Dict[str, Any]]) -> Optional[int]:
+        """Read a winner or loser seat explicitly identified by Arena."""
         if not data or not isinstance(data, dict):
             return None
 
@@ -111,11 +111,28 @@ class TrackerLifecycleMixin:
             if seat is not None:
                 return seat
 
-        # Fallback: infer from player statuses (PendingLoss/InGame) at game over.
+        return None
+
+    def _try_parse_winner_from_json(self, data: Optional[Dict[str, Any]]) -> Optional[int]:
+        """Read an explicit winner, with terminal PendingLoss status as fallback."""
+        winner = self._explicit_winner_from_json(data)
+        if winner is not None or not isinstance(data, dict):
+            return winner
+
+        # Player lists in diffs are partial. A lone InGame player during play
+        # is not the winner; require a terminal state and an explicit loser.
+        game_info = self._find_nested(data, "gameInfo")
+        if not isinstance(game_info, dict) or not (
+            game_info.get("stage") == "GameStage_GameOver"
+            or game_info.get("matchState") in {
+                "MatchState_GameComplete", "MatchState_MatchComplete"
+            }
+        ):
+            return None
+
         players = self._find_nested(data, "players")
         if isinstance(players, list):
             pending_loss_seats: List[int] = []
-            in_game_seats: List[int] = []
             for player in players:
                 if not isinstance(player, dict):
                     continue
@@ -125,10 +142,6 @@ class TrackerLifecycleMixin:
                 status = str(player.get("status", ""))
                 if "PendingLoss" in status:
                     pending_loss_seats.append(seat)
-                elif "InGame" in status:
-                    in_game_seats.append(seat)
-            if len(in_game_seats) == 1:
-                return in_game_seats[0]
             if len(pending_loss_seats) == 1:
                 return 2 if pending_loss_seats[0] == 1 else 1
 
@@ -293,6 +306,9 @@ class TrackerLifecycleMixin:
         """
         prior_event_time = getattr(self, "_current_event_time", None)
         self._current_event_time = timestamp
+        # Every game_events row this line produces is written in one
+        # transaction when the line is done (replay_capture batching).
+        self._replay_begin()
         try:
             # Arena restamps its Detailed Logs state whenever it relaunches.
             # Only announce CHANGES: the startup banner already reported the
@@ -341,6 +357,7 @@ class TrackerLifecycleMixin:
             for event in self._extract_game_state_events(line):
                 self._handle_event(event)
         finally:
+            self._replay_end()
             self._current_event_time = prior_event_time
 
     def _line_indicates_live_mulligan_start(self, line: str) -> bool:
@@ -817,29 +834,57 @@ class TrackerLifecycleMixin:
         """Parse a line for structured winner hints and return payload plus game-over flag."""
         json_data = self.parser.parse_json_from_line(line)
         structured_match_complete = False
-        if json_data:
-            game_info = self._find_nested(json_data, "gameInfo")
+        if not isinstance(json_data, dict):
+            return json_data, False
+        event = json_data.get("greToClientEvent", json_data)
+        messages = event.get("greToClientMessages") if isinstance(event, dict) else None
+        payloads = messages if isinstance(messages, list) else [json_data]
+        # A GRE batch can begin with a normal diff and end with the result or
+        # loss annotation. Apply every message in order, not just its first keys.
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                continue
+            authoritative_result = False
+            game_info = self._find_nested(payload, "gameInfo")
             if isinstance(game_info, dict):
                 stage = str(game_info.get("stage", ""))
                 match_state = str(game_info.get("matchState", ""))
                 if "GameStage_GameOver" in stage and "MatchState_GameComplete" in match_state:
                     structured_match_complete = True
+                authoritative_result = (
+                    "GameStage_GameOver" in stage
+                    or "MatchState_GameComplete" in match_state
+                    or "MatchState_MatchComplete" in match_state
+                )
                 if "MatchState_MatchComplete" in match_state:
                     self.game_state.arena_match_over = True
-            if isinstance(self._find_nested(json_data, "finalMatchResult"), dict):
+            if isinstance(self._find_nested(payload, "finalMatchResult"), dict):
                 self.game_state.arena_match_over = True
-            winner = self._try_parse_winner_from_json(json_data)
+                authoritative_result = True
+                structured_match_complete = True
+            intermission = self._find_nested(payload, "intermissionReq")
+            if isinstance(intermission, dict):
+                authoritative_result = True
+                if isinstance(intermission.get("result"), dict):
+                    structured_match_complete = True
+            winner = self._explicit_winner_from_json(payload)
+            # PendingLoss is a fallback hint, even in a terminal message.
+            # An explicit result or LossOfGame annotation must supersede it.
+            if winner is None:
+                winner = self._try_parse_winner_from_json(payload)
+                authoritative_result = False
             if winner is not None:
-                winner_priority = 4 if structured_match_complete else 2
+                winner_priority = 4 if authoritative_result else 2
                 winner_reason = (
-                    "structured_game_over_json" if structured_match_complete else "json_winner_hint"
+                    "structured_game_over_json" if authoritative_result else "json_winner_hint"
                 )
                 self._set_winner_seat(winner, reason=winner_reason, priority=winner_priority)
-            winloss_result = self._extract_latest_game_result(json_data)
+            winloss_result = self._extract_latest_game_result(payload)
             if winloss_result is not None and winloss_result.get("reason"):
                 self.game_state.win_result_reason = str(winloss_result.get("reason"))
-            self._capture_loss_of_game_annotation(json_data)
-            draw_result = self._extract_latest_draw_result(json_data)
+            if self._capture_loss_of_game_annotation(payload):
+                structured_match_complete = True
+            draw_result = self._extract_latest_draw_result(payload)
             if draw_result is not None:
                 self.game_state.result_type = str(draw_result.get("result") or "ResultType_Draw")
                 self.game_state.result_reason = str(
@@ -848,7 +893,7 @@ class TrackerLifecycleMixin:
                 structured_match_complete = True
         return json_data, structured_match_complete
 
-    def _capture_loss_of_game_annotation(self, data: Optional[Dict[str, Any]]) -> None:
+    def _capture_loss_of_game_annotation(self, data: Optional[Dict[str, Any]]) -> bool:
         """Record the SBA reason from an AnnotationType_LossOfGame annotation.
 
         At game over, Arena tags the losing seat with the state-based action
@@ -857,7 +902,8 @@ class TrackerLifecycleMixin:
         since life totals stay positive for deckouts and poison.
         """
         if not isinstance(data, dict):
-            return
+            return False
+        losses = {}
         annotation_lists = []
         for key in ("annotations", "persistentAnnotations"):
             found = self._find_nested(data, key)
@@ -885,9 +931,19 @@ class TrackerLifecycleMixin:
                         if isinstance(values, list) and values:
                             reason = str(values[0])
                         break
-                if reason:
-                    self.game_state.loss_reason_code = reason
-                    self.game_state.loss_reason_seat = seat
+                if reason and seat is not None:
+                    losses[seat] = reason
+        if len(losses) == 1:
+            seat, reason = next(iter(losses.items()))
+            self.game_state.loss_reason_code = reason
+            self.game_state.loss_reason_seat = seat
+            self._set_winner_seat(3 - seat, reason="loss_of_game_annotation", priority=3)
+        elif losses:
+            # Multiple losing seats need a structured draw/result; don't pick
+            # a winner from whichever annotation happened to appear last.
+            self.game_state.loss_reason_code = None
+            self.game_state.loss_reason_seat = None
+        return bool(losses)
 
     def _handle_concede_end_line(
         self, line: str, line_lower: str, json_data: Optional[Dict[str, Any]]
@@ -1012,7 +1068,7 @@ class TrackerLifecycleMixin:
         if structured_match_complete and self._mark_match_complete_now():
             return
 
-        if self._line_indicates_local_player_loss(line_lower):
+        if json_data is None and self._line_indicates_local_player_loss(line_lower):
             self._set_winner_seat(
                 self.game_state.opponent_seat_id,
                 reason="text:player_left_or_forfeited",
@@ -1050,13 +1106,17 @@ class TrackerLifecycleMixin:
         if event_type != "game_state":
             return
 
-        # Process turn and print header FIRST so "Turn 1 - YOUR TURN" appears before
-        # card plays and life changes from this message.
-        self._update_game_state(event_data)
-        self._capture_opening_hand(event_data)
+        self._replay_begin()
+        try:
+            # Process turn and print header FIRST so "Turn 1 - YOUR TURN" appears before
+            # card plays and life changes from this message.
+            self._update_game_state(event_data)
+            self._capture_opening_hand(event_data)
 
-        # Then process annotations (card plays, etc.) so they appear under the turn header.
-        self._process_game_events(event_data)
+            # Then process annotations (card plays, etc.) so they appear under the turn header.
+            self._process_game_events(event_data)
+        finally:
+            self._replay_end()
 
     def _resolve_game_outcome(self) -> tuple:
         """Resolve game outcome as ('win'|'loss'|'draw'|'unknown', reason)."""
@@ -1069,28 +1129,36 @@ class TrackerLifecycleMixin:
         # is the only way to distinguish deckouts and poison from concessions
         # (life stays positive in all three).
         sba_reason = self._loss_annotation_reason_text()
+        if self.game_state.winner_seat is not None and self.game_state.player_seat_id in (1, 2):
+            if self.game_state.winner_seat not in (
+                self.game_state.player_seat_id, self.game_state.opponent_seat_id
+            ):
+                return "unknown", f"Winning seat: {self.game_state.winner_seat}"
+            won = self.game_state.winner_seat == self.game_state.player_seat_id
+            outcome = "win" if won else "loss"
+            subject = "Opponent" if won else "You"
+            if sba_reason is not None and sba_reason[0] == outcome:
+                return sba_reason
+            win_reason = str(getattr(self.game_state, "win_result_reason", "") or "")
+            if "Timeout" in win_reason:
+                return outcome, f"{subject} timed out"
+            if "Concede" in win_reason or "concede" in self.game_state.winner_reason.lower():
+                return outcome, f"{subject} conceded"
+            # Life totals can be stale, or a player can legally survive at
+            # zero life. They must never invert Arena's identified winner.
+            if (ol if won else pl) <= 0:
+                return outcome, f"{subject} reached 0 life"
+            return outcome, f"Arena reported a {'win' if won else 'loss'}"
+
+        if self.game_state.winner_seat is not None:
+            return "unknown", f"Winning seat: {self.game_state.winner_seat}"
+
         if sba_reason is not None:
             return sba_reason
-
         if pl <= 0:
             return "loss", "You reached 0 life"
         if ol <= 0:
             return "win", "Opponent reached 0 life"
-
-        if self.game_state.winner_seat is not None and self.game_state.player_seat_id in (1, 2):
-            win_reason = str(getattr(self.game_state, "win_result_reason", "") or "")
-            if self.game_state.winner_seat == self.game_state.player_seat_id:
-                if "Timeout" in win_reason:
-                    return "win", "Opponent timed out"
-                return "win", "Opponent conceded"
-            if self.game_state.winner_seat == self.game_state.opponent_seat_id:
-                if "Timeout" in win_reason:
-                    return "loss", "You timed out"
-                return "loss", "You conceded"
-            return "unknown", f"Winning seat: {self.game_state.winner_seat}"
-
-        if self.game_state.winner_seat is not None:
-            return "unknown", f"Winning seat: {self.game_state.winner_seat}"
 
         return "unknown", f"Life totals: You {pl} - {ol} Opponent"
 

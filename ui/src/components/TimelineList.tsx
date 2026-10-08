@@ -1,3 +1,4 @@
+import { Play } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { GameTimelineRow, GameTurnTimingRow, TimelineTextSegment } from '../api';
 import { formatCardName, formatTurnDuration } from '../format';
@@ -210,14 +211,38 @@ function decorateCardSegments(segments: TimelineTextSegment[]): {
   return { segments: mutableSegments, decorations };
 }
 
-function TimelineText({ event, returnHash }: { event: GameTimelineRow; returnHash?: string }) {
+/** Console lines start with the elapsed match time, e.g. `[4:27] You: ...`. */
+const ELAPSED_PREFIX = /^\s*\[(\d+:\d{2}(?::\d{2})?)\]\s*/;
+
+function elapsedLabel(event: GameTimelineRow): string | null {
+  const first = event.text_segments?.length ? event.text_segments[0] : { kind: 'text' as const, text: event.text };
+  if (first.kind !== 'text') {
+    return null;
+  }
+  return ELAPSED_PREFIX.exec(first.text ?? '')?.[1] ?? null;
+}
+
+function TimelineText({
+  event,
+  returnHash,
+  stripElapsed = false,
+}: {
+  event: GameTimelineRow;
+  returnHash?: string;
+  /** The elapsed prefix is rendered separately (as the replay link). */
+  stripElapsed?: boolean;
+}) {
   const sourceSegments = (
     event.text_segments?.length
       ? event.text_segments
       : [{ kind: 'text' as const, text: event.text }]
-  ).map((segment) =>
-    segment.kind === 'text' ? { ...segment, text: cleanEventText(segment.text) } : segment,
-  );
+  ).map((segment, index) => {
+    if (segment.kind !== 'text') {
+      return segment;
+    }
+    const text = stripElapsed && index === 0 ? segment.text.replace(ELAPSED_PREFIX, '') : segment.text;
+    return { ...segment, text: cleanEventText(text) };
+  });
   const { decorations, segments } = decorateCardSegments(sourceSegments);
   return (
     <>
@@ -266,10 +291,13 @@ export function TimelineList({
   timings = [],
   cardReturnHash,
   showFilters = true,
+  replayHref,
 }: {
   rows: GameTimelineRow[];
   timings?: GameTurnTimingRow[];
   cardReturnHash?: string;
+  /** Deep link into the replay at this row, or null when the row has none. */
+  replayHref?: (row: GameTimelineRow) => string | null;
   /** The Live Log renders the same timeline without the filter bar. */
   showFilters?: boolean;
 }) {
@@ -365,8 +393,11 @@ export function TimelineList({
                   </div>
                 </div>
                 <ul>
-                  {group.events.map((event, eventIndex) => (
-                    <li key={eventIndex} className={actorClass(event.actor_role)}>
+                  {group.events.map((event, eventIndex) => {
+                    const href = replayHref?.(event) ?? null;
+                    const elapsed = href ? elapsedLabel(event) : null;
+                    return (
+                    <li key={event.id ?? `i${eventIndex}`} className={actorClass(event.actor_role)}>
                       {actorLabel(event.actor_role) ? (
                         <span className="timeline-actor">{actorLabel(event.actor_role)}</span>
                       ) : null}
@@ -374,10 +405,35 @@ export function TimelineList({
                         {eventTypeLabel(effectiveEventType(event))}
                       </span>
                       <span className="timeline-text">
-                        <TimelineText event={event} returnHash={cardReturnHash} />
+                        {href && elapsed ? (
+                          <>
+                            <a
+                              className="timeline-replay-link replay-wide-only"
+                              href={href}
+                              aria-label={`Watch the replay from ${elapsed}`}
+                              title="Watch the replay from this moment"
+                            >
+                              <Play aria-hidden="true" />
+                              {elapsed}
+                            </a>
+                            <span className="timeline-elapsed replay-narrow-only">[{elapsed}] </span>
+                          </>
+                        ) : null}
+                        <TimelineText event={event} returnHash={cardReturnHash} stripElapsed={Boolean(elapsed)} />
                       </span>
+                      {href && !elapsed ? (
+                        <a
+                          className="timeline-replay-link timeline-replay-link-icon replay-wide-only"
+                          href={href}
+                          aria-label="Watch the replay from this event"
+                          title="Watch the replay from this event"
+                        >
+                          <Play aria-hidden="true" />
+                        </a>
+                      ) : null}
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
               </li>
             );

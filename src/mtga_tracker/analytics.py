@@ -559,6 +559,16 @@ class AnalyticsStore:
         )
         AnalyticsStore.ensure_table_column(conn, "game_events", "player_life", "INTEGER")
         AnalyticsStore.ensure_table_column(conn, "game_events", "opponent_life", "INTEGER")
+        # Replay capture (see docs/REPLAY_FORMAT.md): structured fields on every
+        # event row plus silent replay-only rows (visible = 0).
+        AnalyticsStore.ensure_table_column(conn, "game_events", "object_id", "INTEGER")
+        AnalyticsStore.ensure_table_column(conn, "game_events", "target_object_id", "INTEGER")
+        AnalyticsStore.ensure_table_column(conn, "game_events", "arena_id", "INTEGER")
+        AnalyticsStore.ensure_table_column(conn, "game_events", "controller_seat", "INTEGER")
+        AnalyticsStore.ensure_table_column(
+            conn, "game_events", "visible", "INTEGER NOT NULL DEFAULT 1"
+        )
+        AnalyticsStore.ensure_table_column(conn, "games", "replay_version", "INTEGER")
         AnalyticsStore.ensure_table_column(conn, "participants", "opening_hand_size", "INTEGER")
         AnalyticsStore.ensure_table_column(conn, "participants", "mulligans", "INTEGER")
         AnalyticsStore.ensure_table_column(
@@ -679,8 +689,7 @@ class AnalyticsStore:
         recorded in schema_migrations so each runs exactly once per database.
         """
         applied = {
-            int(row[0])
-            for row in conn.execute("SELECT version FROM schema_migrations").fetchall()
+            int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations").fetchall()
         }
         migrations = (
             (2, AnalyticsStore._migrate_v2_backfill_card_arena_ids),
@@ -719,6 +728,7 @@ class AnalyticsStore:
             (29, AnalyticsStore._migrate_v29_scry_stats),
             (30, AnalyticsStore._migrate_v30_repair_cube_formats),
             (31, AnalyticsStore._migrate_v31_repair_event_formats),
+            (32, AnalyticsStore._migrate_v32_partial_session_event_index),
         )
         ran: list = []
         for version, migrate in migrations:
@@ -868,9 +878,7 @@ class AnalyticsStore:
                     letters = normalize_colors(merged)
             if letters is None:
                 continue
-            conn.execute(
-                "UPDATE cards SET color_identity = ? WHERE id = ?", (letters, card_id)
-            )
+            conn.execute("UPDATE cards SET color_identity = ? WHERE id = ?", (letters, card_id))
             updated += 1
         if updated:
             conn.commit()
@@ -1152,8 +1160,7 @@ class AnalyticsStore:
         the dashboard can distinguish "not tracked yet" from a real zero.
         """
         existing = {
-            str(row[1])
-            for row in conn.execute("PRAGMA table_info(game_participant_stats)")
+            str(row[1]) for row in conn.execute("PRAGMA table_info(game_participant_stats)")
         }
         for column in (
             "removal_drawn",
@@ -1170,29 +1177,23 @@ class AnalyticsStore:
             "tokens_exiled",
         ):
             if column not in existing:
-                conn.execute(
-                    f"ALTER TABLE game_participant_stats ADD COLUMN {column} INTEGER"
-                )
+                conn.execute(f"ALTER TABLE game_participant_stats ADD COLUMN {column} INTEGER")
 
     @staticmethod
     def _migrate_v17_counter_magic_stats(conn: sqlite3.Connection) -> None:
         """Add counter-magic columns (nullable, like the v16 removal set)."""
         existing = {
-            str(row[1])
-            for row in conn.execute("PRAGMA table_info(game_participant_stats)")
+            str(row[1]) for row in conn.execute("PRAGMA table_info(game_participant_stats)")
         }
         for column in ("counters_drawn", "counters_played", "spells_countered"):
             if column not in existing:
-                conn.execute(
-                    f"ALTER TABLE game_participant_stats ADD COLUMN {column} INTEGER"
-                )
+                conn.execute(f"ALTER TABLE game_participant_stats ADD COLUMN {column} INTEGER")
 
     @staticmethod
     def _migrate_v18_removal_loss_and_bounce_stats(conn: sqlite3.Connection) -> None:
         """Add creature/non-creature removal-loss and bounce columns (nullable)."""
         existing = {
-            str(row[1])
-            for row in conn.execute("PRAGMA table_info(game_participant_stats)")
+            str(row[1]) for row in conn.execute("PRAGMA table_info(game_participant_stats)")
         }
         for column in (
             "creatures_removed",
@@ -1201,35 +1202,54 @@ class AnalyticsStore:
             "noncreatures_bounced",
         ):
             if column not in existing:
-                conn.execute(
-                    f"ALTER TABLE game_participant_stats ADD COLUMN {column} INTEGER"
-                )
+                conn.execute(f"ALTER TABLE game_participant_stats ADD COLUMN {column} INTEGER")
 
     #: (table, timestamp columns, SQL producing "<rowid>, <session started_at>")
     #: for every log-derived timestamp the swapped-date repair must cover.
     _SWAPPED_DATE_TARGETS = (
-        ("matches", ("started_at", "ended_at"),
-         "SELECT m.id, s.started_at FROM matches m "
-         "JOIN tracker_sessions s ON s.id = m.session_id"),
-        ("games", ("started_at", "ended_at"),
-         "SELECT g.id, s.started_at FROM games g "
-         "JOIN tracker_sessions s ON s.id = g.session_id"),
-        ("game_turns", ("started_at", "ended_at"),
-         "SELECT t.id, s.started_at FROM game_turns t "
-         "JOIN games g ON g.id = t.game_id "
-         "JOIN tracker_sessions s ON s.id = g.session_id"),
-        ("game_events", ("event_time",),
-         "SELECT e.id, s.started_at FROM game_events e "
-         "JOIN tracker_sessions s ON s.id = e.session_id"),
-        ("console_logs", ("created_at",),
-         "SELECT c.id, s.started_at FROM console_logs c "
-         "JOIN tracker_sessions s ON s.id = c.session_id"),
-        ("rank_snapshots", ("captured_at",),
-         "SELECT r.id, s.started_at FROM rank_snapshots r "
-         "JOIN tracker_sessions s ON s.id = r.session_id"),
-        ("raw_game_payloads", ("created_at",),
-         "SELECT p.id, s.started_at FROM raw_game_payloads p "
-         "JOIN tracker_sessions s ON s.id = p.session_id"),
+        (
+            "matches",
+            ("started_at", "ended_at"),
+            "SELECT m.id, s.started_at FROM matches m "
+            "JOIN tracker_sessions s ON s.id = m.session_id",
+        ),
+        (
+            "games",
+            ("started_at", "ended_at"),
+            "SELECT g.id, s.started_at FROM games g "
+            "JOIN tracker_sessions s ON s.id = g.session_id",
+        ),
+        (
+            "game_turns",
+            ("started_at", "ended_at"),
+            "SELECT t.id, s.started_at FROM game_turns t "
+            "JOIN games g ON g.id = t.game_id "
+            "JOIN tracker_sessions s ON s.id = g.session_id",
+        ),
+        (
+            "game_events",
+            ("event_time",),
+            "SELECT e.id, s.started_at FROM game_events e "
+            "JOIN tracker_sessions s ON s.id = e.session_id",
+        ),
+        (
+            "console_logs",
+            ("created_at",),
+            "SELECT c.id, s.started_at FROM console_logs c "
+            "JOIN tracker_sessions s ON s.id = c.session_id",
+        ),
+        (
+            "rank_snapshots",
+            ("captured_at",),
+            "SELECT r.id, s.started_at FROM rank_snapshots r "
+            "JOIN tracker_sessions s ON s.id = r.session_id",
+        ),
+        (
+            "raw_game_payloads",
+            ("created_at",),
+            "SELECT p.id, s.started_at FROM raw_game_payloads p "
+            "JOIN tracker_sessions s ON s.id = p.session_id",
+        ),
     )
 
     @staticmethod
@@ -1308,13 +1328,10 @@ class AnalyticsStore:
     def _migrate_v20_poison_stat(conn: sqlite3.Connection) -> None:
         """Add the poison_added column (nullable — not reconstructable)."""
         existing = {
-            str(row[1])
-            for row in conn.execute("PRAGMA table_info(game_participant_stats)")
+            str(row[1]) for row in conn.execute("PRAGMA table_info(game_participant_stats)")
         }
         if "poison_added" not in existing:
-            conn.execute(
-                "ALTER TABLE game_participant_stats ADD COLUMN poison_added INTEGER"
-            )
+            conn.execute("ALTER TABLE game_participant_stats ADD COLUMN poison_added INTEGER")
 
     @staticmethod
     def _migrate_v19_backfill_stats_from_events(conn: sqlite3.Connection) -> None:
@@ -1341,9 +1358,7 @@ class AnalyticsStore:
         from .format_normalizer import normalize_match_format, trusted_queue_raw
 
         repaired = 0
-        match_rows = conn.execute(
-            "SELECT id, format, queue, event_name FROM matches"
-        ).fetchall()
+        match_rows = conn.execute("SELECT id, format, queue, event_name FROM matches").fetchall()
         for match_id, format_value, queue, event_name in match_rows:
             trusted = trusted_queue_raw(format_value, queue, event_name)
             if (
@@ -1361,14 +1376,26 @@ class AnalyticsStore:
             print(f"Repaired {repaired} Cube match format(s) from queue metadata.")
 
     @staticmethod
+    def _migrate_v32_partial_session_event_index(conn: sqlite3.Connection) -> None:
+        """Index only printed event rows by session.
+
+        Replay capture writes silent rows (visible = 0) with NULL session and
+        match ids; the only session-keyed reader (the live feed) wants printed
+        rows, so a partial index keeps the per-game storage cost down.
+        """
+        conn.execute("DROP INDEX IF EXISTS idx_game_events_session_time")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_game_events_session_time "
+            "ON game_events(session_id, event_time) WHERE visible = 1"
+        )
+
+    @staticmethod
     def _migrate_v31_repair_event_formats(conn: sqlite3.Connection) -> None:
         """Restore event formats when matching queue/event metadata is authoritative."""
         from .format_normalizer import normalize_match_format, trusted_queue_raw
 
         repaired = 0
-        match_rows = conn.execute(
-            "SELECT id, format, queue, event_name FROM matches"
-        ).fetchall()
+        match_rows = conn.execute("SELECT id, format, queue, event_name FROM matches").fetchall()
         for match_id, format_value, queue, event_name in match_rows:
             trusted = trusted_queue_raw(format_value, queue, event_name)
             if (
@@ -1488,7 +1515,7 @@ class AnalyticsStore:
                 WHERE e.game_id IS NOT NULL
                   AND NOT EXISTS (SELECT 1 FROM games g WHERE g.id = e.game_id)
                 GROUP BY e.game_id
-                HAVING COUNT(*) <= 3
+                HAVING SUM(CASE WHEN e.visible = 1 THEN 1 ELSE 0 END) <= 3
                    AND SUM(e.event_type = 'turn') = 0
                    AND NOT EXISTS (
                      SELECT 1 FROM game_turns t WHERE t.game_id = e.game_id
@@ -1516,9 +1543,7 @@ class AnalyticsStore:
             return
         print(f"🗜️  Compressing raw payload archive ({total} rows)…")
         compressed = 0
-        cursor = conn.execute(
-            "SELECT id, payload_json FROM raw_game_payloads"
-        )
+        cursor = conn.execute("SELECT id, payload_json FROM raw_game_payloads")
         write = conn.cursor()
         while True:
             batch = cursor.fetchmany(500)
@@ -1618,9 +1643,7 @@ class AnalyticsStore:
             )
 
     #: Basic land names, recognized even when the local card DB predates them.
-    _BASIC_LAND_NAMES = frozenset(
-        {"Plains", "Island", "Swamp", "Mountain", "Forest", "Wastes"}
-    )
+    _BASIC_LAND_NAMES = frozenset({"Plains", "Island", "Swamp", "Mountain", "Forest", "Wastes"})
 
     @staticmethod
     def _name_is_land(conn: sqlite3.Connection, name: str) -> bool:
@@ -1681,7 +1704,7 @@ class AnalyticsStore:
                   AND text LIKE '%put [%] onto battlefield%'
                 ORDER BY event_time, id
                 """,
-                (game_id, ),
+                (game_id,),
             ):
                 match = put_pattern.search(str(text or ""))
                 if not match:
@@ -1692,13 +1715,16 @@ class AnalyticsStore:
                 turn_row = conn.execute(
                     "SELECT turn_number FROM game_events WHERE id = ?", (event_id,)
                 ).fetchone()
-                put_events.append(
-                    {"name": name, "turn": turn_row[0] if turn_row else None}
-                )
+                put_events.append({"name": name, "turn": turn_row[0] if turn_row else None})
             if not put_events:
                 continue
             drawn_rows = [
-                {"id": row[0], "name": str(row[1] or ""), "turn": row[2], "position": int(row[3] or 0)}
+                {
+                    "id": row[0],
+                    "name": str(row[1] or ""),
+                    "turn": row[2],
+                    "position": int(row[3] or 0),
+                }
                 for row in conn.execute(
                     """
                     SELECT id, display_name, turn_number, draw_position
@@ -1722,7 +1748,11 @@ class AnalyticsStore:
                 insert_at = len(merged)
                 for index in range(len(merged) - 1, -1, -1):
                     row_turn = merged[index].get("turn")
-                    if row_turn is not None and entry["turn"] is not None and int(row_turn) <= int(entry["turn"]):
+                    if (
+                        row_turn is not None
+                        and entry["turn"] is not None
+                        and int(row_turn) <= int(entry["turn"])
+                    ):
                         insert_at = index + 1
                         break
                     if row_turn is not None and entry["turn"] is not None:
@@ -1921,7 +1951,9 @@ class AnalyticsStore:
     RAW_PAYLOAD_RETENTION_DAYS = 30
 
     @staticmethod
-    def prune_raw_payload_archive(conn: sqlite3.Connection, *, now: Optional[datetime] = None) -> int:
+    def prune_raw_payload_archive(
+        conn: sqlite3.Connection, *, now: Optional[datetime] = None
+    ) -> int:
         """Delete archived payloads older than RAW_PAYLOAD_RETENTION_DAYS.
         Returns the number of rows removed."""
         cutoff = (now or datetime.now()) - timedelta(days=AnalyticsStore.RAW_PAYLOAD_RETENTION_DAYS)
@@ -1975,9 +2007,7 @@ class AnalyticsStore:
         }
         for column in AnalyticsStore._LIBRARY_STAT_COLUMNS:
             if column not in existing:
-                conn.execute(
-                    f"ALTER TABLE game_participant_stats ADD COLUMN {column} INTEGER"
-                )
+                conn.execute(f"ALTER TABLE game_participant_stats ADD COLUMN {column} INTEGER")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS game_library_events (
@@ -2079,9 +2109,7 @@ class AnalyticsStore:
         turn). This also covers games a newer tracker had already recorded live
         (which v22 skipped), so every historical ramped land is tagged.
         """
-        columns = {
-            row[1] for row in conn.execute("PRAGMA table_info(game_drawn_cards)").fetchall()
-        }
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(game_drawn_cards)").fetchall()}
         if "source" not in columns:
             conn.execute("ALTER TABLE game_drawn_cards ADD COLUMN source TEXT")
 
@@ -2214,9 +2242,7 @@ class AnalyticsStore:
                     (game_id, participant_id),
                 )
             ]
-            already_counted = {
-                (entry["name"], entry["turn"]) for entry in put_events
-            } & {
+            already_counted = {(entry["name"], entry["turn"]) for entry in put_events} & {
                 (row["name"], row["turn"]) for row in drawn_rows
             }
             if already_counted:
@@ -2238,7 +2264,8 @@ class AnalyticsStore:
                 for row, event_time in zip(drawn_rows, named_draws):
                     row["time"] = event_time
                 merged = sorted(
-                    drawn_rows + [
+                    drawn_rows
+                    + [
                         {"name": e["name"], "turn": e["turn"], "time": e["time"], "id": None}
                         for e in put_events
                     ],
@@ -2428,8 +2455,15 @@ class AnalyticsStore:
                         card_id, display_name, type_category, bottomed
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, 0)
                     """,
-                    (game_id, participant_id, hand_number, position,
-                     card_id, display_name, type_category),
+                    (
+                        game_id,
+                        participant_id,
+                        hand_number,
+                        position,
+                        card_id,
+                        display_name,
+                        type_category,
+                    ),
                 )
             for name in thrown:
                 position += 1
@@ -2444,9 +2478,15 @@ class AnalyticsStore:
                         card_id, display_name, type_category, bottomed
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
                     """,
-                    (game_id, participant_id, hand_number, position,
-                     card_row[0] if card_row else None, name,
-                     card_row[1] if card_row else None),
+                    (
+                        game_id,
+                        participant_id,
+                        hand_number,
+                        position,
+                        card_row[0] if card_row else None,
+                        name,
+                        card_row[1] if card_row else None,
+                    ),
                 )
 
     @staticmethod
@@ -2470,9 +2510,7 @@ class AnalyticsStore:
             return
         full_card_ids = {
             analytics_card_base_name(name): card_id
-            for card_id, name in conn.execute(
-                "SELECT id, name FROM cards WHERE name LIKE '% // %'"
-            )
+            for card_id, name in conn.execute("SELECT id, name FROM cards WHERE name LIKE '% // %'")
         }
         rows = conn.execute(
             """
@@ -2616,9 +2654,7 @@ class AnalyticsStore:
                                 (str(text).replace("drew a card", f"drew [{name}]", 1), event_id)
                             )
                 if updates:
-                    conn.executemany(
-                        "UPDATE game_events SET text = ? WHERE id = ?", updates
-                    )
+                    conn.executemany("UPDATE game_events SET text = ? WHERE id = ?", updates)
 
     @staticmethod
     def backfill_estimated_game_turn_times(conn: sqlite3.Connection) -> int:

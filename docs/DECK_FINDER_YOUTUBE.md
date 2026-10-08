@@ -8,11 +8,35 @@ does not keep walking older videos to fill the table.
 
 No API key, YouTube account, browser extension, or extra executable is needed.
 Opening Deck Finder loads only site metadata and local creator configuration;
-it does not contact YouTube. Scraper libraries and HTTP clients initialize on
+it does not contact YouTube or load Overview analytics. Scraper libraries and HTTP clients initialize on
 first use. Selecting a YouTube creator starts the video lookup.
 Fetching runs in a background job with a simple loading message. Opening a
 result uses its already fetched list. **Export to Arena** copies the import
 text; **Source** opens the original video.
+
+## Browsing and deck details
+
+All Deck Finder providers use the dashboard's existing theme with local site
+icons and colored selection highlights. Opening the site picker makes no extra
+logo requests to provider sites. AetherHub's icon is 228px; the Magic.gg mark is
+vector artwork from the bundled mana-font package.
+
+On desktop, the results browser uses 40% of the lower area and the selected
+deck uses 60%; they stack on narrow screens. Detail results open the first
+deck automatically. Archetype results still require choosing an archetype
+before browsing its variants. The main-deck card count sits beside the format
+in the deck's subtitle. Creator and format pills hover in their site's selection
+color. **Export to Arena** sits at the far right of the deck-name row; the
+source link remains below the list. Deck names and titles share the site's
+color, with a subtle matching tint on the selected result and darker text in
+the light theme. Card totals count the main Deck section, and
+Sideboard, Commander, Companion and Maybeboard remain separate. Unsupported
+import text is displayed verbatim rather than partly hidden. **Export to
+Arena** always copies the original import text with the existing section
+spacing, including set and collector information omitted from display rows.
+
+Selecting another deck, creator or provider invalidates older deck loads so
+late hydration responses cannot replace the current deck or its loading state.
 
 ## Add another creator
 

@@ -250,3 +250,69 @@ export function parseGamesRoute(hash: string): { filters: SnapshotFilters } | nu
   const query = hash.startsWith('#/games?') ? hash.slice('#/games?'.length) : '';
   return { filters: parseFilters(query, true) };
 }
+
+export interface ReplayRoute {
+  /** null for the Replay list page (`#/replay`). */
+  gameId: string | null;
+  /** Event seq to open at, from `?at=`. */
+  at: number | null;
+  /**
+   * `game_events.id` to open at, from `?row=` (Game Detail timeline deep
+   * links). The viewer seeks to the first event with that `row_id`; `at` wins
+   * when both are present.
+   */
+  row: number | null;
+  /** Where the back button goes, from `?return=` (always a `#` hash). */
+  returnHash: string | null;
+}
+
+export const REPLAY_ROUTE_HASH = '#/replay';
+
+export function replayRouteHash(
+  gameId?: string | null,
+  options: { at?: number | null; row?: number | null; returnHash?: string | null } = {},
+): string {
+  if (!gameId) {
+    return REPLAY_ROUTE_HASH;
+  }
+  const params = new URLSearchParams();
+  if (options.at !== null && options.at !== undefined && Number.isInteger(options.at) && options.at >= 0) {
+    params.set('at', String(options.at));
+  }
+  if (options.row !== null && options.row !== undefined && Number.isInteger(options.row) && options.row >= 0) {
+    params.set('row', String(options.row));
+  }
+  if (options.returnHash?.startsWith('#')) {
+    params.set('return', options.returnHash);
+  }
+  const query = params.toString();
+  return `#/replay/${encodeURIComponent(gameId)}${query ? `?${query}` : ''}`;
+}
+
+export function parseReplayRoute(hash: string): ReplayRoute | null {
+  if (hash === REPLAY_ROUTE_HASH || hash.startsWith(`${REPLAY_ROUTE_HASH}?`)) {
+    return { gameId: null, at: null, row: null, returnHash: null };
+  }
+  if (!hash.startsWith(`${REPLAY_ROUTE_HASH}/`)) {
+    return null;
+  }
+  const route = hash.slice(REPLAY_ROUTE_HASH.length + 1);
+  const [encoded, query = ''] = route.split('?');
+  if (!encoded) {
+    return { gameId: null, at: null, row: null, returnHash: null };
+  }
+  const params = new URLSearchParams(query);
+  const atRaw = params.get('at');
+  const at = atRaw !== null && /^\d+$/.test(atRaw) ? Number(atRaw) : null;
+  const rowRaw = params.get('row');
+  const row = rowRaw !== null && /^\d+$/.test(rowRaw) ? Number(rowRaw) : null;
+  const returnParam = params.get('return');
+  const returnHash = returnParam?.startsWith('#') ? returnParam : null;
+  let gameId = encoded;
+  try {
+    gameId = decodeURIComponent(encoded);
+  } catch {
+    // Keep the raw segment.
+  }
+  return { gameId, at, row, returnHash };
+}

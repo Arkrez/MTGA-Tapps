@@ -333,6 +333,44 @@ def test_dashboard_snapshot_and_html_render_latest_game(tmp_path):
     assert "Standard Best-of-1" in html
 
 
+def test_dashboard_snapshot_returns_all_sessions_and_preserves_filters(tmp_path):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        for index in range(45):
+            session_id = f"history-session-{index}"
+            started_at = f"2026-09-01T00:{index:02d}:00"
+            conn.execute(
+                "INSERT INTO tracker_sessions (id, started_at, runtime_seconds) VALUES (?, ?, 300)",
+                (session_id, started_at),
+            )
+            conn.execute(
+                "INSERT INTO matches (id, session_id, format, best_of) VALUES (?, ?, 'Play', 1)",
+                (session_id, session_id),
+            )
+            conn.execute(
+                "INSERT INTO games (id, session_id, match_id, game_number, started_at, outcome) "
+                "VALUES (?, ?, ?, 1, ?, 'win')",
+                (session_id, session_id, session_id, started_at),
+            )
+            conn.execute(
+                "INSERT INTO participants (id, game_id, seat_id, role, deck_name) "
+                "VALUES (?, ?, 1, 'player', ?)",
+                (session_id, session_id, "Archived Brew" if index == 0 else "Current Brew"),
+            )
+
+    sessions = dashboard_snapshot(db_path)["sessions"]
+    assert {row["session_id"] for row in sessions} == {
+        "session-1", *(f"history-session-{index}" for index in range(45))
+    }
+    assert sessions[0]["session_id"] == "history-session-44"
+    assert sessions[-1]["session_id"] == "session-1"
+    assert sum(row["games"] for row in sessions) == 47
+    filtered = dashboard_snapshot(db_path, deck="Archived Brew", fmt="Play")["sessions"]
+    assert [row["session_id"] for row in filtered] == ["history-session-0"]
+    assert filtered[0]["wins"] == 1
+    assert dashboard_snapshot(db_path, since="2026-10-01")["sessions"] == []
+
+
 def test_dashboard_snapshot_missing_db_does_not_create_file(tmp_path):
     db_path = tmp_path / "missing.sqlite3"
 
@@ -3549,11 +3587,11 @@ def test_response_cache_serves_until_analytics_change(tmp_path):
 
 def test_combat_profile_covers_every_deck_not_just_the_first_forty(tmp_path):
     """A player with many small decks lost the Profile and combat columns on
-    every deck past the 40th (the combat query was capped at 40 rows while
-    the Decks table lists up to 100)."""
+    every deck past the 40th. The Decks table must also include history beyond
+    Arena's 100 active-deck slots, with no cap on recorded deck names."""
     db_path = _sample_dashboard_db(tmp_path)
     with sqlite3.connect(db_path) as conn:
-        for index in range(60):
+        for index in range(130):
             game_id = f"deck-game-{index}"
             conn.execute(
                 "insert into games (id, session_id, match_id, game_number, started_at, outcome, "
@@ -3579,11 +3617,20 @@ def test_combat_profile_covers_every_deck_not_just_the_first_forty(tmp_path):
     snapshot = dashboard_snapshot(db_path)
     combat_names = {row["deck_name"] for row in snapshot["combat_decks"]}
     deck_names = {row["deck_name"] for row in snapshot["decks"]}
+    expected_names = {f"Deck {index:02d}" for index in range(130)}
+    assert expected_names <= deck_names
+    assert deck_names == set(snapshot["filter_options"]["decks"])
     assert deck_names <= combat_names
     profiles = {row["deck_name"]: row["aggression_profile"] for row in snapshot["combat_decks"]}
-    assert profiles["Deck 59"] == "Aggro"  # 20 damage over 5 turns
+    assert profiles["Deck 129"] == "Aggro"  # 20 damage over 5 turns
     play_draw_decks = {row["deck_name"] for row in snapshot["deck_play_draw"]}
-    assert "Deck 59" in play_draw_decks
+    assert deck_names == play_draw_decks
+
+    filtered = dashboard_snapshot(db_path, deck="Deck 129", fmt="Play")
+    assert [row["deck_name"] for row in filtered["decks"]] == ["Deck 129"]
+    assert filtered["decks"][0]["games"] == 1
+    assert filtered["decks"][0]["wins"] == 1
+    assert deck_detail(db_path, deck_name="Deck 129")["summary"]["games"] == 1
 
 
 def test_scry_totals_reach_the_game_and_deck_pages(tmp_path):

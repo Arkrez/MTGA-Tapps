@@ -4,6 +4,68 @@
 
 ### Features
 
+- **Replay.** A new teal Replay tile above Deck Finder opens a list of recent
+  games; each one plays back on a three.js table with real card images, both
+  players' hands, libraries, graveyards and exile piles, the stack, life
+  totals, and an action log beside a video-player style scrub bar segmented by
+  turn (play, step, skip turn, go to turn, speed, keyboard shortcuts). "Watch
+  replay" also appears on Game Detail, Recent Games, All Games, deck and
+  opponent histories and the Live Scoreboard, and the console prints a replay
+  link after each saved game. Each Game Detail timeline row's time opens the
+  replay at that moment, and the Replay list shows the opponent's name. The table felt and each player's sleeves are
+  selectable colors. Every game already in the database replays as
+  "Reconstructed" from its event log (approximate: blocks, taps, counters and
+  tokens entering are inferred); games tracked from this release on are
+  recorded with instance-level detail (taps, counters, tokens, blocks,
+  attachments, hidden-card counts) and replay as "Recorded". Replay links are
+  hidden below tablet width. Data contract: `docs/REPLAY_FORMAT.md`.
+  The table fills the stage with cards about twice as large, piles stand on
+  the left, the stack shows as large cards on the right with glowing
+  targeting arrows, the Actions panel collapses, and sidebar links leave the
+  replay instantly.
+  When the last event plays, an ending screen over the table announces
+  Victory, Defeat or Draw with the reason, final life totals and the
+  game's length, with Watch again, Show table and Back; the HUD chip takes
+  the same color. Tokens show their printed token art (looked up in
+  Scryfall's token sets by name, power/toughness and color), with the
+  procedural face standing in until it arrives, and the stack's compact rows
+  no longer show clipped text while a card image loads.
+  Planeswalkers stand in the front row to the right of the creatures, and
+  while paused a resolved, countered or fizzled stack item stays on screen
+  with its stamp until the next step. Game Detail's Watch replay button sits
+  right-aligned above the game metric cards. Both hands sit off the felt, on
+  aprons just past the near and far rails, so the whole table belongs to the
+  battlefield and the piles; the camera frames the aprons with the table.
+  Hand cards are at least full size and grow into whatever height the stage
+  has to spare (up to 1.7 times a battlefield card on a tall stage), fanning
+  across the table's width; a crowded hand overlaps, then shrinks, to fit.
+  The camera sits a little flatter and every card is stretched along the
+  table's depth by exactly the camera's foreshortening at its spot, so the
+  opponent's hand and battlefield show cards in true proportion instead of
+  squashed. The stack preview is
+  centered on the stage and its top card keeps one size however deep the
+  stack gets; the compact rows below it are as many as fit. Every creature
+  on the table wears a readable power/toughness badge across its lower edge
+  (gold when it differs from the printed card) and every planeswalker in a
+  recorded game shows its current loyalty there; other counters sit in a
+  small chip across the card's upper edge.
+
+- Decks, All Games and Sessions now have numbered page buttons, first/last-page controls,
+  and a Go to page field for jumping through long histories. The current page
+  is highlighted, and page numbers stay compact with ellipses.
+  Sessions also includes all matching recorded sessions, removing the previous
+  30-session query cap, with 15 sessions per page.
+
+- Deck Finder now has colored provider icons and selection highlights using
+  the existing dashboard theme. Deck names, titles and the selected row use
+  the provider's color. AetherHub has a sharper icon and Magic.gg uses
+  a vector mark. Results sit beside a larger selected-deck panel, which shows
+  the full list and separate sideboard/commander/companion sections.
+  Export to Arena sits at the far right of the selected deck's name. The first
+  detail result opens automatically; stale deck loads cannot replace a newer
+  selection. All seven sites fit on one desktop row, with a stacked layout on
+  narrow screens.
+
 - Deck Finder now includes **youtube.com → Creators**, with Hello Good Game
   (HGG) and Sloth available by default. It checks the latest 15 video descriptions
   without a YouTube login or API key, using small metadata requests with a page
@@ -14,8 +76,26 @@
 
 ### Fixes
 
+- Live Scoreboard puts the waiting status beside the format at the right of
+  the header. Watch replay uses the same pill shape and size as the other
+  header chips, and Today's Games has smaller replay icons to leave more room
+  for deck names.
+
+- The Overview's Decks table now includes every recorded deck matching the
+  current filters, removing the 100-deck query cap. Decks removed from Arena
+  remain in tracker history; search, sorting and pagination cover the full list.
+
+- Match results no longer infer a winner from a partial in-game player-status
+  update. Explicit Arena results override weaker hints and stale life totals.
+  Empty-library loss annotations now identify the losing seat and close the
+  game even when the usual final result is absent, including annotations later
+  in a GRE message batch. Unresolved outcomes remain Unknown instead of being
+  guessed from positive life totals; ordinary wins are no longer mislabeled
+  as concessions.
+
 - Deck Finder's site picker loads metadata without importing scraper libraries
   or initializing HTTP clients. Scrapers load when a site is first used.
+  Opening Deck Finder also skips the Overview analytics request.
   Compact provider cards use short subtitles and less spacing so all seven
   sites fit on one row at common desktop widths.
 

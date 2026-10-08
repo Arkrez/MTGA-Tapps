@@ -22,7 +22,10 @@ import {
   type SessionRow,
   type SnapshotFilters,
 } from './api';
+import { lazy, Suspense } from 'react';
 import { Badge } from './components/Badge';
+import { ReplayListPage } from './components/ReplayListPage';
+import { ReplayLink } from './components/ReplayLink';
 import { CardDetailPage } from './components/CardDetailPage';
 import { ColorPips } from './components/ColorPips';
 import { makeCommanderColumns } from './commanderColumns';
@@ -56,7 +59,7 @@ import type { MetricDefinition } from './dashboardData';
 import { formatCardName, formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone, shortFormatLabel } from './format';
 import { auditNavItems,
   deckFinderNavItems, cardNavItems, deckNavItems, gameNavItems, gamesNavItems, opponentNavItems,
-  opponentsNavItems, liveNavItems, settingsNavItems } from './nav';
+  opponentsNavItems, liveNavItems, replayNavItems, settingsNavItems } from './nav';
 import { quickFilterPredicate } from './quickFilters';
 import { FormatQuickFilters } from './components/FormatQuickFilters';
 import { RouteFiltersContext } from './routeFilters';
@@ -77,8 +80,11 @@ import {
   parseDeckRoute,
   parseGameRoute,
   parseOpponentRoute,
+  parseReplayRoute,
 } from './routes';
 import './styles.css';
+
+const ReplayPage = lazy(() => import('./replay/components/ReplayPage'));
 import { getInitialTheme, hasStoredTheme, persistTheme, systemTheme, type ThemeName } from './theme';
 
 type LoadState =
@@ -748,6 +754,21 @@ const recentColumns: Column<RecentGameWithDrawQuality>[] = [
     sortValue: (row) => row.duration_seconds,
     numeric: true,
   },
+  {
+    key: 'replay',
+    header: '',
+    sortable: false,
+    // Bo3 rollups have no single game to watch; each nested game row has one.
+    render: (row) =>
+      row.match_row ? null : (
+        <ReplayLink
+          availability={row.replay}
+          gameId={row.game_id}
+          returnHash="#recent-games"
+          variant="icon"
+        />
+      ),
+  },
 ];
 
 const topOpponentColumns: Column<TopOpponentRow>[] = [
@@ -819,6 +840,7 @@ export default function App() {
   const deckFinderRoute = useMemo(() => parseDeckFinderRoute(routeHash), [routeHash]);
   const settingsRoute = useMemo(() => parseSettingsRoute(routeHash), [routeHash]);
   const liveRoute = useMemo(() => parseLiveRoute(routeHash), [routeHash]);
+  const replayRoute = useMemo(() => parseReplayRoute(routeHash), [routeHash]);
   const gamesRoute = useMemo(() => parseGamesRoute(routeHash), [routeHash]);
   const opponentsRoute = useMemo(() => parseOpponentsRoute(routeHash), [routeHash]);
   const deckName = deckRoute?.name ?? null;
@@ -913,6 +935,7 @@ export default function App() {
       || deckFinderRoute
       || settingsRoute
       || liveRoute
+      || replayRoute
       || gamesRoute
       || opponentsRoute
       || loadState.status !== 'loaded'
@@ -926,10 +949,16 @@ export default function App() {
     } else if (sectionId && !sectionId.startsWith('/')) {
       document.getElementById(sectionId)?.scrollIntoView?.({ block: 'start' });
     }
-  }, [auditRoute, cardRoute, deckFinderRoute, deckRoute, gameRoute, gamesRoute, liveRoute, loadState.status, opponentRoute, opponentsRoute, routeHash, settingsRoute]);
+  }, [auditRoute, cardRoute, deckFinderRoute, deckRoute, gameRoute, gamesRoute, liveRoute, loadState.status, opponentRoute, opponentsRoute, replayRoute, routeHash, settingsRoute]);
 
   useEffect(() => {
-    document.title = deckRoute
+    if (replayRoute?.gameId) {
+      // The replay player titles its own tab.
+      return;
+    }
+    document.title = replayRoute
+      ? pageTitle('Replay')
+      : deckRoute
       ? pageTitle(deckRoute.name)
       : gameRoute
         ? pageTitle('Game')
@@ -943,11 +972,13 @@ export default function App() {
                 ? pageTitle('All Games')
                 : opponentsRoute
                   ? pageTitle('Opponents')
-                  : pageTitle('Overview');
-  }, [auditRoute, deckRoute, gameRoute, gamesRoute, cardRoute, opponentRoute, opponentsRoute]);
+                  : deckFinderRoute
+                    ? pageTitle('Deck Finder')
+                    : pageTitle('Overview');
+  }, [auditRoute, deckRoute, gameRoute, gamesRoute, cardRoute, opponentRoute, opponentsRoute, deckFinderRoute, replayRoute]);
 
   useEffect(() => {
-    if (deckName || gameId || cardName || opponentRoute || auditRoute || gamesRoute || opponentsRoute) {
+    if (deckName || gameId || cardName || opponentRoute || auditRoute || gamesRoute || opponentsRoute || deckFinderRoute || replayRoute) {
       return;
     }
     let ignore = false;
@@ -985,7 +1016,7 @@ export default function App() {
       activeController?.abort();
       window.clearInterval(refreshId);
     };
-  }, [filters, trendRange, deckName, gameId, cardName, opponentRoute, auditRoute, gamesRoute, opponentsRoute]);
+  }, [filters, trendRange, deckName, gameId, cardName, opponentRoute, auditRoute, gamesRoute, opponentsRoute, deckFinderRoute, replayRoute]);
 
   const playerName =
     loadState.status === 'loaded' ? loadState.snapshot.summary.player_name : undefined;
@@ -1018,7 +1049,9 @@ export default function App() {
         theme={theme}
         onToggleTheme={toggleTheme}
         navItems={
-          opponentsRoute
+          replayRoute
+            ? (replayRoute.gameId ? undefined : replayNavItems)
+          : opponentsRoute
             ? opponentsNavItems
           : gamesRoute
             ? gamesNavItems
@@ -1040,10 +1073,24 @@ export default function App() {
                   ? opponentNavItems
                   : undefined
         }
-        heading={opponentsRoute ? 'Opponents' : gamesRoute ? 'All Games' : auditRoute ? 'Database Health' : deckFinderRoute ? 'Deck Finder' : settingsRoute ? 'Settings' : liveRoute ? 'Live Scoreboard' : cardName ? formatCardName(cardName) : gameRoute ? 'Game Detail' : deckName ? 'Deck Details' : (opponentRoute ? 'Opponent Information' : dashboardTitle)}
-        mainClassName={liveRoute ? 'live-page-main' : undefined}
+        heading={replayRoute ? 'Replay' : opponentsRoute ? 'Opponents' : gamesRoute ? 'All Games' : auditRoute ? 'Database Health' : deckFinderRoute ? 'Deck Finder' : settingsRoute ? 'Settings' : liveRoute ? 'Live Scoreboard' : cardName ? formatCardName(cardName) : gameRoute ? 'Game Detail' : deckName ? 'Deck Details' : (opponentRoute ? 'Opponent Information' : dashboardTitle)}
+        mainClassName={liveRoute ? 'live-page-main' : replayRoute?.gameId ? 'replay-page-main' : undefined}
       >
-        {opponentsRoute ? (
+        {replayRoute ? (
+          replayRoute.gameId ? (
+            <Suspense fallback={<div className="replay-loading">Loading replay…</div>}>
+              <ReplayPage
+                key={replayRoute.gameId}
+                at={replayRoute.at}
+                row={replayRoute.row}
+                gameId={replayRoute.gameId}
+                returnHash={replayRoute.returnHash}
+              />
+            </Suspense>
+          ) : (
+            <ReplayListPage />
+          )
+        ) : opponentsRoute ? (
           <OpponentsPage />
         ) : gamesRoute ? (
           <GamesPage
@@ -1516,7 +1563,8 @@ function Dashboard({
           getRowKey={(row) => row.deck_name}
           initialSort={{ key: 'games', direction: 'desc' }}
           pageSize={10}
-          paginationKey={deckSearch.trim().toLocaleLowerCase()}
+          paginationControls="full"
+          paginationKey={`${deckSearch.trim().toLocaleLowerCase()}:${dashboardRouteHash(filters)}`}
           rows={filteredDecks}
         />
       </Section>
@@ -1768,6 +1816,8 @@ function Dashboard({
           caption="Tracker sessions"
           columns={sessionColumns}
           pageSize={15}
+          paginationControls="full"
+          paginationKey={dashboardRouteHash(filters)}
           getRowKey={(row) => row.session_id}
           initialSort={{ key: 'started_at', direction: 'desc' }}
           rows={snapshot.sessions}

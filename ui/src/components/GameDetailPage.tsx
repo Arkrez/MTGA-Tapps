@@ -23,14 +23,17 @@ import {
   type GameParticipantStatsRow,
   type OpponentVisibleCardRow,
   type GamePlayedCardRow,
+  type GameTimelineRow,
 } from '../api';
 import { saveGameAnnotation } from '../api';
 import { pageTitle } from '../branding';
 import { formatPercent } from '../dashboardData';
 import { boFormatLabel, formatDateTime, formatDuration, formatNumber, formatTurnDuration, outcomeLabel, outcomeTone } from '../format';
-import { gameRouteHash } from '../routes';
+import { gameRouteHash, replayRouteHash } from '../routes';
+import { replayState } from '../replayAvailability';
 import { fetchManaCosts, playedManaStats, seedManaCosts, type CardManaInfo } from '../manaCosts';
 import { DeckLink } from './DeckLink';
+import { ReplayLink } from './ReplayLink';
 import { ManaCost } from './ManaCost';
 import { Badge } from './Badge';
 import {
@@ -733,6 +736,14 @@ export function GameDetailPage({
       )
     : detail.drawn;
   const timelineReturnHash = gameRouteHash(gameId, backHref, 'game-timeline');
+  const currentGameHash = gameRouteHash(gameId, backHref);
+  const replayAvailable = replayState(detail.game.replay) !== 'unavailable';
+  const timelineReplayHref = replayAvailable
+    ? (row: GameTimelineRow) =>
+        typeof row.id === 'number'
+          ? replayRouteHash(detail.game.game_id, { row: row.id, returnHash: timelineReturnHash })
+          : null
+    : undefined;
   // AI-identified archetype (dominant colors + strategy) overrides the plain
   // color label; the pips still show every color actually seen.
   const opponentDeckLabel = detail.opponent.deck_archetype ?? detail.opponent.color_label;
@@ -776,9 +787,11 @@ export function GameDetailPage({
         </p>
       ) : null}
       <div className="deck-detail-header" id="game-summary">
-        <a className="back-link" href={backHref}>
-          ← Back to dashboard
-        </a>
+        <div className="game-header-top">
+          <a className="back-link" href={backHref}>
+            ← Back to dashboard
+          </a>
+        </div>
         <div className="deck-detail-title">
           <div className={`game-outcome-mark game-outcome-${outcomeTone(detail.game.outcome)}`}>
             {outcomeLabel(detail.game.outcome)}
@@ -878,6 +891,14 @@ export function GameDetailPage({
         </div>
       ) : null}
 
+      <div className="game-detail-actions replay-wide-only" role="group" aria-label="Game actions">
+        <ReplayLink
+          availability={detail.game.replay}
+          gameId={detail.game.game_id}
+          returnHash={currentGameHash}
+          variant="button"
+        />
+      </div>
       <section className="metric-grid metric-grid-deck" aria-label="Game metrics">
         {metricCards.map((metric) => (
           <MetricCard key={metric.label} icon={metric.icon} label={metric.label} value={metric.value} />
@@ -1286,6 +1307,7 @@ export function GameDetailPage({
           cardReturnHash={timelineReturnHash}
           rows={detail.timeline}
           timings={detail.turns}
+          replayHref={timelineReplayHref}
         />
         <div className={`timeline-end timeline-end-${detail.game.outcome ?? 'unknown'}`}>
           <strong>
@@ -1303,6 +1325,12 @@ export function GameDetailPage({
             {formatDuration(detail.game.duration_seconds)} · {formatNumber(detail.game.total_turns)}{' '}
             turns
           </span>
+          <ReplayLink
+            availability={detail.game.replay}
+            gameId={detail.game.game_id}
+            returnHash={timelineReturnHash}
+            variant="button"
+          />
         </div>
       </Section>
     </>
