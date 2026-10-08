@@ -22,6 +22,11 @@ def _read_connection(path):
 
 
 def handle_get(path, query, db_path):
+    from . import deck_native_api
+
+    native = deck_native_api.handle_get(path, query, db_path)
+    if native is not None:
+        return native
     if path not in ("/api/deck-manager", "/api/deck-manager/deck", "/api/deck-manager/export"):
         return None
     conn = None
@@ -31,19 +36,43 @@ def handle_get(path, query, db_path):
             decks = dm.list_decks(conn) if conn else []
             for deck in decks:
                 deck["tags"] = json.loads(deck.pop("tags_json"))
+            if conn:
+                restorable = {
+                    r[0]
+                    for r in conn.execute(
+                        "SELECT id FROM managed_deck_revisions WHERE json_extract(payload_json,'$.metadata.native_archive.archive_kind')='arena_typed_model_poc'"
+                    )
+                }
+                for deck in decks:
+                    deck["native_restorable"] = deck["current_revision_id"] in restorable
+                bindings = {}
+                for deck_id, arena_id in conn.execute(
+                    "SELECT deck_id,arena_deck_id FROM managed_deck_bindings"
+                ):
+                    bindings.setdefault(deck_id, []).append(arena_id)
+                for deck in decks:
+                    deck["native_arena_ids"] = bindings.get(deck["id"], [])
+            available, message = deck_native_api.nb.availability()
             return 200, {
                 "decks": decks,
                 "capabilities": {
-                    "arena_transfers": False,
+                    "arena_transfers": available,
                     "native_section": False,
                     "capacity": None,
-                    "message": "Deck backups and clipboard restore are available. Direct Arena transfers are not connected in this build.",
+                    "message": message,
                 },
             }
         if conn is None:
             raise KeyError("Saved deck not found.")
         detail = dm.deck_detail(conn, query.get("id", [""])[0], query.get("revision", [None])[0])
         detail["tags"] = json.loads(detail.pop("tags_json"))
+        detail["native_restorable"] = bool(detail["deck"].get("metadata", {}).get("native_archive"))
+        detail["native_arena_ids"] = [
+            r[0]
+            for r in conn.execute(
+                "SELECT arena_deck_id FROM managed_deck_bindings WHERE deck_id=?", (detail["id"],)
+            )
+        ]
         if path.endswith("/export"):
             fmt = query.get("format", ["backup"])[0]
             if fmt not in ("backup", "arena"):
@@ -75,6 +104,11 @@ def handle_get(path, query, db_path):
 
 
 def handle_post(path, payload, db_path):
+    from . import deck_native_api
+
+    native = deck_native_api.handle_post(path, payload, db_path)
+    if native is not None:
+        return native
     if path not in (
         "/api/deck-manager/import",
         "/api/deck-manager/update",
@@ -91,7 +125,9 @@ def handle_post(path, payload, db_path):
             if not isinstance(deck_id, str) or not deck_id.strip():
                 raise dm.DeckManagerError("A saved deck ID is required.")
             if payload.get("confirm") != "DELETE":
-                raise dm.DeckManagerError("Confirm permanent deletion of this deck and all its revisions.")
+                raise dm.DeckManagerError(
+                    "Confirm permanent deletion of this deck and all its revisions."
+                )
             conn = dm.library_connection(db_path)
             dm.delete_deck(conn, deck_id)
             return 200, {"ok": True}

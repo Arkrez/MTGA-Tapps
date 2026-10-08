@@ -11,6 +11,11 @@ from pathlib import Path
 from typing import List, Optional
 
 
+def native_deck_platform_supported() -> bool:
+    """The native adapter has been validated only on macOS Apple Silicon."""
+    return platform.system() == "Darwin" and platform.machine() == "arm64"
+
+
 #: Relative path from a game install root to Arena's raw card database folder.
 _MTGA_RAW_SUFFIX = Path("MTGA_Data") / "Downloads" / "Raw"
 
@@ -192,7 +197,14 @@ def get_mtga_raw_card_db_folders(
         ):
             if found not in out:
                 out.append(found)
-        epic = Path.home() / "Library" / "Application Support" / "com.wizards.mtga" / "Downloads" / "RAW"
+        epic = (
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / "com.wizards.mtga"
+            / "Downloads"
+            / "RAW"
+        )
         if epic.is_dir() and epic not in out:
             out.append(epic)
     elif platform.system() == "Windows":
@@ -219,21 +231,21 @@ def get_mtga_raw_card_db_folders(
 
 def _find_project_root() -> Path:
     """Find the project root directory by looking for common markers.
-    
+
     Returns:
         Path to the project root directory.
     """
     # Start from this file's directory
     current = Path(__file__).resolve().parent
-    
+
     # Look for project markers (pyproject.toml, README.md, etc.)
-    markers = ['pyproject.toml', 'README.md', '.git']
-    
+    markers = ["pyproject.toml", "README.md", ".git"]
+
     # Walk up the directory tree
     for parent in [current] + list(current.parents):
         if any((parent / marker).exists() for marker in markers):
             return parent
-    
+
     # Fallback: assume we're in src/mtga_tracker, go up 2 levels
     return current.parent.parent
 

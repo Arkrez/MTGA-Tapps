@@ -1,0 +1,282 @@
+"""Verified native transfers with durable intents and read-only reconciliation."""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+import uuid
+
+from . import deck_manager as dm
+from . import native_deck_archive as na
+
+TERMINAL = ("complete", "cancelled")
+
+
+def journal_phase(conn, transfer_id, phase, error=None):
+    with conn:
+        conn.execute(
+            "UPDATE managed_deck_transfers SET phase=?, error=?, updated_at=? WHERE id=?",
+            (phase, error, dm.now(), transfer_id),
+        )
+
+
+def pending(conn, account=None):
+    conn.row_factory = sqlite3.Row
+    sql = "SELECT * FROM managed_deck_transfers WHERE phase NOT IN ('complete','cancelled')"
+    return [
+        dict(r)
+        for r in conn.execute(
+            sql + (" AND account_key=?" if account else "") + " ORDER BY created_at",
+            (account,) if account else (),
+        )
+    ]
+
+
+def roster_ids(report):
+    decks = report.get("decks")
+    if (
+        report.get("roster_refreshed") is not True
+        or not isinstance(decks, list)
+        or len(decks) > 2000
+    ):
+        raise dm.DeckManagerError("A fresh Arena roster is required.")
+    ids = [str(uuid.UUID(d["arena_id"])) for d in decks]
+    if len(ids) != len(set(ids)) or any(d.get("is_net_deck") is not False for d in decks):
+        raise dm.DeckManagerError("Invalid Arena roster.")
+    return ids
+
+
+def check_remaining(before, after, removed=None):
+    expected = set(before) - ({removed} if removed else set())
+    if not expected <= set(roster_ids(after)):
+        raise dm.DeckManagerError(
+            "Other Arena decks changed during the transfer. Reconcile before continuing."
+        )
+
+
+def persist_archive(conn, archive, account, resolve_name=None):
+    deck = na.document(archive, resolve_name)
+    deck["metadata"]["native_account_key"] = account
+    conn.execute("PRAGMA synchronous=FULL")
+    saved = dm.save_deck(
+        conn,
+        deck,
+        account_key=account,
+        arena_deck_id=archive["source_snapshot"]["arena_id"],
+        observed_at=dm.now(),
+    )
+    # Read the committed immutable revision and compare its full normalized hash.
+    restored = dm.deck_detail(conn, saved["id"], saved["revision_id"])
+    if dm.content_hash(restored["deck"]) != dm.content_hash(deck):
+        raise dm.DeckManagerError("The saved backup did not pass read-back verification.")
+    return restored
+
+
+def set_presence(conn, account, arena_id, deck_id, presence):
+    with conn:
+        conn.execute(
+            """INSERT INTO managed_deck_bindings
+                     (account_key,arena_deck_id,deck_id,observed_at,presence)
+                     VALUES(?,?,?,?,?) ON CONFLICT(account_key,arena_deck_id) DO UPDATE SET
+                     deck_id=excluded.deck_id,observed_at=excluded.observed_at,
+                     presence=excluded.presence""",
+            (account, arena_id, deck_id, dm.now(), presence),
+        )
+
+
+def begin(conn, transfer_id, account, saved, arena_id, action, baseline):
+    conn.execute("PRAGMA synchronous=FULL")
+    with conn:
+        locked = conn.execute("UPDATE managed_decks SET id=id WHERE id=?", (saved["id"],))
+        if (
+            not locked.rowcount
+            or not conn.execute(
+                "SELECT 1 FROM managed_deck_revisions WHERE id=? AND deck_id=?",
+                (saved["revision_id"], saved["id"]),
+            ).fetchone()
+        ):
+            raise dm.DeckManagerError(
+                "The local backup changed before transfer. No Arena request was made."
+            )
+        if (
+            action == "restore"
+            and conn.execute(
+                "SELECT trashed_at FROM managed_decks WHERE id=?", (saved["id"],)
+            ).fetchone()[0]
+        ):
+            raise dm.DeckManagerError("The backup was moved to Trash before transfer.")
+        conn.execute(
+            """INSERT INTO managed_deck_transfers
+                     (id,account_key,deck_id,revision_id,arena_deck_id,action,phase,baseline_ids_json,created_at,updated_at)
+                     VALUES(?,?,?,?,?,?,'prepared',?,?,?)""",
+            (
+                transfer_id,
+                account,
+                saved["id"],
+                saved["revision_id"],
+                arena_id,
+                action,
+                dm.encoded(baseline),
+                dm.now(),
+                dm.now(),
+            ),
+        )
+
+
+def transfer(conn, bridge, action, selection, request_id, report, resolve_name=None):
+    """One deck at a time. Persist write intent before calling Arena exactly once."""
+    account = bridge.account_key
+    transfer_id = str(uuid.uuid5(uuid.UUID(request_id), action + ":" + selection["id"]))
+    existing = conn.execute(
+        "SELECT phase,account_key,revision_id FROM managed_deck_transfers WHERE id=?",
+        (transfer_id,),
+    ).fetchone()
+    if existing:
+        if existing[1] != account or (
+            selection.get("revision") and selection["revision"] != existing[2]
+        ):
+            raise dm.DeckManagerError(
+                "This request identity was already used for another account or revision."
+            )
+        if existing[0] == "complete":
+            return report
+        raise dm.DeckManagerError(
+            "This transfer was already started. Reconcile it instead of repeating it."
+        )
+    if pending(conn, account):
+        raise dm.DeckManagerError(
+            "An interrupted transfer needs reconciliation before another transfer."
+        )
+    baseline = roster_ids(report)
+    if report.get("deck_screen_open") is not True:
+        raise dm.DeckManagerError("Open Arena’s Decks screen outside a match to transfer decks.")
+    if action == "store":
+        arena_id = str(uuid.UUID(selection["id"]))
+        if arena_id not in baseline:
+            raise dm.DeckManagerError("This deck is no longer in Arena. Refresh the list.")
+        archives = bridge.archive([arena_id])
+        if len(archives) != 1 or archives[0]["source_snapshot"]["arena_id"] != arena_id:
+            raise dm.DeckManagerError("Arena returned a different backup identity.")
+        archive = na.validate_archive(archives[0])
+        saved = persist_archive(conn, archive, account, resolve_name)
+        # Fetch again after disk commit: an external edit must prevent deletion.
+        if not na.equivalent(bridge.fetch(arena_id), archive["source_snapshot"]):
+            raise dm.DeckManagerError(
+                "The Arena deck changed after backup; it has not been removed."
+            )
+    elif action == "restore":
+        if report.get("limit_reached") is not False:
+            raise dm.DeckManagerError(
+                "Arena’s deck slots are full. Move a deck to your collection first."
+            )
+        saved = dm.deck_detail(conn, selection["id"], selection.get("revision"))
+        if saved["trashed_at"]:
+            raise dm.DeckManagerError("Restore this deck from Trash first.")
+        archive = na.revision_archive(saved["deck"])
+        # Portable backups may be moved between PCs, but native restores stay
+        # scoped to their original authenticated account in this implementation.
+        if (
+            saved["account_key"] or saved["deck"].get("metadata", {}).get("native_account_key")
+        ) != account:
+            raise dm.DeckManagerError("This native backup belongs to another Arena account.")
+        bindings = conn.execute(
+            "SELECT arena_deck_id FROM managed_deck_bindings WHERE account_key=? AND deck_id=?",
+            (account, saved["id"]),
+        ).fetchall()
+        if archive["source_snapshot"]["arena_id"] in baseline or any(
+            r[0] in baseline for r in bindings
+        ):
+            raise dm.DeckManagerError("This deck is already in Arena. Refresh before restoring.")
+        arena_id = str(uuid.uuid5(uuid.UUID(transfer_id), "arena-deck"))
+        if arena_id in baseline:
+            raise dm.DeckManagerError(
+                "Restore identity already exists; reconcile instead of creating again."
+            )
+    else:
+        raise dm.DeckManagerError("Unknown native transfer.")
+    begin(conn, transfer_id, account, saved, arena_id, action, baseline)
+    try:
+        journal_phase(conn, transfer_id, "write_started")
+        if action == "store":
+            bridge.remove(archive["source_snapshot"])
+        else:
+            actual = bridge.create(archive, arena_id)
+            if not na.equivalent(actual, archive["source_snapshot"], restored_id=arena_id):
+                raise dm.DeckManagerError(
+                    "Arena’s restored deck differs from the backup. It was retained for review."
+                )
+        journal_phase(conn, transfer_id, "verifying")
+        after = bridge.roster()
+        ids = roster_ids(after)
+        if action == "store":
+            if arena_id in ids:
+                raise dm.DeckManagerError("Arena still reports this deck; reconcile its removal.")
+            check_remaining(baseline, after, arena_id)
+            presence = "absent"
+        else:
+            if arena_id not in ids or not na.equivalent(
+                bridge.fetch(arena_id), archive["source_snapshot"], restored_id=arena_id
+            ):
+                raise dm.DeckManagerError(
+                    "The restored deck could not be verified. Reconcile before continuing."
+                )
+            check_remaining(baseline, after)
+            presence = "present"
+        set_presence(conn, account, arena_id, saved["id"], presence)
+        journal_phase(conn, transfer_id, "complete")
+        return after
+    except Exception:
+        journal_phase(
+            conn,
+            transfer_id,
+            "uncertain",
+            "The native outcome needs reconciliation. No request was repeated.",
+        )
+        raise
+
+
+def reconcile(conn, bridge, report):
+    """Never writes to Arena: verify committed outcomes or cancel uncommitted ones."""
+    ids = roster_ids(report)
+    for row in pending(conn, bridge.account_key):
+        saved = dm.deck_detail(conn, row["deck_id"], row["revision_id"])
+        archive = na.validate_archive(saved["deck"].get("metadata", {}).get("native_archive"))
+        arena_id = row["arena_deck_id"]
+        baseline = json.loads(row["baseline_ids_json"])
+        if row["action"] == "store":
+            check_remaining(baseline, report, arena_id)
+            if arena_id in ids:
+                # Removal did not commit; preserve both copies, require a new
+                # explicit move rather than ever replaying the old delete.
+                if not na.equivalent(bridge.fetch(arena_id), archive["source_snapshot"]):
+                    raise dm.DeckManagerError(
+                        "An interrupted deck was edited in Arena. "
+                        "Its saved backup remains; review it before continuing."
+                    )
+                phase, presence = "cancelled", "present"
+            else:
+                phase, presence = "complete", "absent"
+        else:
+            check_remaining(baseline, report)
+            if arena_id in ids:
+                if not na.equivalent(
+                    bridge.fetch(arena_id), archive["source_snapshot"], restored_id=arena_id
+                ):
+                    raise dm.DeckManagerError(
+                        "An interrupted restore differs from its backup. "
+                        "No decks were removed; review it in Arena."
+                    )
+                phase, presence = "complete", "present"
+            elif row["phase"] == "prepared":
+                # No create intent committed, so a request could not start.
+                phase, presence = "cancelled", "absent"
+            else:
+                # A late server commit can follow a timeout. Absence alone does
+                # not establish that retrying creation is safe.
+                raise dm.DeckManagerError(
+                    "Arena has not confirmed the interrupted restore. "
+                    "Reconnect after Arena finishes syncing; no creation was retried."
+                )
+        set_presence(conn, bridge.account_key, arena_id, row["deck_id"], presence)
+        journal_phase(conn, row["id"], phase)
+    return report

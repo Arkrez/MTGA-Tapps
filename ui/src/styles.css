@@ -5756,6 +5756,17 @@ a.sidebar-deck-finder {
 .deck-manager-modal textarea { resize: vertical; }
 .deck-manager-import > label > textarea { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; line-height: 1.6; }
 .deck-manager-decks { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: start; gap: 16px; }
+.deck-manager-native-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 16px 0; }
+.deck-manager-native-bar label { display: inline-flex; align-items: center; gap: 8px; }
+.deck-manager-native-bar span { color: var(--muted); font-size: 0.9rem; }
+.deck-manager-tile-wrapper { position: relative; min-width: 0; }
+.deck-manager-tile-check { position: absolute; z-index: 1; top: 7px; left: 7px; accent-color: var(--deck-manager-accent); width: 16px; height: 16px; }
+.deck-manager-arena-tile { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); cursor: pointer; }
+.deck-manager-arena-tile:has(input:checked) { border-color: var(--deck-manager-accent); }
+.deck-manager-arena-tile input { accent-color: var(--deck-manager-accent); }
+.deck-manager-arena-tile .deck-visual { width: 54px; height: 54px; flex: 0 0 54px; }
+.deck-manager-arena-tile strong { display: block; overflow-wrap: anywhere; font-size: 0.95rem; }
+.deck-manager-arena-tile small { display: block; color: var(--muted); font-size: 0.8rem; margin-top: 5px; }
 .deck-manager-tile {
   display: flex; align-items: center; gap: 14px; min-height: 114px; padding: 14px;
   text-align: left; width: 100%; min-width: 0; border: 1px solid var(--border); border-radius: 10px;

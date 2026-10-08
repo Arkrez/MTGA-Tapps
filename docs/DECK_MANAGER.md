@@ -4,9 +4,60 @@ Deck Manager is a local library for **any deck**, separate from Arena's active
 roster and the dashboard's played-deck statistics. Open it from the sidebar or
 tray/menu. There is no product-imposed deck-count limit in this library.
 
-This branch implements local backups and manual restore. It does not yet add a
-category inside Arena or automatically create/delete Arena decks. The remaining
-native work and platform evidence are in [the implementation plan](plans/DECK_MANAGER.md).
+This branch now implements direct native backup, move and restore from the tracker,
+including bulk selection. The integrated adapter has been verified with offline
+tests; live validation of this integration is deferred while the user is playing.
+The earlier live proof established native disk restoration. A persistent collection
+category inside Arena remains separate work in [the implementation plan](plans/DECK_MANAGER.md).
+
+## Direct Arena transfers
+
+The initial adapter supports Apple Silicon macOS Arena using the tested Unity
+`6000.3.14f1` runtime. Unsupported platforms/builds report that capability rather
+than attempting a write. The pinned Frida dependency and adapter asset are included
+in Mac source/package configuration; installed-bundle permissions still need live
+validation. No Arena installation files or authentication tokens are changed.
+
+Open Arena on **Decks** outside a match, then click **Connect to Arena**. The
+**Arena** tab shows the current ordinary-deck roster from a successful refresh and
+Arena's own deck-limit decision. A cached deck count is never subtracted from 100
+to invent free slots. Clicking **Refresh Arena** reads again; simply opening or
+polling the dashboard never attaches to Arena. A tracked active game blocks the
+connection before attachment, and native writes also require the live Decks screen.
+
+- **Back up all Arena decks** saves every ordinary deck in one job. Select individual
+  tiles for **Back up selected**. This copies decks without removing them from Arena.
+- Select one or several Arena decks and click **Move to collection**. The confirmation
+  lists the selected decks. Each is saved with all four piles, printing IDs, quantities,
+  summary metadata and cosmetics, then read back and compared before removal from
+  Arena. Notes and earlier library revisions remain available.
+- In **Saved**, select native backups for **Restore selected to Arena**, or open a
+  deck/revision and use the yellow **Restore to Arena** button beside Close. This
+  reconstructs the saved data and calls Arena's normal create service directly.
+  It does not use the clipboard. Fresh capacity checks stop the batch when slots
+  are full; move an active deck out first. Already-present decks cannot be restored
+  again through the same binding.
+
+Jobs run in the background, one transfer at a time, and stop on the first failure.
+Completed transfers stay completed. The dashboard monitors progress, refreshes
+the library/roster afterward and can resume monitoring a running job after a page
+reload. Leaving Decks, changing accounts or losing the connection prevents further
+writes. The tracker/game is never launched, stopped or restarted by this adapter.
+
+Native backups are scoped to a hash of the authenticated account ID. A downloaded
+native `.tappsdeck` can be restored on another computer signed into that same
+account. A text-only/log-captured revision still has the clipboard export described
+below; it is not silently substituted for an exact native restore. Editing a native
+revision's cards/name/format without rebuilding its native model prevents restoring
+stale data; select its original native revision or back up the edited deck from Arena.
+
+Every move/restore has a committed SQLite intent before the native write. After an
+interruption, use **Reconcile transfers**. This only reads Arena and checks the
+recorded identities/data; it never repeats create/delete. Confirmed outcomes are
+completed locally. An uncommitted removal is cancelled with both copies retained.
+An uncertain restore that is still absent remains blocked because a late server
+commit is possible. Changed/missing unrelated decks or mismatched restored data
+require review. Pending transfers protect their local backups from permanent deletion.
 
 ## Save and view
 
@@ -50,12 +101,12 @@ existing online Scryfall image loader; saved lists remain readable offline.
 
 ## Restore and export
 
-The yellow **Copy for Arena** button beside the dialog's close button copies the
-selected revision. Open Arena's Decks screen and
+For revisions without native backup data, the yellow **Copy for Arena** button
+beside the dialog's close button copies the selected revision. Open Arena's Decks screen and
 click **Import** when an active slot is available. Slot availability and the
 import result are controlled by Arena; the tracker does not report them as known.
-To free a slot today, first save/check the outgoing backup, then use Arena's own
-delete controls. Deck Manager does not automate Arena deletion.
+On supported native builds, **Move to collection** frees slots after durable backup;
+the manual export remains available for text-only revisions.
 
 Original imported text retains its section headings and printing suffixes exactly.
 A captured list without original portable text exports resolved card names;
@@ -66,7 +117,8 @@ explains this limitation. An unresolved ID prevents copying an invented name.
 normalized saved list, original text when available, and captured raw metadata.
 Open it later to create another library entry, or use it to save a revision of
 an existing entry. It retains Arena IDs even when the card name cannot be resolved.
-This file does not currently restore captured metadata directly into Arena.
+Native backups restore their captured metadata directly through the native adapter;
+log/text snapshots lack the exact native model required for that path.
 Text parsing accepts the English Arena headings Deck, Sideboard, Commander,
 Companion and Maybeboard, including lists with no format or incomplete construction.
 The library preserves a list without claiming current format legality.
@@ -75,11 +127,18 @@ The library preserves a list without claiming current format legality.
 
 Migration 32 adds independent library tables in the tracker's selected `--db`:
 `managed_decks`, immutable `managed_deck_revisions`, per-pile `managed_deck_cards`
-and reserved `managed_deck_bindings`. Capture uses the observed Arena GUID to
+and `managed_deck_bindings`. Log capture uses the observed Arena GUID to
 group snapshots but writes no authenticated binding, account or presence claim.
 Manual imports get independent local UUIDs. Repeated scans deduplicate snapshots
 and retain the latest observed revision; a later explicit reversion can become
 current without duplicating a stored snapshot.
+
+Migration 33 adds `managed_deck_transfers`, the durable native journal, with one
+pending operation per account. Native backups record authenticated bindings and
+verified presence observations. Full backups carry the journal; merging skips
+transfers and Arena bindings, since another machine's operation cannot be replayed.
+Gameplay reset preserves these tables. SQLite uses full synchronization for native
+archive and journal commits; no source deck is removed before archive read-back.
 
 Gameplay reset preserves the library. `.tappsbackup` exports and restores carry
 it; **Merge** unions verified immutable revisions, retains newer library metadata
@@ -92,5 +151,7 @@ Merge works for deck-only backups as well as game history.
 Local writes validate the full list before persistence; a malformed card does
 not produce a partial backup. The current input limits are 2 MB per import,
 10,000 distinct entries and 50,000 total cards, rather than Arena's construction
-rules. No runtime loader, injection, process-memory write, wildcard crafting or
-Arena credentials are involved in this implementation.
+rules. Gameplay tracking remains log-only. Native Deck Manager jobs explicitly
+attach to the running client and call checked deck services on Unity's thread;
+they never craft cards or copy Arena credentials. The proof scripts remain
+development-only and are not loaded by the application.

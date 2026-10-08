@@ -7,14 +7,17 @@ now demonstrates bulk cache capture and an empty native section below Starter
 Decks. Native create/delete and restoration of one disk-reconstructed duplicate
 are demonstrated, including persistence across an Arena restart. The initial
 verification probe crashed Arena; recovery completed after a thread ownership
-fix. Production integration and reliability remain unproven.
+fix. The tracker now includes native background jobs, authenticated account/service
+guards, fresh roster/full-deck reads, a durable transfer journal and bulk dashboard
+backup/move/restore controls. Integration is covered offline; live validation is
+deferred because the user is playing ranked and prohibited interruption.
 See [live experiment results](deck-manager/NATIVE_POC.md) and
 [reproduction commands](../../deck-manager-bridge/poc/README.md).
 See [implemented behavior](../DECK_MANAGER.md) and the [demo screenshot](deck-manager/preview.png).
 
 All decks are in scope. Midweek Magic and draft are examples, not eligibility
 rules. Saving, viewing and managing local backups work with Arena closed;
-changing Arena's roster will require a live, authenticated native adapter.
+changing Arena's roster uses the explicit native adapter on supported builds.
 Initially researched 2026-10-06; live attach-only Mac tests followed on 2026-10-07.
 
 ## Recommendation
@@ -47,10 +50,12 @@ and skins, archived it and removed it without another create request. Final
 refresh confirmed all 187 original IDs and card data intact. Cache coverage is
 not authenticated roster coverage.
 
-**Next gate:** establish stable attachment/dispatcher behavior, authenticated
-account and roster discovery, and recovery-safe transfers. The single-deck disk
-restore gate passed, but broader format/cosmetic coverage, cold-cache fetching,
-bulk transfers and Windows support remain necessary before production integration.
+**Next work:** live validation of the integrated adapter after the user explicitly
+returns to Decks, then the persistent in-game collection/tiles. Account guards,
+fresh service reads, recovery journal and bulk transfers are implemented with
+offline coverage. Wider format/cosmetic coverage, installed-bundle permissions,
+cold-cache behavior and Windows support still need runtime evidence. Do not attach
+to Arena or restart either app while the user's ranked game is in progress.
 
 ## Findings and confidence
 
@@ -389,9 +394,9 @@ merely to force installation.
 | --- | --- | --- |
 | 0 — Current-build feasibility | Mac arm64 POC demonstrates cache enumeration, GetFullDeck, bulk archival, an empty native section, disposable create/delete and one disk-reconstructed deck surviving restart. Initial verification crashed Arena; fixed-probe recovery verified and removed the existing copy. Stability, cold-cache coverage and Windows remain pending. | Document authenticated roster coverage, missing fields, capacity, account isolation and production loader/permission requirements. Native support is promised only where demonstrated. |
 | 1 — Durable library | Implemented: migration 32, immutable revisions, general text/file import/export, dashboard/menu, capture of available save/submission lists, backup merge, trash and Deck Finder/history save actions. Account-authenticated observations, full roster reads and native writes are pending. | Python/UI tests and demo browser checks pass. Exact portable-text and full-JSON round trips, backup restore/merge and no gameplay rows from capture are tested. Log coverage is explicitly incomplete. |
-| 2 — Controlled transfers | Native client-service adapter, journal, single-deck store/restore, fresh verification, full-slot swap and recovery. | Approved disposable-deck tests establish round-trip fidelity and interruption recovery. No deletion before durable verification. |
+| 2 — Controlled transfers | Implemented: Mac native service adapter, account/service/build guards, migration 33 journal, direct single/bulk backup/store/restore, fresh verification, read-only reconciliation and dashboard controls. Unit tests use fake Arena, and UI/asset checks pass. Integrated live validation and an automatic full-slot swap remain pending. | Approved live validation after the user finishes playing; no deletion before durable verification. Current full-slot flow is move out, then restore. |
 | 3 — Native collection section | Folder after Starter Decks, native tiles, transfer actions, disabled queue selection, dashboard/native consistency. | The same library and transfer state appear in both UIs; unsupported builds retain dashboard/manual access. |
-| 4 — Convenience | Bulk selection, revision comparisons, opt-in event backups, Deck Finder “Save to collection”; native local editing only after separate validation. | Each feature preserves card fidelity and recovery behavior under account switches and client updates. |
+| 4 — Convenience | Bulk dashboard selection implemented; revision comparisons, opt-in event backups and native local editing remain separate work. | Each feature preserves card fidelity and recovery behavior under account switches and client updates. |
 
 Mac section/capture feasibility has been demonstrated through the explicit
 Frida experiment. Windows remains untested. Neither result establishes a

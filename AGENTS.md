@@ -130,15 +130,42 @@ Primary code paths:
   The collection uses a full-page responsive tile grid; details/revision editing and
   new imports open native dialogs. CardLink previews portal into their containing
   dialog so the browser’s top layer does not obscure them.
-  Moving a deck to Trash opens a recoverable-action confirmation; Copy for Arena
-  appears as a yellow button in the deck dialog header beside Close.
+  Moving a deck to Trash opens a recoverable-action confirmation; native Restore
+  to Arena (or Copy for Arena for text-only revisions) appears as a yellow button
+  in the deck dialog header beside Close.
   Migration 32 creates independent `managed_decks`, `managed_deck_revisions`,
-  `managed_deck_cards` and reserved `managed_deck_bindings` tables. Library trash/reset
+  `managed_deck_cards` and `managed_deck_bindings` tables. Library trash/reset
   never deletes Arena decks; gameplay reset preserves the library. Permanent local
   deletion requires a trashed entry and explicit confirmation, and removes its cards,
   bindings and revisions in one transaction. `.tappsbackup` carries
   decks and revisions; merge unions verified snapshots and skips Arena bindings. Restore
   previews count deck/revision losses even when no games are lost.
+- `deck_native_api.py` / `deck_transfers.py` / `native_deck_bridge.py` /
+  `native_deck_archive.py` + `assets/arena_decks.js`: direct native Deck Manager
+  jobs, explicitly started from the dashboard. GET/status polling never attaches.
+  The Arena tab supports bulk backup/move; Saved supports direct native restores.
+  Live integration validation is deferred while the user plays; do not attach or
+  restart Arena/tracker during that game. Wait for the user to explicitly report
+  being out of a match on Decks before any live validation; app restarts still
+  require explicit approval.
+  Initial runtime support is Apple Silicon macOS IL2CPP Unity `6000.3.14f1`, gated
+  by `paths.native_deck_platform_supported`. Frida is pinned for Mac and lazily
+  imported; the asset and extension are included in Mac packaging configuration.
+  Check the active-game row before attachment and between transfers, and check the
+  live Decks controller, same native service and authenticated account for writes.
+  Only AccountInformation.AccountID is read/hashed; never read credentials.
+  Migration 33 adds `managed_deck_transfers` with one pending intent per account.
+  Commit/read back exact native archives before any removal; write intents commit
+  before single native calls. Interrupted outcomes stop; reconciliation is read-only,
+  never a create/delete retry. Pending journals protect their local backups from
+  permanent deletion. Full backups carry journals; merge skips journals/bindings.
+  Use all four piles and explicit native deserialization types; preserve Int64
+  model JSON as text and exclude computed summary setters. Source/restore comparison
+  permits only null/empty-description equivalence. Native revisions with edited
+  lists/name/format cannot restore stale model data. Native portable backups retain
+  the hashed account provenance. No queue, crafting or gameplay calls are allowed.
+  Tests: `tests/test_deck_transfers.py` and `node --test tests/native_decks.test.cjs`
+  are offline and must never attach to Arena. UI checks remain the normal four commands.
 - `src/mtga_tracker/deck_capture.py`: the existing log-entry pipeline archives available
   `DeckUpsertDeckV3` / `EventSetDeckV3` outgoing lists for any format before game-exclusion
   gates. They are unconfirmed observations, not a complete roster or successful save.

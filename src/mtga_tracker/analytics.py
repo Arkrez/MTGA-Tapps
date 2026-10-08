@@ -720,6 +720,7 @@ class AnalyticsStore:
             (30, AnalyticsStore._migrate_v30_repair_cube_formats),
             (31, AnalyticsStore._migrate_v31_repair_event_formats),
             (32, AnalyticsStore._migrate_v32_managed_decks),
+            (33, AnalyticsStore._migrate_v33_native_deck_transfers),
         )
         ran: list = []
         for version, migrate in migrations:
@@ -1415,6 +1416,24 @@ class AnalyticsStore:
                 PRIMARY KEY(account_key, arena_deck_id)
             );
             CREATE INDEX IF NOT EXISTS managed_deck_revisions_deck ON managed_deck_revisions(deck_id);
+        """)
+
+    @staticmethod
+    def _migrate_v33_native_deck_transfers(conn: sqlite3.Connection) -> None:
+        """Durable native intents survive process/request interruptions."""
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS managed_deck_transfers (
+                id TEXT PRIMARY KEY, account_key TEXT NOT NULL, deck_id TEXT NOT NULL,
+                revision_id TEXT NOT NULL, arena_deck_id TEXT NOT NULL,
+                action TEXT NOT NULL CHECK(action IN ('store', 'restore')),
+                phase TEXT NOT NULL, baseline_ids_json TEXT NOT NULL,
+                error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS managed_deck_transfers_pending
+                ON managed_deck_transfers(phase, account_key);
+            CREATE UNIQUE INDEX IF NOT EXISTS managed_deck_transfers_active_account
+                ON managed_deck_transfers(account_key)
+                WHERE phase NOT IN ('complete','cancelled');
         """)
 
     @staticmethod

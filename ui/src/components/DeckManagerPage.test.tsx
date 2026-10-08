@@ -1,7 +1,8 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   fetchDeckLibrary, fetchManagedDeck, importManagedDeck, updateManagedDeck, exportManagedDeck, deleteManagedDeck,
+  fetchNativeDeckStatus, startNativeDeckJob, fetchNativeDeckJob,
   type ManagedDeck, type ManagedDeckDetail,
 } from '../deckManagerApi';
 import { DeckManagerPage } from './DeckManagerPage';
@@ -9,6 +10,7 @@ import { DeckManagerPage } from './DeckManagerPage';
 vi.mock('../deckManagerApi', () => ({
   fetchDeckLibrary: vi.fn(), fetchManagedDeck: vi.fn(), importManagedDeck: vi.fn(),
   updateManagedDeck: vi.fn(), exportManagedDeck: vi.fn(), captureArenaDecks: vi.fn(), deleteManagedDeck: vi.fn(),
+  fetchNativeDeckStatus: vi.fn(), startNativeDeckJob: vi.fn(), fetchNativeDeckJob: vi.fn(),
 }));
 
 const saved: ManagedDeck = { id: 'deck-a', name: 'Any format deck', format_name: 'Standard',
@@ -33,6 +35,7 @@ beforeEach(() => {
     close: { configurable: true, value: function (this: HTMLDialogElement) { this.removeAttribute('open'); } },
   });
   vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [saved], capabilities });
+  vi.mocked(fetchNativeDeckStatus).mockResolvedValue({ available: false, connected: false, busy: false, decks: [], limit: null, limit_reached: null, deck_screen_open: false, message: 'Open Arena to manage decks.' });
   vi.mocked(fetchManagedDeck).mockResolvedValue(detail);
   vi.mocked(updateManagedDeck).mockResolvedValue({ ok: true });
   vi.mocked(deleteManagedDeck).mockResolvedValue({ ok: true });
@@ -240,4 +243,70 @@ it('edits a revision in a dialog bound to the opened deck', async () => {
   expect(await screen.findByRole('dialog', { name: saved.name })).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Close dialog' }));
   expect(tile).toHaveFocus();
+});
+
+const connected = { available: true, connected: true, busy: false, deck_screen_open: true,
+  limit: 100, limit_reached: false, message: 'Arena ready.', refreshed_at: '2026-10-07T12:00:00Z',
+  decks: [{ id: 'arena-a', name: 'Arena fixture A', format_name: 'Standard', main_count: 60 },
+    { id: 'arena-b', name: 'Arena fixture B', format_name: 'Brawl', main_count: 100 }], pending_transfers: [] };
+
+it('reads native status without automatically starting an Arena job', async () => {
+  vi.mocked(fetchNativeDeckStatus).mockResolvedValue(connected);
+  render(<DeckManagerPage />);
+  expect(await screen.findByRole('button', { name: 'Arena (2)' })).toBeInTheDocument();
+  expect(startNativeDeckJob).not.toHaveBeenCalled();
+});
+
+it('requires confirmation for bulk moves and cancellation never starts a job', async () => {
+  vi.mocked(fetchNativeDeckStatus).mockResolvedValue(connected);
+  render(<DeckManagerPage />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Arena (2)' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select all visible Arena decks' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Move to collection' }));
+  const dialog = screen.getByRole('dialog', { name: 'Move 2 decks to your collection?' });
+  expect(dialog).toHaveTextContent('backed up and checked before');
+  expect(dialog).toHaveTextContent('Arena fixture A');
+  expect(dialog).toHaveTextContent('Arena fixture B');
+  expect(startNativeDeckJob).not.toHaveBeenCalled();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+  expect(startNativeDeckJob).not.toHaveBeenCalled();
+  expect(screen.getByRole('checkbox', { name: 'Select Arena fixture A' })).toBeChecked();
+});
+
+it('moves only the confirmed selected Arena decks and monitors the job', async () => {
+  vi.mocked(fetchNativeDeckStatus).mockResolvedValue(connected);
+  vi.mocked(startNativeDeckJob).mockResolvedValue({ job_id: 'move-job' });
+  vi.mocked(fetchNativeDeckJob).mockResolvedValue({ state: 'done', detail: 'Completed.', result: { action: 'store', count: 1 } });
+  render(<DeckManagerPage />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Arena (2)' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select Arena fixture A' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Move to collection' }));
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Move to collection' }));
+  await waitFor(() => expect(startNativeDeckJob).toHaveBeenCalledExactlyOnceWith('store', [{ id: 'arena-a' }]));
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Moved 1 deck'));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+it('restores the selected native revision directly without copying', async () => {
+  vi.mocked(fetchNativeDeckStatus).mockResolvedValue(connected);
+  vi.mocked(fetchManagedDeck).mockResolvedValue({ ...detail, native_restorable: true });
+  vi.mocked(startNativeDeckJob).mockResolvedValue({ job_id: 'restore-job' });
+  vi.mocked(fetchNativeDeckJob).mockResolvedValue({ state: 'done', detail: 'Completed.', result: { action: 'restore', count: 1 } });
+  render(<DeckManagerPage />);
+  fireEvent.click(await screen.findByRole('button', { name: new RegExp(saved.name) }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Restore to Arena' }));
+  await waitFor(() => expect(startNativeDeckJob).toHaveBeenCalledExactlyOnceWith('restore', [{ id: saved.id, revision: 'new' }]));
+  expect(exportManagedDeck).not.toHaveBeenCalled();
+  expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
+});
+
+it('disables native restore when slots are full and offers reconciliation for interruptions', async () => {
+  vi.mocked(fetchNativeDeckStatus).mockResolvedValue({ ...connected, limit_reached: true,
+    pending_transfers: [{ id: 'pending', action: 'restore', phase: 'uncertain', deck_id: saved.id }] });
+  vi.mocked(fetchManagedDeck).mockResolvedValue({ ...detail, native_restorable: true });
+  render(<DeckManagerPage />);
+  expect(await screen.findByRole('button', { name: 'Reconcile transfers' })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(saved.name) }));
+  expect(await screen.findByRole('button', { name: 'Restore to Arena' })).toBeDisabled();
+  expect(startNativeDeckJob).not.toHaveBeenCalled();
 });

@@ -146,7 +146,7 @@ analysis = Analysis(
     # `MTGA Tracker --deck-finder` (the terminal UI) both need every
     # deck-site module (see deck_finder_modules above) plus the scrapers'
     # own runtime-loaded dependencies.
-    hiddenimports=["cloudscraper", "bs4"] + deck_finder_modules,
+    hiddenimports=["cloudscraper", "bs4"] + deck_finder_modules + (["frida", "frida._frida"] if is_macos else []),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

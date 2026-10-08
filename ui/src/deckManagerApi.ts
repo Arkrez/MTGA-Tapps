@@ -21,6 +21,8 @@ export interface ManagedDeck {
   completeness: string;
   main_count: number;
   art_card: string | null;
+  native_restorable?: boolean;
+  native_arena_ids?: string[];
 }
 
 export interface ManagedDeckDetail extends ManagedDeck {
@@ -54,3 +56,34 @@ export const deleteManagedDeck = (id: string) => request<{ ok: boolean }>('/dele
 export const captureArenaDecks = () => request<{ captured: number; rejected: number; note: string }>('/capture', {});
 export const exportManagedDeck = (id: string, revision: string, format: 'backup' | 'arena') =>
   request<{ text: string; name: string; extension: string; note?: string }>(`/export?${new URLSearchParams({ id, revision, format })}`);
+
+export interface ArenaDeck {
+  id: string;
+  name: string;
+  format_name: string;
+  main_count: number;
+}
+export interface NativeDeckStatus {
+  available: boolean;
+  in_game?: boolean;
+  connected: boolean;
+  busy: boolean;
+  active_job?: string | null;
+  decks: ArenaDeck[];
+  limit: number | null;
+  limit_reached: boolean | null;
+  deck_screen_open: boolean;
+  message: string;
+  refreshed_at?: string;
+  pending_transfers?: { id: string; action: string; phase: string; deck_id: string }[];
+}
+export type NativeDeckAction = 'connect' | 'backup' | 'store' | 'restore' | 'reconcile';
+export interface NativeDeckJob {
+  state: 'running' | 'done' | 'error';
+  detail: string;
+  result?: { count: number; action: NativeDeckAction };
+}
+export const fetchNativeDeckStatus = (signal?: AbortSignal) => request<NativeDeckStatus>('/native', undefined, signal);
+export const startNativeDeckJob = (action: NativeDeckAction, decks: { id: string; revision?: string }[] = []) =>
+  request<{ job_id: string }>('/native/run', { action, decks, request_id: crypto.randomUUID(), ...(action === 'store' ? { confirm: 'MOVE' } : {}) });
+export const fetchNativeDeckJob = (id: string, signal?: AbortSignal) => request<NativeDeckJob>(`/native/job?${new URLSearchParams({ id })}`, undefined, signal);

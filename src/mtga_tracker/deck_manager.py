@@ -354,6 +354,13 @@ def delete_deck(conn: sqlite3.Connection, deck_id: str) -> None:
             if not conn.execute("SELECT 1 FROM managed_decks WHERE id = ?", (deck_id,)).fetchone():
                 raise KeyError("Saved deck not found.")
             raise DeckManagerError("Move this deck to Trash before deleting it permanently.")
+        if conn.execute(
+            "SELECT 1 FROM managed_deck_transfers WHERE deck_id=? AND phase NOT IN ('complete','cancelled')",
+            (deck_id,),
+        ).fetchone():
+            raise DeckManagerError(
+                "Reconcile this deck’s interrupted Arena transfer before deleting its backup."
+            )
         conn.execute(
             "DELETE FROM managed_deck_cards WHERE revision_id IN "
             "(SELECT id FROM managed_deck_revisions WHERE deck_id = ?)",

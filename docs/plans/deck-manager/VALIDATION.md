@@ -39,7 +39,41 @@ Validated 2026-10-06 from the isolated `deck-manager` worktree.
   deck-only backup previews, older-backup loss confirmation, selected DB routing,
   HTTP request validation and stale UI responses.
 
-Not validated: native loader, process reader, account enumeration, authoritative
+At the initial local-library validation, not validated: native loader, process reader, account enumeration, authoritative
 capacity, automatic create/delete, interruption reconciliation, native Arena
 folder, Windows desktop packaging and macOS native adapter. No Arena deck was
-created or deleted by this implementation or validation.
+created or deleted by that initial implementation or validation.
+
+## Native transfer integration — 2026-10-07
+
+The [live POC report](NATIVE_POC.md) records the subsequent real-client evidence,
+including disk reconstruction, the verification crash and successful recovery.
+The tracker integration is now implemented separately in `native_deck_bridge.py`,
+`native_deck_archive.py`, `deck_transfers.py`, `deck_native_api.py` and the bundled
+`assets/arena_decks.js`. Dashboard controls expose explicit single/bulk backup,
+move, restore and reconciliation jobs. Migration 33 records durable intents.
+
+- Full Python regression suite: **849 passed, 1 skipped, 1 deselected,
+  5 subtests passed**.
+- Full UI suite: **158 passed** across 21 files. TypeScript, lint and production
+  build passed; the worktree's `ui/dist` is fresh.
+- Native adapter and POC JavaScript boundary tests: **21 passed**; adapter syntax
+  checks passed. New Python modules pass the scoped style check.
+- Fake-Arena tests verify archive commit/read-back before removal, exact disk
+  reconstruction inputs, new restore identity, full-slot/account/duplicate/scene
+  guards, disk failure, external edits, interrupted commit reconciliation without
+  another write, uncertain-absence blocking, request replay isolation, protection
+  against permanent deletion of pending backups, portable account provenance,
+  stale-model rejection and positive active-game blocking before attachment.
+- UI tests cover passive status reads with no automatic job, bulk selection and
+  move confirmation/cancellation, confirmed IDs only, background job monitoring,
+  selected native revision restore without clipboard and full-slot/pending guards.
+- No browser was connected for visual review of the new controls; the prior
+  collection screenshots do not represent this new native toolbar.
+
+The user explicitly requested no interruption while playing ranked. No Arena
+attachment, runtime mutation, or game/tracker restart occurred after that instruction.
+The integrated adapter has not been live-tested or activated in the running app.
+Live validation is deferred until the user explicitly reports being out of a match
+on Decks. Persistent native collection/tiles, Windows and installed-app permissions
+remain unvalidated.

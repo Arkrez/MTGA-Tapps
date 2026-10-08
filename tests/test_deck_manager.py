@@ -266,7 +266,9 @@ def test_delete_api_requires_confirmation_and_uses_selected_database(tmp_path):
     assert api.handle_post(path, payload, selected)[0] == 404
 
 
-def test_read_only_library_and_selected_database(tmp_path):
+def test_read_only_library_and_selected_database(tmp_path, monkeypatch):
+    from mtga_tracker import deck_native_api
+    monkeypatch.setattr(deck_native_api.nb, "availability", lambda: (True, "Available"))
     selected = tmp_path / "chosen.db"
     assert api.handle_get("/api/deck-manager", {}, selected)[1]["decks"] == []
     assert not selected.exists()
@@ -274,7 +276,8 @@ def test_read_only_library_and_selected_database(tmp_path):
     assert status == 200
     library = api.handle_get("/api/deck-manager", {}, selected)[1]
     assert library["decks"][0]["id"] == imported["id"]
-    assert library["capabilities"]["arena_transfers"] is False
+    assert library["capabilities"]["arena_transfers"] is True
+    assert library["capabilities"]["native_section"] is False
     status, export = api.handle_get(
         "/api/deck-manager/export", {"id": [imported["id"]], "format": ["arena"]}, selected
     )

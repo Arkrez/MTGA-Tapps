@@ -4,6 +4,15 @@
 
 ### Features
 
+- Deck Manager now has direct native backup, move and restore jobs on the
+  `deck-manager` branch, including an Arena deck grid, bulk selection, confirmation
+  before moving decks out of Arena, and a yellow Restore to Arena action for native
+  revisions. Migration 33 journals every transfer before a native write and supports
+  read-only reconciliation without repeating uncertain requests. Active tracked games
+  block attachment; account changes, full slots and changed decks block writes.
+  The initial adapter targets Apple Silicon macOS Unity `6000.3.14f1`. Integrated
+  live verification and the persistent in-game collection section remain pending;
+  the existing game/tracker were left running during implementation.
 - Added an explicit development-only native Deck Manager experiment. Live Mac
   tests demonstrated bulk cached-deck capture and a temporary native collection
   section below Starter Decks. One native disposable create/archive/delete test
