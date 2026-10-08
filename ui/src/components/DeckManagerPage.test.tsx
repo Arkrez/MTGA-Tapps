@@ -385,3 +385,31 @@ it('disables native restore when slots are full and offers reconciliation for in
   expect(await screen.findByRole('button', { name: 'Restore to Arena' })).toBeDisabled();
   expect(startNativeDeckJob).not.toHaveBeenCalled();
 });
+
+it('uses the saved artwork for matching Arena tiles and filters their backup status', async () => {
+  vi.mocked(fetchNativeDeckStatus).mockResolvedValue(connected);
+  vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [{ ...saved, native_restorable: true, native_arena_ids: ['arena-a'], art_card: 'Forest' }], capabilities });
+  render(<DeckManagerPage />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Arena (2)' }));
+  const image = await screen.findByRole('img', { name: 'Forest' });
+  expect(image).toHaveAttribute('src', expect.stringContaining('named?exact=Forest'));
+  fireEvent.click(screen.getByRole('button', { name: 'Filter by Not backed up' }));
+  expect(screen.getByRole('combobox', { name: 'Filter decks by status' })).toHaveValue('unbacked');
+  expect(screen.queryByRole('checkbox', { name: 'Select Arena fixture A' })).not.toBeInTheDocument();
+  expect(screen.getByRole('checkbox', { name: 'Select Arena fixture B' })).toBeInTheDocument();
+});
+
+it('filters saved presence and backup type through pills and clears hidden selection', async () => {
+  const second = { ...saved, id: 'second', name: 'Collection deck', native_restorable: true };
+  vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [{ ...saved, native_arena_ids: ['arena-a'] }, second], capabilities });
+  vi.mocked(fetchNativeDeckStatus).mockResolvedValue(connected);
+  render(<DeckManagerPage />);
+  fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${saved.name}` }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Filter by Collection only' }));
+  expect(screen.queryByRole('checkbox', { name: `Select ${saved.name}` })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Move selected to trash' })).toBeDisabled();
+  expect(fetchManagedDeck).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByRole('combobox', { name: 'Filter decks by status' }), { target: { value: 'text' } });
+  expect(screen.getByRole('checkbox', { name: `Select ${saved.name}` })).toBeInTheDocument();
+  expect(screen.queryByRole('checkbox', { name: `Select ${second.name}` })).not.toBeInTheDocument();
+});

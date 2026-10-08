@@ -85,6 +85,7 @@ def _public_roster(report):
             {
                 "id": d["arena_id"],
                 "name": d["name"],
+                "art_card_id": _roster_art_id(d),
                 "format_name": next(
                     (
                         a["value"]
@@ -110,6 +111,19 @@ def _public_roster(report):
     }
 
 
+def _roster_art_id(deck):
+    artwork = deck["summary"].get("DeckArtId")
+    if type(artwork) is int and artwork > 0:
+        return artwork
+    for pile_id in (3, 1):
+        for pile in deck.get("piles", []):
+            if pile["pile"] == pile_id:
+                for card in pile["entries"]:
+                    if type(card.get("id")) is int and card["id"] > 0:
+                        return card["id"]
+    return None
+
+
 def _resolve_names():
     from .card_database import CardDatabase
 
@@ -133,6 +147,10 @@ def execute(db_path, action, selections, request_id, progress):
             dt.roster_ids(report)
             if action == "reconcile":
                 report = dt.reconcile(conn, bridge, report)
+            elif action == "add":
+                progress("Preparing the deck with Arena’s importer…")
+                resolver = _resolve_names()
+                report = dt.add_import(conn, bridge, selections[0], request_id, report, resolver)
             elif action == "backup":
                 if report.get("deck_screen_open") is not True:
                     raise dm.DeckManagerError(
@@ -204,13 +222,40 @@ def execute(db_path, action, selections, request_id, progress):
 def start(db_path, payload):
     global _ACTIVE
     action = payload.get("action")
-    if action not in ("connect", "backup", "store", "restore", "reconcile"):
+    if action not in ("connect", "backup", "store", "restore", "reconcile", "add"):
         raise dm.DeckManagerError("Choose a native deck action.")
     request_id = str(uuid.UUID(payload.get("request_id", "")))
     selections = payload.get("decks", [])
     if not isinstance(selections, list) or len(selections) > 2000:
         raise dm.DeckManagerError("Invalid deck selection.")
     clean = []
+    if action == "add":
+        imported = payload.get("import")
+        if not isinstance(imported, dict):
+            raise dm.DeckManagerError("An Arena decklist is required.")
+        text = imported.get("text")
+        name = imported.get("name")
+        format_name = imported.get("format_name", "")
+        if (
+            not isinstance(text, str)
+            or not text
+            or len(text) > 20000
+            or not isinstance(name, str)
+            or not name.strip()
+            or not isinstance(format_name, str)
+        ):
+            raise dm.DeckManagerError("Invalid deck name, format or bounded Arena decklist.")
+        dm.parse_import(text, name, format_name)
+        if selections:
+            raise dm.DeckManagerError("Direct import accepts one decklist, not a deck selection.")
+        clean.append(
+            {
+                "id": str(uuid.uuid5(uuid.UUID(request_id), "text-import-source")),
+                "text": text,
+                "name": name.strip(),
+                "format_name": format_name,
+            }
+        )
     for item in selections:
         if not isinstance(item, dict):
             raise dm.DeckManagerError("Invalid selected deck.")

@@ -64,6 +64,8 @@ export interface ArenaDeck {
   name: string;
   format_name: string;
   main_count: number;
+  art_card?: string | null;
+  art_card_id?: number | null;
 }
 export interface NativeDeckStatus {
   available: boolean;
@@ -79,7 +81,7 @@ export interface NativeDeckStatus {
   refreshed_at?: string;
   pending_transfers?: { id: string; action: string; phase: string; deck_id: string }[];
 }
-export type NativeDeckAction = 'connect' | 'backup' | 'store' | 'restore' | 'reconcile';
+export type NativeDeckAction = 'connect' | 'backup' | 'store' | 'restore' | 'reconcile' | 'add';
 export interface NativeDeckJob {
   state: 'running' | 'done' | 'error';
   detail: string;
@@ -89,3 +91,5 @@ export const fetchNativeDeckStatus = (signal?: AbortSignal) => request<NativeDec
 export const startNativeDeckJob = (action: NativeDeckAction, decks: { id: string; revision?: string }[] = []) =>
   request<{ job_id: string }>('/native/run', { action, decks, request_id: crypto.randomUUID(), ...(action === 'store' ? { confirm: 'MOVE' } : {}) });
 export const fetchNativeDeckJob = (id: string, signal?: AbortSignal) => request<NativeDeckJob>(`/native/job?${new URLSearchParams({ id })}`, undefined, signal);
+export const addDeckToArena = (text: string, name: string, format_name: string) =>
+  request<{ job_id: string }>('/native/run', { action: 'add', decks: [], request_id: crypto.randomUUID(), import: { text, name, format_name } });

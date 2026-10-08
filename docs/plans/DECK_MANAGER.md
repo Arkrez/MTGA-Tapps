@@ -14,6 +14,10 @@ and backup of all 94 ordinary decks passed on 2026-10-08 after the user confirme
 being out of a match on Decks. The separate live-test dashboard is running with an
 isolated library and a read-only active-game guard from the existing tracker.
 Integrated move/restore validation remains pending.
+The grid now shares artwork/tile sizing across Saved and Arena, with filterable
+location/backup pills. Deck Finder direct add is wired through Arena's native text
+parser and the journaled restore path. A four-Forest live parser-only check passed;
+full direct-add creation still requires user-selected runtime testing.
 See [live experiment results](deck-manager/NATIVE_POC.md) and
 [reproduction commands](../../deck-manager-bridge/poc/README.md).
 See [implemented behavior](../DECK_MANAGER.md) and the [demo screenshot](deck-manager/preview.png).

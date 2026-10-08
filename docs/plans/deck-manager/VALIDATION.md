@@ -112,3 +112,40 @@ The live test dashboard is ready for user-selected moves/restores. Integrated
 move/restore runtime validation, persistent native collection/tiles, Windows and
 installed-bundle permissions remain pending. Neither Arena nor the existing
 tracker/desktop app was restarted. The other working branch was not changed.
+
+## Matching tiles, status filters and Deck Finder direct add — 2026-10-08
+
+- Arena tiles now reuse artwork from matching library bindings, including entries
+  in Trash, or use their roster printing ID. Both tabs share 76px artwork and
+  fixed 156px tile heights. Bottom-right colored pills describe location and backup
+  type; pill clicks and a status selector filter alongside search and clear selection.
+  An unconnected Saved list displays Not checked instead of guessing deck absence.
+- Deck Finder exposes Add to Arena beside the renamed Copy for Arena action.
+  Native status polling remains passive. Direct adds use a fresh connection and
+  authoritative capacity check, Arena's text parser, exact pile/name/count checks,
+  durable native archival, and the existing journaled restore/create path.
+  Reduced/unresolved/unsupported-pile lists stop before any save request. No crafting
+  calls are present. Request replay after interruption uses the existing binding
+  and journal rather than preparing another deck; changed import inputs are rejected.
+- After the user confirmed Decks outside a match, live native text preparation
+  parsed exactly four Forests and produced a validated complete native archive.
+  Roster IDs were equal before and after. No create, remove, crafting or queue call
+  occurred. A first attempt stopped on the screen guard, and another revealed that
+  ActiveLocProvider is a static field rather than a getter; metadata inspection
+  established the checked field/type/namespace before the successful parser check.
+- Full Python suite: **858 passed, 1 skipped, 1 deselected, 5 subtests passed**.
+  The new preview-route permission test also passed separately. Full UI suite:
+  **168 passed** across 21 files. After adding the completed-action button guard,
+  the 10 Deck Finder tests, TypeScript, lint and production build passed again.
+  Native JavaScript guards: **7 passed**; syntax and scoped Python style checks pass.
+- Only the idle dashboard-only preview process was refreshed, retaining the same
+  test database and last roster. Arena and the tracker/desktop app stayed running.
+  Preview permits Deck Finder's read-oriented jobs and still rejects app settings,
+  analytics restore/reset and companion launch routes. HTTP smoke checks verified
+  the new CSS, provider list and native-add validation without creating any deck.
+
+The text parser is live-verified; the complete Deck Finder add/create/verification
+flow is implemented and offline-tested but awaits a user-selected runtime test.
+Automated browser review of the new pill layout remains unavailable. Existing native
+move/restore, persistent native collection/tiles, Windows and installed-app validation
+remain as previously recorded; no additional Arena deck mutation was performed here.

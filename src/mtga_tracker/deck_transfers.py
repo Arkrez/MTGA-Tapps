@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 import sqlite3
 import uuid
 
@@ -10,6 +11,66 @@ from . import deck_manager as dm
 from . import native_deck_archive as na
 
 TERMINAL = ("complete", "cancelled")
+
+
+def add_import(conn, bridge, selection, request_id, report, resolve_name):
+    """Prepare text with Arena's parser, reject dropped cards, then use journaled restore."""
+    source_id = str(uuid.uuid5(uuid.UUID(request_id), "text-import-source"))
+    bindings = conn.execute(
+        "SELECT deck_id FROM managed_deck_bindings WHERE account_key=? AND arena_deck_id=?",
+        (bridge.account_key, source_id),
+    ).fetchone()
+    if bindings:
+        previous = dm.deck_detail(conn, bindings[0])
+        original = previous["deck"].get("metadata", {}).get("native_import_request")
+        if original != {key: selection[key] for key in ("text", "name", "format_name")}:
+            raise dm.DeckManagerError("This import request ID already belongs to another decklist.")
+        return transfer(
+            conn, bridge, "restore", {"id": bindings[0]}, request_id, report, resolve_name
+        )
+    if pending(conn, bridge.account_key):
+        raise dm.DeckManagerError("Reconcile the interrupted transfer before adding another deck.")
+    if report.get("deck_screen_open") is not True or report.get("limit_reached") is not False:
+        raise dm.DeckManagerError("Open Arena on Decks outside a match with a free deck slot.")
+    expected = dm.parse_import(selection["text"], selection["name"], selection["format_name"])
+    if not resolve_name or any(c["section"] == "Maybeboard" for c in expected["cards"]):
+        raise dm.DeckManagerError(
+            "Direct import requires local card names and Arena-supported piles."
+        )
+    archive = na.validate_archive(
+        bridge.prepare_import(selection["text"], expected["name"], source_id)
+    )
+    actual = na.document(archive, resolve_name)
+    if actual["name"] != expected["name"] or archive["source_snapshot"]["arena_id"] != source_id:
+        raise dm.DeckManagerError("Arena returned a different prepared deck. No deck was created.")
+
+    def quantities(cards):
+        # Names in export text may omit the back face. Quantities/piles must
+        # still agree exactly; never silently import inventory-clamped lists.
+        result = Counter()
+        for card in cards:
+            result[(card["section"], card["name"].split(" // ")[0].strip().casefold())] += card[
+                "quantity"
+            ]
+        return result
+
+    if quantities(expected["cards"]) != quantities(actual["cards"]):
+        raise dm.DeckManagerError(
+            "Arena’s importer changed the card list, possibly because cards are missing. "
+            "No deck was created. Use Arena’s text import to review missing cards."
+        )
+    saved = persist_archive(
+        conn,
+        archive,
+        bridge.account_key,
+        resolve_name,
+        metadata={
+            "native_import_request": {
+                key: selection[key] for key in ("text", "name", "format_name")
+            }
+        },
+    )
+    return transfer(conn, bridge, "restore", {"id": saved["id"]}, request_id, report, resolve_name)
 
 
 def journal_phase(conn, transfer_id, phase, error=None):
@@ -54,9 +115,10 @@ def check_remaining(before, after, removed=None):
         )
 
 
-def persist_archive(conn, archive, account, resolve_name=None):
+def persist_archive(conn, archive, account, resolve_name=None, *, metadata=None):
     deck = na.document(archive, resolve_name)
     deck["metadata"]["native_account_key"] = account
+    deck["metadata"].update(metadata or {})
     conn.execute("PRAGMA synchronous=FULL")
     saved = dm.save_deck(
         conn,

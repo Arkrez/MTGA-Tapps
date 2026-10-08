@@ -3,7 +3,7 @@ import { Archive, ArrowDownToLine, ArrowUpFromLine, Copy, Download, FolderOpen, 
 import {
   captureArenaDecks, exportManagedDeck, fetchDeckLibrary, fetchManagedDeck,
   importManagedDeck, updateManagedDeck, deleteManagedDeck, removeManagedDecks, type DeckLibrary, type ManagedDeckDetail,
-  fetchNativeDeckStatus, startNativeDeckJob, fetchNativeDeckJob, type NativeDeckStatus, type NativeDeckAction,
+  fetchNativeDeckStatus, startNativeDeckJob, fetchNativeDeckJob, type NativeDeckStatus, type NativeDeckAction, type ManagedDeck,
 } from '../deckManagerApi';
 import { formatDateTime } from '../format';
 import { CardLink } from './CardLink';
@@ -20,6 +20,21 @@ const sourceLabels: Record<string, string> = {
 };
 
 type ModalView = 'deck' | 'import' | 'revision' | 'delete' | 'trash' | 'store' | 'bulk-trash' | 'bulk-delete';
+
+const statusLabels = {
+  arena: 'In Arena', collection: 'Collection only', unknown: 'Not checked', trash: 'In Trash',
+  native: 'Arena backup', text: 'Text backup', partial: 'Captured list',
+  backed: 'Backed up', unbacked: 'Not backed up',
+};
+type DeckStatus = keyof typeof statusLabels;
+
+function deckArt(cardName?: string | null, cardId?: number | null) {
+  const name = cardName && !cardName.startsWith('Card #') ? cardName : null;
+  const nameUrl = name ? `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}&format=image&version=art_crop` : null;
+  return { card_name: name, card_id: cardId ?? null, type_category: 'Other', source: 'local_metadata' as const,
+    image_url: cardId ? `https://api.scryfall.com/cards/arena/${cardId}?format=image&version=art_crop` : nameUrl,
+    image_fallback_url: cardId ? nameUrl : null };
+}
 
 function DeckModal({ title, busy, onClose, returnFocus, headerActions, children }: {
   title: string; busy: boolean; onClose: () => void; returnFocus: HTMLElement | null; headerActions?: ReactNode; children: ReactNode;
@@ -75,6 +90,7 @@ export function DeckManagerPage() {
   const [refresh, setRefresh] = useState(0);
   const [query, setQuery] = useState('');
   const [view, setView] = useState<'saved' | 'trash' | 'arena'>('saved');
+  const [statusFilter, setStatusFilter] = useState<DeckStatus | 'all'>('all');
   const [localBusy, setBusy] = useState(false);
   const [native, setNative] = useState<NativeDeckStatus | null>(null);
   const [nativeJob, setNativeJob] = useState<string | null>(null);
@@ -91,14 +107,32 @@ export function DeckManagerPage() {
   const fileInput = useRef<HTMLInputElement>(null);
   const [modalOpener, setModalOpener] = useState<HTMLElement | null>(null);
 
+  const arenaIds = new Set(native?.decks.map((deck) => deck.id) ?? []);
+  const inArena = (deck: { native_arena_ids?: string[] }) => (deck.native_arena_ids ?? []).some((id) => arenaIds.has(id));
+  const savedStatuses = (deck: ManagedDeck): DeckStatus[] => [
+    deck.trashed_at ? 'trash' : native?.connected ? inArena(deck) ? 'arena' : 'collection' : 'unknown',
+    deck.native_restorable ? 'native' : deck.completeness === 'text' ? 'text' : 'partial',
+  ];
+  const arenaBackups = new Map<string, ManagedDeck>();
+  const arenaArtwork = new Map<string, ManagedDeck>();
+  for (const deck of library?.decks ?? []) {
+    for (const id of deck.native_arena_ids ?? []) {
+      arenaArtwork.set(id, deck);
+      if (!deck.trashed_at && deck.native_restorable) arenaBackups.set(id, deck);
+    }
+  }
+  const arenaBackup = (id: string) => arenaBackups.get(id);
+  const arenaStatuses = (id: string): DeckStatus[] => ['arena', arenaBackup(id) ? 'backed' : 'unbacked'];
+  const filterStatuses: DeckStatus[] = view === 'arena' ? ['arena', 'backed', 'unbacked'] : view === 'trash' ? ['trash', 'native', 'text', 'partial'] : ['arena', 'collection', 'unknown', 'native', 'text', 'partial'];
   const visible = (library?.decks ?? []).filter((deck) =>
     Boolean(deck.trashed_at) === (view === 'trash')
+    && (statusFilter === 'all' || savedStatuses(deck).includes(statusFilter))
     && `${deck.name} ${deck.format_name} ${deck.tags.join(' ')}`.toLowerCase().includes(query.toLowerCase()));
   const selectedDeck = library?.decks.find((deck) => deck.id === selected);
   const activeDetail = detail?.id === selected && (!revision || detail.revision_id === revision) ? detail : null;
   const editingRevision = modal === 'revision';
-  const arenaDecks = (native?.decks ?? []).filter((deck) => `${deck.name} ${deck.format_name}`.toLowerCase().includes(query.toLowerCase()));
-  const inArena = (deck: { native_arena_ids?: string[] }) => (deck.native_arena_ids ?? []).some((id) => native?.decks.some((d) => d.id === id));
+  const arenaDecks = (native?.decks ?? []).filter((deck) => `${deck.name} ${deck.format_name}`.toLowerCase().includes(query.toLowerCase())
+    && (statusFilter === 'all' || arenaStatuses(deck.id).includes(statusFilter)));
   const checkedDecks = (library?.decks ?? []).filter((deck) => checked.includes(deck.id));
   const canRestoreSelection = checkedDecks.length > 0 && checkedDecks.length === checked.length
     && checkedDecks.every((deck) => deck.native_restorable && !deck.trashed_at && !inArena(deck));
@@ -149,6 +183,7 @@ export function DeckManagerPage() {
             connect: 'Arena decks refreshed.', backup: `Backed up ${count} deck${count === 1 ? '' : 's'} to your collection.`,
             store: `Moved ${count} deck${count === 1 ? '' : 's'} to your collection. Arena slots are available.`,
             restore: `Restored ${count} deck${count === 1 ? '' : 's'} directly to Arena.`, reconcile: 'Interrupted transfers reconciled. No Arena writes were repeated.',
+            add: 'Deck added directly to Arena.',
           };
           setNotice(messages[job.result?.action ?? 'connect']);
         }
@@ -186,7 +221,16 @@ export function DeckManagerPage() {
     setNativeJob(job.job_id); setNativeProgress('Connecting to Arena…');
   }
 
-  function changeView(next: 'saved' | 'trash' | 'arena') { setView(next); setChecked([]); setError(''); setNotice(''); }
+  function changeView(next: 'saved' | 'trash' | 'arena') { setView(next); setChecked([]); setStatusFilter('all'); setError(''); setNotice(''); }
+
+  function filterByStatus(status: DeckStatus | 'all') { setStatusFilter(status); setChecked([]); }
+
+  function statusPills(statuses: DeckStatus[]) {
+    return <div className="deck-manager-status-pills">{statuses.map((status) =>
+      <button type="button" key={status} className={`deck-manager-status-pill deck-manager-status-${status}`} disabled={busy}
+        aria-label={`Filter by ${statusLabels[status]}`} title={`Show ${statusLabels[status].toLowerCase()} decks`}
+        onClick={() => filterByStatus(status)}>{statusLabels[status]}</button>)}</div>;
+  }
 
   function toggleChecked(id: string) { setChecked((value) => value.includes(id) ? value.filter((item) => item !== id) : [...value, id]); }
 
@@ -256,6 +300,10 @@ export function DeckManagerPage() {
           <button aria-pressed={view === 'trash'} disabled={busy} onClick={() => changeView('trash')}><Trash2 size={16} /> Trash</button>
         </div>
         <input type="search" className="deck-manager-search" aria-label="Search saved decks" placeholder="Search names, formats or tags" value={query} disabled={busy} onChange={(e) => { setQuery(e.target.value); setChecked([]); }} />
+        <select className="deck-manager-status-filter" aria-label="Filter decks by status" value={statusFilter} disabled={busy} onChange={(e) => filterByStatus(e.target.value as DeckStatus | 'all')}>
+          <option value="all">All statuses</option>
+          {filterStatuses.map((status) => <option key={status} value={status}>{statusLabels[status]}</option>)}
+        </select>
         <div className="deck-manager-toolbar deck-manager-collection-actions">
           <button disabled={busy || !native?.available || native.in_game} title={native?.message} onClick={() => void action(() => nativeAction('connect', []))}><RefreshCw size={16} />{native?.connected ? 'Refresh Arena' : 'Connect to Arena'}</button>
           {!native?.available ? <button disabled={busy} title="Back up decklists available in Arena’s log" onClick={() => void action(async () => {
@@ -281,24 +329,27 @@ export function DeckManagerPage() {
         <button className="deck-manager-delete" disabled={busy || !checkedDecks.length} onClick={confirmRemoval}><Trash2 size={16} />{view === 'trash' ? 'Delete selected permanently' : 'Move selected to trash'}</button>
       </div>}
       <div className="deck-manager-decks">
-        {view === 'arena' ? arenaDecks.map((deck) => <label key={deck.id} className="deck-manager-arena-tile">
-          <input type="checkbox" aria-label={`Select ${deck.name}`} checked={checked.includes(deck.id)} disabled={busy} onChange={() => toggleChecked(deck.id)} />
-          <DeckVisual deckName={deck.name} visual={{ card_name: null, card_id: null, type_category: 'Other', source: 'local_metadata', image_url: null }} />
+        {view === 'arena' ? arenaDecks.map((deck) => <div key={deck.id} className="deck-manager-tile-wrapper">
+          <label className="deck-manager-tile-select" title={`Select ${deck.name}`}><input className="deck-manager-tile-check" type="checkbox" aria-label={`Select ${deck.name}`} checked={checked.includes(deck.id)} disabled={busy} onChange={() => toggleChecked(deck.id)} /></label>
+          <button type="button" className={`deck-manager-tile deck-manager-arena-tile${checked.includes(deck.id) ? ' deck-manager-tile-selected' : ''}`} disabled={busy} onClick={() => toggleChecked(deck.id)} aria-label={`Toggle selection of ${deck.name}`}>
+          <DeckVisual deckName={deck.name} visual={deckArt(arenaArtwork.get(deck.id)?.art_card ?? deck.art_card, arenaArtwork.has(deck.id) ? null : deck.art_card_id)} />
           <span className="deck-manager-tile-text"><strong>{deck.name}</strong><small>{deck.format_name || 'Any format'} · {deck.main_count} cards</small></span>
-        </label>) : visible.map((deck) => (
+          </button>
+          {statusPills(arenaStatuses(deck.id))}
+        </div>) : visible.map((deck) => (
           <div className="deck-manager-tile-wrapper" key={deck.id}>
           <label className="deck-manager-tile-select" title={`Select ${deck.name}`} onClick={(event) => event.stopPropagation()}>
             <input className="deck-manager-tile-check" type="checkbox" aria-label={`Select ${deck.name}`} checked={checked.includes(deck.id)} disabled={busy} onChange={() => toggleChecked(deck.id)} />
           </label>
           <button key={deck.id} className="deck-manager-tile" onClick={() => choose(deck.id)} aria-haspopup="dialog" title={deck.name}>
-            <DeckVisual deckName={deck.name} visual={{ card_name: deck.art_card, card_id: null, type_category: 'Other', source: 'local_metadata', image_url: deck.art_card && !deck.art_card.startsWith('Card #') ? `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(deck.art_card)}&format=image&version=art_crop` : null }} />
+            <DeckVisual deckName={deck.name} visual={deckArt(deck.art_card)} />
             <span className="deck-manager-tile-text">
               <strong>{deck.name}</strong>
               <small>{deck.format_name || 'Format not specified'} · {deck.main_count} cards</small>
-              {native?.connected && inArena(deck) ? <small>In Arena</small> : null}
               <small>Updated: <time dateTime={deck.updated_at} title={formatDateTime(deck.updated_at)}>{new Date(deck.updated_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</time></small>
             </span>
           </button>
+          {statusPills(savedStatuses(deck))}
           </div>
         ))}
       </div>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Archive, Check, Copy, Dices, ExternalLink, RefreshCw } from 'lucide-react';
-import { importManagedDeck } from '../deckManagerApi';
+import { Archive, Check, Copy, Dices, ExternalLink, Plus, RefreshCw } from 'lucide-react';
+import { importManagedDeck, addDeckToArena, fetchNativeDeckStatus, fetchNativeDeckJob, type NativeDeckStatus } from '../deckManagerApi';
 import {
   fetchDeckFinderJob,
   fetchDeckFinderProviders,
@@ -104,10 +104,64 @@ export function DeckFinderPage() {
   const [savedDeckId, setSavedDeckId] = useState<{ id: string; source: string } | null>(null);
   const [saveError, setSaveError] = useState<{ message: string; source: string } | null>(null);
   const [saving, setSaving] = useState(false);
+  const [nativeStatus, setNativeStatus] = useState<NativeDeckStatus | null>(null);
+  const [arenaJob, setArenaJob] = useState<{ id: string; source: string } | null>(null);
+  const [arenaFeedback, setArenaFeedback] = useState<{ source: string; message: string; error: boolean } | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [addedSource, setAddedSource] = useState<string | null>(null);
+  const [nativeRefresh, setNativeRefresh] = useState(0);
   const requestSeq = useRef(0);
   // What produced the current results — reused by Refresh, variants context,
   // and "back to results" after a variants drill-down.
   const [lastFetch, setLastFetch] = useState<FetchArgs | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    async function poll() {
+      try {
+        const status = await fetchNativeDeckStatus(controller.signal);
+        if (!controller.signal.aborted) setNativeStatus(status);
+      } catch { /* Provider browsing and clipboard export remain available. */ }
+      if (!controller.signal.aborted) timer = setTimeout(() => void poll(), 5000);
+    }
+    void poll();
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [nativeRefresh]);
+
+  useEffect(() => {
+    if (!arenaJob) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    async function poll() {
+      try {
+        const job = await fetchNativeDeckJob(arenaJob!.id, controller.signal);
+        if (controller.signal.aborted) return;
+        setArenaFeedback({ source: arenaJob!.source, message: job.state === 'done' ? 'Deck added to Arena and backed up in your collection.' : job.detail, error: job.state === 'error' });
+        if (job.state === 'running') { timer = setTimeout(() => void poll(), JOB_POLL_MS); return; }
+        if (job.state === 'done') setAddedSource(arenaJob!.source);
+      } catch (error: unknown) {
+        if (controller.signal.aborted) return;
+        setArenaFeedback({ source: arenaJob!.source, message: error instanceof Error ? error.message : 'Check Deck Manager before retrying this transfer.', error: true });
+      }
+      setArenaJob(null); setAdding(false); setNativeRefresh((value) => value + 1);
+    }
+    void poll();
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [arenaJob]);
+
+  async function addSelectedDeck() {
+    if (!selectedDeck?.deck_text || adding || nativeStatus?.in_game) return;
+    const source = selectedDeck.source_url + selectedDeck.name;
+    setAdding(true); setArenaFeedback(null);
+    try {
+      const result = await addDeckToArena(formatArenaImportText(selectedDeck.deck_text) || '', selectedDeck.name, selectedDeck.format_label || '');
+      setArenaJob({ id: result.job_id, source });
+    } catch (error: unknown) {
+      setAdding(false);
+      setArenaFeedback({ source, message: error instanceof Error ? error.message : 'Could not add this deck to Arena.', error: true });
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -662,6 +716,10 @@ export function DeckFinderPage() {
               </p>
             </div>
             <div className="deckfinder-detail-actions">
+              {nativeStatus?.available ? <button className="deck-export-button" type="button"
+                disabled={adding || addedSource === selectedDeck.source_url + selectedDeck.name || nativeStatus.busy || nativeStatus.in_game || nativeStatus.limit_reached === true || Boolean(nativeStatus.pending_transfers?.length) || !selectedDeck.deck_text}
+                title={nativeStatus.in_game ? 'Finish your current game first.' : nativeStatus.limit_reached ? 'Free an Arena deck slot first.' : 'Arena must be open on Decks outside a match.'}
+                onClick={() => void addSelectedDeck()}>{addedSource === selectedDeck.source_url + selectedDeck.name ? <Check aria-hidden="true" /> : <Plus aria-hidden="true" />}{adding ? 'Adding…' : addedSource === selectedDeck.source_url + selectedDeck.name ? 'Added to Arena' : 'Add to Arena'}</button> : null}
               <button className="deck-neutral-button" disabled={saving || !selectedDeck.deck_text} type="button" onClick={() => {
                 setSaving(true); setSaveError(null);
                 void importManagedDeck(formatArenaImportText(selectedDeck.deck_text) || '', selectedDeck.name, selectedDeck.format_label || '')
@@ -680,7 +738,7 @@ export function DeckFinderPage() {
                   ? 'Copied'
                   : copyStatus === 'error'
                     ? 'Export Failed'
-                    : 'Export to Arena'}
+                    : 'Copy for Arena'}
               </button>
               <a
                 className="deck-neutral-button"
@@ -694,6 +752,8 @@ export function DeckFinderPage() {
           </div>
           {savedDeckId?.source === selectedDeck.source_url + selectedDeck.name ? <p role="status">Deck saved. <a href="#/deck-manager">Open Deck Manager</a></p> : null}
           {saveError?.source === selectedDeck.source_url + selectedDeck.name ? <p role="alert">{saveError.message}</p> : null}
+          {arenaFeedback?.source === selectedDeck.source_url + selectedDeck.name ? <p role={arenaFeedback.error ? 'alert' : 'status'}>{arenaFeedback.message} {arenaFeedback.error ? <a href="#/deck-manager">Open Deck Manager</a> : null}</p> : null}
+          {nativeStatus?.available ? <p className="section-description">To add this deck directly, leave Arena on Decks outside a match with a free deck slot.</p> : null}
           {selectedDeck.deck_text ? (
             <pre className="deckfinder-decklist">{formatArenaImportText(selectedDeck.deck_text)}</pre>
           ) : hydrating ? (

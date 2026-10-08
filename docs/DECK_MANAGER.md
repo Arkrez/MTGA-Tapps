@@ -38,6 +38,14 @@ connection before attachment, and native writes also require the live Decks scre
   It does not use the clipboard. Fresh capacity checks stop the batch when slots
   are full; move an active deck out first. Already-present decks cannot be restored
   again through the same binding.
+- In **Deck Finder**, **Add to Arena** parses the selected list with Arena's own
+  importer, verifies that no card quantities or piles were dropped, saves a full
+  native backup in your collection, and uses the same journaled create/verification
+  path as restore. Arena must be on **Decks outside a match**, with a free slot.
+  No previous connection click is required. Missing/unresolved cards or a reduced
+  list stop before creation; the button never crafts cards. **Copy for Arena**
+  remains available for manual import. Native parsing passed a live four-Forest
+  check; the complete direct-add create step still needs user-selected live testing.
 
 Jobs run in the background, one transfer at a time, and stop on the first failure.
 Completed transfers stay completed. The dashboard monitors progress, refreshes
@@ -82,7 +90,14 @@ Unresolved card IDs are preserved and shown as `Card #ID`.
 Search names, formats and tags in the full-page deck grid. It shows four columns
 on wide screens, three at medium widths, and fewer on narrow screens, with all
 rows available through normal page scrolling. Each tile shows its latest update
-date; hover the date for its full timestamp. Click a tile to open a dialog with
+date; hover the date for its full timestamp. Saved and Arena tiles use the same
+height and artwork size. Arena uses the matching saved artwork when available,
+or its roster's selected printing ID; the shared loader retains its fallback.
+Bottom-right colored pills identify **In Arena**, **Collection only**, **Not
+checked** or **In Trash**, and the backup type. Arena shows **Backed up** when a
+full native backup is present in Saved, otherwise **Not backed up**. Click a pill
+or use the status selector to filter, alongside the existing text search.
+Click a saved tile to open a dialog with
 the deck’s sections, notes and saved revisions. **Save an edited revision…**
 starts from the selected list;
 earlier snapshots remain available. The dialog supports Escape/backdrop dismissal,
@@ -121,8 +136,9 @@ whose editable installation points to another checkout.
 This starts no second tracker. Playing a game continues to write analytics only
 through the existing tracker. The preview reads its live-game row using read-only
 SQLite connections, blocks native attachment during a game, and fails closed if
-the game guard cannot be read. Only Deck Manager writes are permitted from this
-test server; app settings and analytics restore/reset are disabled.
+the game guard cannot be read. Deck Manager writes and Deck Finder's read-oriented
+fetch/hydrate/variants/surprise jobs are permitted from this test server; app
+settings and analytics restore/reset are disabled.
 
 Local imports, revisions and Trash affect the separate test library. **Connect**,
 backup, move and restore use the real running Arena client: a confirmed move removes

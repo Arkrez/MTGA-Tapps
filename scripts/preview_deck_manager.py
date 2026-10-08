@@ -12,6 +12,15 @@ from urllib.parse import urlparse
 from mtga_tracker import dashboard, deck_manager as dm, deck_native_api as api
 
 
+def preview_write_allowed(path):
+    return path.startswith("/api/deck-manager/") or path in {
+        "/api/deckfinder/fetch",
+        "/api/deckfinder/variants",
+        "/api/deckfinder/hydrate",
+        "/api/deckfinder/surprise",
+    }
+
+
 def create_preview_server(db: Path, tracker_db: Path, port: int):
     db = db.expanduser().resolve()
     tracker_db = tracker_db.expanduser().resolve()
@@ -41,7 +50,7 @@ def create_preview_server(db: Path, tracker_db: Path, port: int):
 
     class PreviewHandler(base_handler):
         def do_POST(self):
-            if urlparse(self.path).path.startswith("/api/deck-manager/"):
+            if preview_write_allowed(urlparse(self.path).path):
                 return super().do_POST()
             # Other pages can be browsed, but cannot change global app settings,
             # launch companions, restore analytics or control the running app.
@@ -49,7 +58,7 @@ def create_preview_server(db: Path, tracker_db: Path, port: int):
             dashboard._send_bytes(
                 self,
                 403,
-                b'{"error":"This preview only manages its separate deck library."}',
+                b'{"error":"This preview only supports Deck Manager and Deck Finder."}',
                 "application/json",
             )
 

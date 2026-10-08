@@ -52,6 +52,9 @@ class ArenaBridge:
     def create(self, archive, arena_id):
         return self.exports.create(self.account_id, archive, arena_id)
 
+    def prepare_import(self, text, name, arena_id):
+        return self.exports.prepareimport(self.account_id, text, name, arena_id)
+
     def remove(self, snapshot):
         return self.exports.remove(self.account_id, snapshot)
 

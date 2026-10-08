@@ -10,9 +10,10 @@ import pytest
 from mtga_tracker import dashboard, deck_native_api as api
 
 
-create_preview = runpy.run_path(
+preview_module = runpy.run_path(
     str(Path(__file__).resolve().parents[1] / "scripts" / "preview_deck_manager.py")
-)["create_preview_server"]
+)
+create_preview = preview_module["create_preview_server"]
 
 
 def test_preview_uses_isolated_library_and_fresh_read_only_game_guard(tmp_path, monkeypatch):
@@ -49,3 +50,17 @@ def test_preview_rejects_the_tracker_database_and_its_alias(tmp_path):
     for preview in (tracker, alias):
         with pytest.raises(ValueError, match="separate"):
             create_preview(preview, tracker, 0)
+
+
+def test_preview_allows_deck_finder_reads_but_rejects_app_and_database_controls():
+    allowed = preview_module["preview_write_allowed"]
+    assert allowed("/api/deck-manager/native/run")
+    for action in ("fetch", "hydrate", "variants", "surprise"):
+        assert allowed("/api/deckfinder/" + action)
+    for path in (
+        "/api/settings",
+        "/api/deck-downloader/launch",
+        "/api/backup/restore",
+        "/api/db/reset",
+    ):
+        assert not allowed(path)

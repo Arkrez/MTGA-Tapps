@@ -65,3 +65,10 @@ test('full Arena slots block native construction and creation',async()=>{
   await assert.rejects(vm.runInContext("createDeck('fixture',{},'new')",context),/slots are full/);
   assert.deepEqual(calls,['il2cpp_gchandle_get_target','il2cpp_object_unbox']);
 });
+
+test('native text preparation requires Decks before touching import providers',async()=>{
+  const {context,calls}=runtime();
+  vm.runInContext('deckScreenOpen=()=>false;onUnityThread=async run=>run()',context);
+  await assert.rejects(vm.runInContext("prepareImport('fixture','Deck\\n4 Forest','Test','12345678-1234-1234-1234-123456789abc')",context),/outside a match/);
+  assert.deepEqual(calls,['il2cpp_gchandle_get_target']);
+});

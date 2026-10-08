@@ -389,3 +389,85 @@ def test_tracked_game_blocks_attachment_before_any_native_call(tmp_path, monkeyp
     with pytest.raises(dm.DeckManagerError, match="Finish your current game"):
         api.execute(path, "connect", [], str(uuid.uuid4()), lambda _: None)
     assert api.status(path)["in_game"] is True
+
+
+def imported_arena(quantity=4):
+    arena = Arena()
+
+    def prepare(text, name, identity):
+        arena.calls.append("prepare_import")
+        prepared = deck()
+        prepared["name"] = prepared["summary"]["Name"] = name
+        prepared["arena_id"] = prepared["summary"]["DeckId"] = identity
+        prepared["piles"][0]["entries"][0]["quantity"] = quantity
+        return archive(prepared)
+
+    arena.prepare_import = prepare
+    return arena
+
+
+def test_native_text_import_uses_journaled_creation_and_never_repeats_request(conn):
+    arena = imported_arena()
+    request_id = str(uuid.uuid4())
+    selection = {
+        "text": "Deck\n2 Forest\n2 Forest",
+        "name": "Finder deck",
+        "format_name": "Standard",
+    }
+    report = dt.add_import(conn, arena, selection, request_id, arena.roster(), lambda _: "Forest")
+    assert len(report["decks"]) == 2
+    assert arena.calls.count("create") == 1
+    assert arena.calls.count("prepare_import") == 1
+    assert dt.pending(conn) == []
+    dt.add_import(conn, arena, selection, request_id, report, lambda _: "Forest")
+    assert arena.calls.count("create") == 1
+    assert arena.calls.count("prepare_import") == 1
+    with pytest.raises(dm.DeckManagerError, match="another decklist"):
+        dt.add_import(
+            conn,
+            arena,
+            {**selection, "text": "Deck\n1 Forest"},
+            request_id,
+            report,
+            lambda _: "Forest",
+        )
+
+
+def test_native_text_import_rejects_inventory_clamping_without_create_or_backup(conn):
+    arena = imported_arena(quantity=3)
+    with pytest.raises(dm.DeckManagerError, match="changed the card list"):
+        dt.add_import(
+            conn,
+            arena,
+            {"text": "Deck\n4 Forest", "name": "Finder deck", "format_name": "Standard"},
+            str(uuid.uuid4()),
+            arena.roster(),
+            lambda _: "Forest",
+        )
+    assert "create" not in arena.calls
+    assert dm.list_decks(conn) == []
+
+
+def test_native_text_import_rejects_full_slots_before_parser_call(conn):
+    arena = imported_arena()
+    arena.full = True
+    with pytest.raises(dm.DeckManagerError, match="free deck slot"):
+        dt.add_import(
+            conn,
+            arena,
+            {"text": "Deck\n4 Forest", "name": "Finder deck", "format_name": "Standard"},
+            str(uuid.uuid4()),
+            arena.roster(),
+            lambda _: "Forest",
+        )
+    assert arena.calls == []
+
+
+def test_public_arena_roster_exposes_art_without_another_native_call():
+    arena = Arena()
+    arena.source["summary"]["DeckArtId"] = 456
+    report = api._public_roster(arena.roster())
+    assert report["decks"][0]["art_card_id"] == 456
+    del arena.source["summary"]["DeckArtId"]
+    assert api._public_roster(arena.roster())["decks"][0]["art_card_id"] == 123
+    assert arena.calls == []

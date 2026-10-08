@@ -4,6 +4,14 @@
 
 ### Features
 
+- Saved and Arena deck tiles share artwork sizing and fixed tile heights. Colored
+  bottom-right location/backup pills can be filtered by clicking or through the
+  status selector. Arena artwork reuses library images or the roster's printing ID.
+- Deck Finder adds a direct **Add to Arena** action through native text preparation
+  and journaled restore, with full-slot/game/pending guards and rejection of changed
+  card quantities. **Copy for Arena** names the existing clipboard action clearly.
+  Live native parsing passed without saving/removing a deck; full direct-add creation
+  remains available for user-selected integration testing on the separate dashboard.
 - Deck Manager selection moves to the top right with a larger click target.
   Bulk-action buttons match the existing page styles. All saved decks can be
   selected for an atomic move to Trash; trashed decks can be permanently deleted

@@ -5753,11 +5753,12 @@ a.sidebar-deck-finder {
 .deck-manager-confirmation-list li:last-child { border-bottom: 0; }
 .deck-manager-confirmation-list small { display: block; margin-top: 4px; color: var(--muted); }
 .deck-manager-toolbar button:disabled, .deck-manager-heading-actions button:disabled { opacity: 0.5; cursor: default; }
-.deck-manager-search, .deck-manager-modal input, .deck-manager-modal textarea, .deck-manager-modal select {
+.deck-manager-search, .deck-manager-status-filter, .deck-manager-modal input, .deck-manager-modal textarea, .deck-manager-modal select {
   box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
   background: var(--surface); color: var(--text); font: inherit; font-size: 0.9rem;
 }
 .deck-manager-search { flex: 1 1 260px; min-width: 180px; max-width: 460px; }
+.deck-manager-status-filter { max-width: 180px; }
 .deck-manager-modal input, .deck-manager-modal textarea, .deck-manager-modal select { display: block; width: 100%; margin: 8px 0; }
 .deck-manager-modal textarea { resize: vertical; }
 .deck-manager-import > label > textarea { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; line-height: 1.6; }
@@ -5772,14 +5773,8 @@ a.sidebar-deck-finder {
 .deck-manager-tile-select:focus-within { outline: 2px solid var(--deck-manager-accent); outline-offset: 1px; }
 .deck-manager-tile-check { accent-color: var(--deck-manager-accent); width: 24px; height: 24px; margin: 0; cursor: pointer; }
 .deck-manager-tile-wrapper:has(input:checked) .deck-manager-tile { border-color: var(--deck-manager-accent); }
-.deck-manager-arena-tile { position: relative; display: flex; align-items: center; gap: 12px; min-width: 0; padding: 14px 60px 14px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); cursor: pointer; }
-.deck-manager-arena-tile:has(input:checked) { border-color: var(--deck-manager-accent); }
-.deck-manager-arena-tile input { position: absolute; top: 14px; right: 14px; accent-color: var(--deck-manager-accent); width: 24px; height: 24px; margin: 0; }
-.deck-manager-arena-tile .deck-visual { width: 54px; height: 54px; flex: 0 0 54px; }
-.deck-manager-arena-tile strong { display: block; overflow-wrap: anywhere; font-size: 0.95rem; }
-.deck-manager-arena-tile small { display: block; color: var(--muted); font-size: 0.8rem; margin-top: 5px; }
 .deck-manager-tile {
-  display: flex; align-items: center; gap: 14px; min-height: 114px; padding: 14px 60px 14px 14px;
+  display: flex; align-items: center; gap: 14px; height: 156px; min-height: 156px; box-sizing: border-box; padding: 14px 60px 42px 14px;
   text-align: left; width: 100%; min-width: 0; border: 1px solid var(--border); border-radius: 10px;
   background: var(--surface); color: var(--text); font: inherit; cursor: pointer;
   transition: border-color 120ms ease, background 120ms ease;
@@ -5789,6 +5784,19 @@ a.sidebar-deck-finder {
 .deck-manager-tile-text { min-width: 0; }
 .deck-manager-tile strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; font-size: 0.95rem; line-height: 1.35; }
 .deck-manager-tile small { display: block; margin-top: 5px; color: var(--muted); font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.deck-manager-status-pills { position: absolute; right: 12px; bottom: 10px; left: 12px; display: flex; justify-content: flex-end; gap: 6px; }
+.deck-manager-status-pill { --deck-status: var(--muted); flex-shrink: 0; padding: 3px 8px; min-height: 24px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--deck-status) 55%, var(--border)); background: color-mix(in srgb, var(--deck-status) 12%, var(--surface)); color: var(--deck-status); font: inherit; font-size: 0.68rem; line-height: 1.3; cursor: pointer; }
+.deck-manager-status-pill:hover, .deck-manager-status-pill:focus-visible { border-color: var(--deck-status); background: color-mix(in srgb, var(--deck-status) 22%, var(--surface)); }
+.deck-manager-status-arena, .deck-manager-status-backed { --deck-status: #80dba9; }
+.deck-manager-status-collection { --deck-status: var(--deck-manager-accent); }
+.deck-manager-status-native { --deck-status: #8ccaff; }
+.deck-manager-status-text { --deck-status: #c9b0ff; }
+.deck-manager-status-partial, .deck-manager-status-unbacked { --deck-status: #e5bb69; }
+.deck-manager-status-trash { --deck-status: var(--danger); }
+:root[data-theme="light"] .deck-manager-status-arena, :root[data-theme="light"] .deck-manager-status-backed { --deck-status: #126b36; }
+:root[data-theme="light"] .deck-manager-status-native { --deck-status: #195bb0; }
+:root[data-theme="light"] .deck-manager-status-text { --deck-status: #7041a0; }
+:root[data-theme="light"] .deck-manager-status-partial, :root[data-theme="light"] .deck-manager-status-unbacked { --deck-status: #7c5800; }
 .deck-manager-modal {
   box-sizing: border-box; width: min(760px, calc(100% - 40px)); max-height: calc(100dvh - 48px);
   overflow-y: auto; overscroll-behavior: contain; padding: 24px; border: 1px solid var(--border); border-radius: 14px;

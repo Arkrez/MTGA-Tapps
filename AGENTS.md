@@ -130,6 +130,11 @@ Primary code paths:
   The collection uses a full-page responsive tile grid; details/revision editing and
   new imports open native dialogs. CardLink previews portal into their containing
   dialog so the browser’s top layer does not obscure them.
+  Saved/Arena tiles share a fixed height and 76px artwork. Arena reuses matching
+  library artwork or its roster printing ID, with the existing Scryfall loader.
+  Bottom-right colored status/backup pills filter through clicks or the status
+  selector; changing a filter clears selection. An unconnected roster must show
+  Not checked, never infer Collection only from a missing native observation.
   Moving a deck to Trash opens a recoverable-action confirmation; native Restore
   to Arena (or Copy for Arena for text-only revisions) appears as a yellow button
   in the deck dialog header beside Close.
@@ -150,6 +155,15 @@ Primary code paths:
   `native_deck_archive.py` + `assets/arena_decks.js`: direct native Deck Manager
   jobs, explicitly started from the dashboard. GET/status polling never attaches.
   The Arena tab supports bulk backup/move; Saved supports direct native restores.
+  Deck Finder's Add to Arena uses explicit `add` jobs. Arena's TryImportDeck parses
+  text in memory with live Decks providers; validate complete pile/card-name counts
+  before persisting a native archive and calling the existing journaled restore.
+  Reject inventory clamping/unresolved names/Maybeboard instead of creating a partial
+  list. Import request IDs retain text/name/format provenance and must not replay as
+  different lists. The localization provider is the verified static field
+  `Wotc.Mtga.Loc.Languages.ActiveLocProvider`, not a getter; CurrentLanguage is a getter.
+  A live four-Forest parsing check passed without any create/delete call. Full
+  direct-add create/verification still needs user-selected live validation.
   Do not attach or restart Arena/tracker while the user plays. Wait for the user to explicitly report
   being out of a match on Decks before any live validation; app restarts still
   require explicit approval.
@@ -175,7 +189,8 @@ Primary code paths:
   runs only a dashboard on port 8880 by default, with live Arena actions. Its game
   guard reads the active DB in read-only mode on each check, fails closed when
   unavailable, and rejects sharing that database with the test library. Other
-  dashboard POST routes are disabled. It starts no tracker or desktop app.
+  dashboard POST routes are disabled except read-oriented Deck Finder fetch,
+  hydrate, variants and surprise jobs. It starts no tracker or desktop app.
   `tests/test_deck_manager_preview.py` covers isolation and fresh game-status checks.
 - `src/mtga_tracker/deck_capture.py`: the existing log-entry pipeline archives available
   `DeckUpsertDeckV3` / `EventSetDeckV3` outgoing lists for any format before game-exclusion

@@ -10,7 +10,7 @@ const targets = new Set([
   'Client_DeckCard', 'Client_CardSkin', 'EDeckPile',
   'TMP_Text', 'Application', 'GameObject',
   'Guid',
-  'JsonConvert', 'DeckInfo',
+  'JsonConvert', 'DeckInfo', 'Languages', 'MTGALocalizedString',
 ]);
 const game = Process.findModuleByName('GameAssembly.dylib')
   ?? Process.findModuleByName('GameAssembly.dll');
@@ -52,6 +52,8 @@ const stringChars = api('string_chars', 'pointer', ['pointer']);
 const runtimeInvoke = api('runtime_invoke', 'pointer', ['pointer', 'pointer', 'pointer', 'pointer']);
 const objectUnbox = api('object_unbox', 'pointer', ['pointer']);
 const classType = api('class_get_type', 'pointer', ['pointer']);
+const classValueSize = api('class_value_size', 'int', ['pointer', 'pointer']);
+const classIsValueType = api('class_is_valuetype', 'bool', ['pointer']);
 const typeObject = api('type_get_object', 'pointer', ['pointer']);
 const stringNew = api('string_new', 'pointer', ['pointer']);
 const fieldSet = api('field_set_value', 'void', ['pointer', 'pointer', 'pointer']);
@@ -518,6 +520,66 @@ async function archiveDecks(account,ids) {
     return archives;
   });
 }
+async function prepareImport(account,deckText,name,id) {
+  if (typeof deckText!=='string' || !deckText.length || deckText.length>20000
+      || typeof name!=='string' || !name.length || name.length>256 || !/^[0-9a-f-]{36}$/.test(id)) {
+    throw new Error('Invalid bounded Arena import.');
+  }
+  return onUnityThread(()=>{
+    guard(account,true);
+    if (cachedDecks(root()).some(d=>guidText(fieldAt(ref(d,'_summary'),'DeckId'))===id)) {
+      throw new Error('Import identity already exists. Reconcile before continuing.');
+    }
+    const includeInactive=Memory.alloc(1);includeInactive.writeU8(0);
+    const controllers=array(invoke(findMethod('UnityEngine.Object','FindObjectsOfType',['System.Type','System.Boolean']),NULL,
+      [typeObject(classType(classes.get('.DeckManagerController'))),includeInactive]));
+    if (controllers.length!==1) throw new Error('The Decks import controller is unavailable.');
+    const controller=controllers.data.readPointer();
+    const cardDb=ref(controller,'_cardDatabase'),setMeta=ref(controller,'_setMetadataProvider');
+    const inventory=ref(wrapperObject(),'<InventoryManager>k__BackingField');
+    if (cardDb.isNull() || setMeta.isNull() || inventory.isNull()) throw new Error('Arena import providers are unavailable.');
+    const cards=invoke(objectMethod(inventory,'get_Cards',[]),inventory);
+    const locField=fields(classes.get('Wotc.Mtga.Loc.Languages')).get('ActiveLocProvider');
+    if (!locField || !(fieldFlags(locField)&0x10) || typeLabel(fieldType(locField))!=='Wotc.Mtga.Loc.IClientLocProvider') {
+      throw new Error('Unsupported Arena localization provider.');
+    }
+    const locValue=Memory.alloc(Process.pointerSize);locValue.writePointer(NULL);staticValue(locField,locValue);
+    const loc=locValue.readPointer();
+    const language=invoke(findMethod('Wotc.Mtga.Loc.Languages','get_CurrentLanguage',[]));
+    if (cards.isNull() || loc.isNull() || language.isNull()) throw new Error('Arena import providers are not ready.');
+    const errorClass=classes.get('.MTGALocalizedString');
+    if (!errorClass) throw new Error('Unsupported Arena import error type.');
+    const alignment=Memory.alloc(4);
+    const size=classIsValueType(errorClass) ? classValueSize(errorClass,alignment) : Process.pointerSize;
+    if (size<1 || size>512) throw new Error('Unsupported Arena import error layout.');
+    const errorOut=Memory.alloc(size),deckOut=Memory.alloc(Process.pointerSize);deckOut.writePointer(NULL);
+    const input=stringObject(deckText),heldInput=handleNew(input,0);
+    let heldDeck=null;
+    try {
+      const result=invoke(findMethod('.WrapperDeckUtilities','TryImportDeck',[
+        'System.String','Wotc.Mtga.Cards.Database.ICardDatabaseAdapter',
+        'SharedClientCore.SharedClientCore.Code.Providers.ISetMetadataProvider',
+        'Wotc.Mtga.Loc.IClientLocProvider','System.Collections.Generic.Dictionary<System.UInt32,System.Int32>',
+        'System.String','Wizards.Mtga.Decks.Client_Deck&','MTGALocalizedString&',
+      ]),NULL,[input,cardDb,setMeta,loc,cards,language,deckOut,errorOut]);
+      const draft=deckOut.readPointer();
+      if (!objectUnbox(result).readU8() || draft.isNull()) throw new Error('Arena could not import this decklist. No deck was created.');
+      heldDeck=handleNew(draft,0);
+      const summary=ref(draft,'_summary'),guid=parseGuid(id),guidHandle=handleNew(guid,0);
+      try {fieldSet(summary,fields(objectClass(summary)).get('DeckId'),objectUnbox(guid));}
+      finally {handleFree(guidHandle);}
+      const title=stringObject(name),heldTitle=handleNew(title,0);
+      try {fieldSetObject(summary,fields(objectClass(summary)).get('Name'),title);}
+      finally {handleFree(heldTitle);}
+      const model=invoke(findMethod('Wizards.Mtga.Decks.DeckServiceWrapperHelpers','ToAzureModel',['Wizards.Mtga.Decks.Client_Deck']),NULL,[draft]);
+      const heldModel=handleNew(model,0);
+      const source=deckSnapshot(draft);
+      try {return {schema:1,archive_kind:'arena_typed_model_poc',model_json:serializeModel(model),
+        summary_json:physicalSummaryJson(serializeModel(summary),source.summary),source_snapshot:source,pile_names:snapshot().pile_names};}
+      finally {handleFree(heldModel);}
+    } finally {if(heldDeck)handleFree(heldDeck);handleFree(heldInput);}
+  });
+}
 async function createDeck(account,archive,id) {
   let draftHandle;
   try {
@@ -565,5 +627,5 @@ async function removeDeck(account,snapshot) {
     return true;
   },true);
 }
-rpc.exports={open:openConnection,roster,archive:archiveDecks,fetchdeck:fullDeck,create:createDeck,remove:removeDeck,
+rpc.exports={open:openConnection,roster,archive:archiveDecks,fetchdeck:fullDeck,create:createDeck,remove:removeDeck,prepareimport:prepareImport,
   close(){return onUnityThread(releaseConnection);}};
