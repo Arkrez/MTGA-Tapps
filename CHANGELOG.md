@@ -4,6 +4,11 @@
 
 ### Features
 
+- Deck Finder provider boxes have subtle backgrounds in each site's color,
+  with stronger hover and selection tints. Removed the redundant Site label
+  and moved Surprise Me beside the Browse Decks collapse control. Each deck's
+  Source link now sits beside Export to Arena in the deck title row.
+
 - **Replay.** A new teal Replay tile above Deck Finder opens a list of recent
   games; each one plays back on a three.js table with real card images, both
   players' hands, libraries, graveyards and exile piles, the stack, life
@@ -48,7 +53,39 @@
   on the table wears a readable power/toughness badge across its lower edge
   (gold when it differs from the printed card) and every planeswalker in a
   recorded game shows its current loyalty there; other counters sit in a
-  small chip across the card's upper edge.
+  small chip across the card's upper edge. **Export video** on the transport
+  bar renders the replay to an MP4 in the browser (H.264 where available,
+  else VP9; nothing is uploaded): the table as it plays at the chosen speed
+  and pacing, from the start or the current moment, with the HUD, stat
+  badges, stack, targeting arrows, each action as a caption and the ending
+  screen, at up to Full HD; it runs faster than real time with a progress
+  bar and cancel, then saves the file. The video can carry the actions log
+  beside the table in the site's style (on by default; off gives a caption
+  band instead), has a quality setting (Smaller file / Balanced / Best, with
+  a size estimate in the dialog; Balanced is roughly a third of the earlier
+  rate), prefers the machine's hardware encoder, and skips re-rendering
+  frames where nothing moves. Export video sits beside Replay Options in
+  the teal replay color. Cards a permanent exiles (Deep-Cavern Bat, Pinnacle
+  Starcage) now show tucked under that permanent instead of in the exile
+  pile, for as long as it stays on the battlefield (recorded games), and
+  hovering the permanent lists everything tucked under it (thumbnail and
+  name per card, exiled ones tagged) below its preview and pictures each
+  distinct tucked card full size beside it, with a copy count; on the table
+  the host slides a little away from its fan and the strips compress so no
+  tucked card hides under the lands. The
+  felt is sharper (a finer, denser weave with anisotropic filtering), a
+  browser without WebGL gets a notice instead of a blank table, a resolved
+  stack item held while paused stands beside the stack rather than over its
+  top card, the transport buttons' symbols sit level with their labels, and a
+  cast card flies from the hand straight to the spot where the stack preview
+  shows it rather than across the table. Playback starts at turn 1 with both opening hands already dealt: the
+  scrub bar, the event counter, Home, Watch again and a whole-game video
+  export all begin there, and the card-by-card opening deal is no longer
+  shown. Equipment, auras and exiled-under cards fan tightly upward
+  behind their host, each showing its title strip (hover one for the full
+  card), so a creature wearing four pieces of equipment no longer sprawls
+  across its neighbour; on the opponent's side the fan rises toward their
+  lands.
 
 - Decks, All Games and Sessions now have numbered page buttons, first/last-page controls,
   and a Go to page field for jumping through long histories. The current page
@@ -61,7 +98,7 @@
   the provider's color. AetherHub has a sharper icon and Magic.gg uses
   a vector mark. Results sit beside a larger selected-deck panel, which shows
   the full list and separate sideboard/commander/companion sections.
-  Export to Arena sits at the far right of the selected deck's name. The first
+  Source and Export to Arena sit at the far right of the selected deck's name. The first
   detail result opens automatically; stale deck loads cannot replace a newer
   selection. All seven sites fit on one desktop row, with a stacked layout on
   narrow screens.
@@ -75,6 +112,19 @@
   loading message and Refresh for fresh lists.
 
 ### Fixes
+
+- The dashboard serves its built files with cache headers (hashed assets
+  are immutable, the page revalidates) over keep-alive HTTP/1.1 connections,
+  so a page load no longer re-downloads the whole app or opens a connection
+  per request. The mana-symbol font ships only as woff2 (187 KB instead of a
+  408 KB woff, and 3.5 MB of unused formats are gone from the build).
+
+- Creatures with 0 power (Exhibition Tidecaller, a 0/2) now show their
+  stat badge on the replay table and print as "(0/2)" in the console: Arena
+  encodes a zero stat as an empty object, which the tracker read as unknown.
+  Printed power and toughness are also backfilled into the cards table from
+  Arena's local card database at startup and after each game, so older
+  recorded games get the badge too.
 
 - Live Scoreboard puts the waiting status beside the format at the right of
   the header. Watch replay uses the same pill shape and size as the other

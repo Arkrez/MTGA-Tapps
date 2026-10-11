@@ -25,25 +25,34 @@ export function indexAtFraction(fraction: number, total: number): number {
   return Math.round(Math.min(1, Math.max(0, fraction)) * (total - 1));
 }
 
+/**
+ * One segment per turn over the navigable range, which starts at the first
+ * turn header (`openingEndIndex`): the opening deal before it is not on the
+ * bar. A stream without turn headers is one pre-game segment.
+ */
 export function scrubSegments(stream: ReplayStream): ScrubSegment[] {
   const events = stream.events;
   const total = events.length;
   if (!total) return [];
-  const segments: ScrubSegment[] = [];
-  const starts = stream.turns.map((turn) => Math.max(0, indexAtSeq(events, turn.first_seq)));
-  if (!stream.turns.length || starts[0] > 0) {
-    segments.push({ key: 'pregame', turn: null, seat: null, start: 0, end: 0, firstSeq: events[0].seq });
+  const first = openingEndIndex(events);
+  const span = Math.max(1, total - first);
+  if (!stream.turns.length) {
+    return [{ key: 'pregame', turn: null, seat: null, start: 0, end: 1, firstSeq: events[first].seq }];
   }
-  stream.turns.forEach((turn, i) => {
-    segments.push({ key: `turn:${turn.turn}:${i}`, turn: turn.turn, seat: turn.seat, start: 0, end: 0, firstSeq: turn.first_seq });
-  });
-  const firstIndex = (segment: ScrubSegment, i: number) =>
-    segment.turn === null ? 0 : starts[segments[0].turn === null ? i - 1 : i];
+  const starts = stream.turns.map((turn) => Math.max(first, indexAtSeq(events, turn.first_seq)));
+  const segments: ScrubSegment[] = stream.turns.map((turn, i) => ({
+    key: `turn:${turn.turn}:${i}`,
+    turn: turn.turn,
+    seat: turn.seat,
+    start: 0,
+    end: 0,
+    firstSeq: turn.first_seq,
+  }));
   segments.forEach((segment, i) => {
-    const from = firstIndex(segment, i);
-    const to = i + 1 < segments.length ? firstIndex(segments[i + 1], i + 1) : total;
-    segment.start = from / total;
-    segment.end = to / total;
+    const from = starts[i] - first;
+    const to = (i + 1 < segments.length ? starts[i + 1] : total) - first;
+    segment.start = from / span;
+    segment.end = to / span;
   });
   return segments;
 }
@@ -64,13 +73,31 @@ export function visibleTurnLabels(segments: readonly ScrubSegment[], widthPx: nu
 }
 
 /**
+ * Index of the first turn header: the opening deal and mulligans before it
+ * are applied in one go, so playback starts with the kept hands already in
+ * place. 0 when the stream has no turn events.
+ */
+export function openingEndIndex(events: ReplayStream['events']): number {
+  const index = events.findIndex((event) => event.kind === 'turn');
+  return index < 0 ? 0 : index;
+}
+
+/** Seq of that first turn header (null for an empty stream). */
+export function openingEndSeq(stream: ReplayStream): number | null {
+  return stream.events[openingEndIndex(stream.events)]?.seq ?? null;
+}
+
+/**
  * Where a deep link opens: `?at=` (an event seq) wins; otherwise `?row=` (a
  * `game_events.id`) opens at the first event derived from that row; with
- * neither, or an unknown row, the replay starts at the beginning (null).
+ * neither, or an unknown row, the replay starts at turn 1 with the opening
+ * hands dealt (`openingEndSeq`).
  */
 export function initialSeq(stream: ReplayStream, at: number | null, row: number | null): number | null {
   if (at !== null) return at;
-  if (row === null) return null;
-  const found = stream.events.find((event) => event.row_id === row);
-  return found ? found.seq : null;
+  if (row !== null) {
+    const found = stream.events.find((event) => event.row_id === row);
+    if (found) return found.seq;
+  }
+  return openingEndSeq(stream);
 }

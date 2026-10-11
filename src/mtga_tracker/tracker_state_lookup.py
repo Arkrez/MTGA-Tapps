@@ -25,11 +25,15 @@ class TrackerStateLookupMixin:
 
     @staticmethod
     def _extract_stat_value(value: Any) -> Optional[int]:
-        """Extract integer stat value from MTGA stat objects."""
+        """Extract integer stat value from MTGA stat objects.
+
+        Arena drops zero-valued fields, so a 0-power creature arrives as
+        ``"power": {}``: an empty stat object means 0, not unknown.
+        """
         if isinstance(value, int):
             return value
         if isinstance(value, dict):
-            inner = value.get("value")
+            inner = value.get("value", 0)
             if isinstance(inner, int):
                 return inner
         return None

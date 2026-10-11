@@ -18,6 +18,13 @@ vi.mock('@react-three/fiber', () => ({
 
 const stream = makeSampleStream();
 const total = stream.events.length;
+// Playback opens at the first turn header, the opening hands already dealt; the
+// opening deal before it is not navigable, so the counter counts from there.
+const START = stream.events.findIndex((e) => e.kind === 'turn');
+const nav = total - START;
+const rel = (index: number) => `Event ${index - START + 1} / ${nav}`;
+const at = (offset: number) => rel(START + offset);
+const last = `Event ${nav} / ${nav}`;
 
 function stubFetch(response: () => Response) {
   const fetchMock = vi.fn(async (url: string) =>
@@ -41,7 +48,9 @@ describe('ReplayPage', () => {
     localStorage.clear();
     window.location.hash = '#/replay/game-1';
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 });
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+    // No real contexts under jsdom: a stub for WebGL (the probe passes), none for 2D.
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(((type: string) =>
+      type === 'webgl2' || type === 'webgl' ? ({} as unknown as RenderingContext) : null) as typeof HTMLCanvasElement.prototype.getContext);
     stubFetch(() => new Response(JSON.stringify(stream), { status: 200 }));
   });
 
@@ -57,10 +66,10 @@ describe('ReplayPage', () => {
     await screen.findByRole('slider', { name: 'Replay position' });
     expect(fetch).toHaveBeenCalledWith('/api/replay?id=game-1', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(screen.getByTestId('replay-canvas')).toBeInTheDocument();
-    expect(screen.getByLabelText('Game state')).toHaveTextContent('Pre-game');
+    expect(screen.getByLabelText('Game state')).toHaveTextContent('Turn 1');
     expect(screen.getByRole('list', { name: 'Actions' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Play/ })).toBeInTheDocument();
-    expect(counter()).toBe(`Event 1 / ${total}`);
+    expect(counter()).toBe(at(0));
     expect(screen.getByText('Recorded')).toHaveAttribute('title', expect.stringContaining('full detail'));
     expect(document.title).toBe('Tapps Tracker – Replay');
   });
@@ -77,7 +86,7 @@ describe('ReplayPage', () => {
     const turn3 = stream.turns.find((t) => t.turn === 3)!;
     await renderPage({ at: turn3.first_seq });
     const index = stream.events.findIndex((e) => e.seq === turn3.first_seq);
-    expect(counter()).toBe(`Event ${index + 1} / ${total}`);
+    expect(counter()).toBe(rel(index));
     expect(screen.getByLabelText('Game state')).toHaveTextContent('Turn 3');
   });
 
@@ -85,19 +94,20 @@ describe('ReplayPage', () => {
     // Several events can share one row; the viewer opens at the first of them.
     const tagged = { ...stream, events: stream.events.map((event, i) => ({ ...event, row_id: 500 + Math.floor(i / 3) })) };
     stubFetch(() => new Response(JSON.stringify(tagged), { status: 200 }));
-    await renderPage({ row: 503 });
-    expect(counter()).toBe(`Event 10 / ${total}`);
+    const rowIndex = Math.floor((START + 4) / 3);
+    await renderPage({ row: 500 + rowIndex });
+    expect(counter()).toBe(rel(rowIndex * 3));
   });
 
   it('prefers ?at= over ?row= and falls back to the start for an unknown row', async () => {
     const tagged = { ...stream, events: stream.events.map((event, i) => ({ ...event, row_id: 500 + i })) };
     stubFetch(() => new Response(JSON.stringify(tagged), { status: 200 }));
-    const { unmount } = render(<ReplayPage gameId="game-1" at={stream.events[2].seq} row={507} returnHash={null} />);
+    const { unmount } = render(<ReplayPage gameId="game-1" at={stream.events[START + 2].seq} row={507} returnHash={null} />);
     await screen.findByRole('slider', { name: 'Replay position' });
-    expect(counter()).toBe(`Event 3 / ${total}`);
+    expect(counter()).toBe(at(2));
     unmount();
     await renderPage({ row: 99999 });
-    expect(counter()).toBe(`Event 1 / ${total}`);
+    expect(counter()).toBe(at(0));
   });
 
   it('renders the unavailable reason with a back link', async () => {
@@ -130,17 +140,21 @@ describe('ReplayPage', () => {
     await renderPage();
     fireEvent.keyDown(window, { key: 'ArrowRight' });
     fireEvent.keyDown(window, { key: 'ArrowRight' });
-    expect(counter()).toBe(`Event 3 / ${total}`);
+    expect(counter()).toBe(at(2));
     fireEvent.keyDown(window, { key: 'ArrowLeft' });
-    expect(counter()).toBe(`Event 2 / ${total}`);
+    expect(counter()).toBe(at(1));
     fireEvent.keyDown(window, { key: 'k' });
-    expect(screen.getByLabelText('Game state')).toHaveTextContent('Turn 1');
-    fireEvent.keyDown(window, { key: 'K' });
     expect(screen.getByLabelText('Game state')).toHaveTextContent('Turn 2');
+    fireEvent.keyDown(window, { key: 'K' });
+    expect(screen.getByLabelText('Game state')).toHaveTextContent('Turn 3');
     fireEvent.keyDown(window, { key: 'End' });
-    expect(counter()).toBe(`Event ${total} / ${total}`);
+    expect(counter()).toBe(last);
+    // Home is turn 1: nothing before it is navigable.
     fireEvent.keyDown(window, { key: 'Home' });
-    expect(counter()).toBe(`Event 1 / ${total}`);
+    expect(counter()).toBe(at(0));
+    expect(screen.getByLabelText('Game state')).toHaveTextContent('Turn 1');
+    fireEvent.keyDown(window, { key: 'ArrowLeft' });
+    expect(counter()).toBe(at(0));
 
     fireEvent.keyDown(window, { key: ']' });
     expect(screen.getByRole('combobox')).toHaveValue('2');
@@ -151,7 +165,7 @@ describe('ReplayPage', () => {
     const goTo = screen.getByPlaceholderText('Go to turn…');
     expect(goTo).toHaveFocus();
     fireEvent.keyDown(goTo, { key: 'ArrowRight' });
-    expect(counter()).toBe(`Event 1 / ${total}`);
+    expect(counter()).toBe(at(0));
     fireEvent.change(goTo, { target: { value: '4' } });
     fireEvent.submit(goTo.closest('form')!);
     expect(screen.getByLabelText('Game state')).toHaveTextContent('Turn 4');
@@ -181,7 +195,7 @@ describe('ReplayPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Watch again' }));
     expect(screen.queryByRole('dialog', { name: 'Game result' })).toBeNull();
-    expect(counter()).toBe(`Event 1 / ${total}`);
+    expect(counter()).toBe(at(0));
     expect(screen.getByRole('button', { name: /Pause/ })).toHaveAttribute('aria-pressed', 'true');
     fireEvent.keyDown(window, { key: ' ' });
   });
@@ -193,7 +207,7 @@ describe('ReplayPage', () => {
     fireEvent.click(row);
     expect(row).toHaveAttribute('aria-current', 'step');
     const note = stream.events.find((e) => e.kind === 'note' && e.log?.text === 'Opponent passes')!;
-    expect(counter()).toBe(`Event ${stream.events.indexOf(note) + 1} / ${total}`);
+    expect(counter()).toBe(rel(stream.events.indexOf(note)));
   });
 
   it('writes the position into the hash while paused, without new history entries', async () => {
@@ -203,7 +217,7 @@ describe('ReplayPage', () => {
     fireEvent.keyDown(window, { key: 'ArrowRight' });
     await waitFor(() => expect(replace).toHaveBeenCalled(), { timeout: 1500 });
     const url = String(replace.mock.calls.at(-1)?.[2]);
-    expect(url).toContain(`at=${stream.events[1].seq}`);
+    expect(url).toContain(`at=${stream.events[START + 1].seq}`);
     expect(url).toContain('return=%23%2Fgames');
     expect(push).not.toHaveBeenCalled();
   });
@@ -216,7 +230,7 @@ describe('ReplayPage', () => {
     act(() => {
       vi.advanceTimersByTime(5000);
     });
-    expect(counter()).not.toBe(`Event 1 / ${total}`);
+    expect(counter()).not.toBe(at(0));
     expect(replace).not.toHaveBeenCalled();
     fireEvent.keyDown(window, { key: ' ' });
     // Rapid steps while paused collapse into one write after the debounce.
@@ -377,6 +391,24 @@ describe('ReplayPage', () => {
     expect(screen.getByTestId('replay-canvas')).toBeInTheDocument();
   });
 
+  it('explains when the browser has no WebGL instead of leaving the table blank', async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+    await renderPage();
+    expect(screen.queryByTestId('replay-canvas')).not.toBeInTheDocument();
+    expect(screen.getByRole('note')).toHaveTextContent('needs WebGL');
+    expect(screen.getByRole('list', { name: 'Actions' })).toBeInTheDocument();
+  });
+
+  it('opens the video export dialog, which says when the browser cannot encode video', async () => {
+    await renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Export video' }));
+    const dialog = screen.getByRole('dialog', { name: 'Export video' });
+    // jsdom has no WebCodecs: the dialog explains instead of offering options.
+    expect(dialog).toHaveTextContent(/cannot encode video/);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog', { name: 'Export video' })).not.toBeInTheDocument();
+  });
+
   it('cleans up the clock, timers and listeners when navigating replay -> overview -> replay', async () => {
     const dispose = vi.spyOn(PlaybackClock.prototype, 'dispose');
     const added: Array<[string, unknown]> = [];
@@ -419,10 +451,10 @@ describe('ReplayPage', () => {
     removed.length = 0;
     rerender(<Harness page="replay" />);
     await screen.findByRole('slider', { name: 'Replay position' });
-    expect(counter()).toBe(`Event 1 / ${total}`);
+    expect(counter()).toBe(at(0));
     // The new page's shortcuts drive only the new clock.
     fireEvent.keyDown(window, { key: 'ArrowRight' });
-    expect(counter()).toBe(`Event 2 / ${total}`);
+    expect(counter()).toBe(at(1));
     expect(added.filter(([type]) => type === 'keydown')).toHaveLength(1);
   });
 });

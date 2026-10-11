@@ -166,6 +166,8 @@ export interface MoveEvent extends ReplayEventBase {
   inferred: boolean;
   /** Position in the destination zone (0 = library top / stack bottom) when known. */
   index: number | null;
+  /** Exile only: the battlefield permanent whose ability exiled the card (recorded games). */
+  with?: ObjId | null;
 }
 export interface TapEvent extends ReplayEventBase {
   kind: 'tap';

@@ -627,6 +627,31 @@ def test_builder_is_robust_to_a_move_from_an_unknown_zone_object():
     assert destroyed["reason"] == "destroy"
 
 
+def test_exile_move_carries_the_host_that_exiled_it():
+    r = _Rows()
+    r.turn_row(1, PLAYER)
+    r.move(318, "limbo", "battlefield", "put", OPPONENT, 2003, "Deep-Cavern Bat")
+    r.move(
+        280,
+        "hand",
+        "exile",
+        "exile",
+        PLAYER,
+        1008,
+        "Island",
+        visible=1,
+        text="[0:01] You: [Island] was exiled",
+        **{"with": 318},
+    )
+    r.move(281, "battlefield", "exile", "exile", PLAYER, 1001, "Forest")
+    stream = build_recorded(_game_rows(r.rows))
+    assert validate_stream(stream) == []
+    exiles = [e for e in stream["events"] if e["kind"] == "move" and e["to"] == "exile"]
+    assert [(e["obj"], e["with"]) for e in exiles] == [("280", "318"), ("281", None)]
+    put = next(e for e in stream["events"] if e["kind"] == "move" and e["obj"] == "318")
+    assert put["with"] is None
+
+
 def test_stack_push_payload_accepts_stack_kind_and_legacy_kind():
     stream = _build()
     pushes = {e["stack_id"]: e["stack_kind"] for e in stream["events"] if e["kind"] == "stack_push"}
@@ -681,3 +706,26 @@ def test_untap_rows_before_a_lazy_turn_header_belong_to_the_new_turn():
     turn_two = stream["turns"][1]
     untap = next(e for e in stream["events"] if e["kind"] == "untap")
     assert turn_two["first_seq"] < untap["seq"] <= turn_two["last_seq"]
+
+
+def test_creature_stats_on_a_move_seed_the_cards_printed_stats():
+    """A 0/2 whose cards-table row never learned its stats: the capture stamps
+    the current stats on the row, and the stream's card entry keeps them."""
+    r = _Rows()
+    r.turn_row(1, PLAYER)
+    r.move(
+        500,
+        "stack",
+        "battlefield",
+        "resolve",
+        PLAYER,
+        9005,
+        "Exhibition Tidecaller",
+        type="Creature",
+        power=0,
+        toughness=2,
+    )
+    stream = build_recorded(_game_rows(r.rows))
+    assert validate_stream(stream) == []
+    card = stream["cards"]["a9005"]
+    assert (card["power"], card["toughness"]) == ("0", "2")

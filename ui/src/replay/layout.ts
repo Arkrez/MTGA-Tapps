@@ -93,8 +93,36 @@ export function apronDepth(scale: number): number {
   return CARD_HEIGHT * scale - HAND_RAIL_OVERLAP + APRON_MARGIN;
 }
 
-const ATTACH_DX = 0.16;
-const ATTACH_DY = 0.2;
+/**
+ * Cards tucked under a host (auras, equipment, cards it exiled) fan upward on
+ * screen, away from the viewer for both seats, each showing its title strip:
+ * a small sideways nudge and one title's height per card. The fan must stay
+ * inside the clear gap before the next row (the opponent's rises toward
+ * their lands, the player's toward the center) so no strip is ever hidden
+ * under another row: a host with a tall fan first slides away from it (up to
+ * ATTACH_SHIFT_MAX, into the gap behind it), then the strips compress. Three
+ * cards show whole titles either way; longer fans show the top of each
+ * title, and the hover preview lists and pictures them all.
+ */
+const ATTACH_DX = 0.05;
+const ATTACH_DY = 0.17;
+/** Clear space kept between the top strip and the next row. */
+const ATTACH_MARGIN = 0.04;
+/** How far a host may slide away from its fan to make room for it. */
+const ATTACH_SHIFT_MAX = 0.2;
+
+/** Room a fan has before the next row, for the seat it is on. */
+export function attachRoom(opponent: boolean): number {
+  return (opponent ? BACK_ROW_GAP : 2 * CENTER_GAP) - ATTACH_MARGIN;
+}
+
+/** Per-card offsets of a fan of `count` tucked cards with `room` to rise into, and how far its host slides away. */
+export function attachStep(count: number, room: number = attachRoom(true)): { dx: number; dy: number; shift: number } {
+  if (count <= 0) return { dx: 0, dy: 0, shift: 0 };
+  const natural = ATTACH_DY * count;
+  const shift = Math.min(ATTACH_SHIFT_MAX, Math.max(0, natural - room));
+  return { dx: ATTACH_DX, dy: Math.min(ATTACH_DY, (room + shift) / count), shift };
+}
 const BASE_Z = 0.02;
 const STACK_Z = 0.9;
 /** In-scene stack cards: the motion anchor under the DOM stack preview. */
@@ -106,8 +134,12 @@ export const STACK_SCALE = 0.6;
  */
 export const ABILITY_CHIP_SCALE = 0.5;
 const STACK_EDGE = 0.3;
-/** The column sits on the opponent's side of center, under the preview's top card. */
-export const STACK_ANCHOR_Y = 1.3;
+/**
+ * The column sits at the table's center line: the DOM stack preview is
+ * centered on the stage, so a cast card flies from the hand straight to the
+ * spot the preview's card appears over.
+ */
+export const STACK_ANCHOR_Y = 0;
 
 /** Pile lane on the left: three piles, or four in commander formats. */
 const PILE_MARGIN = 0.16;
@@ -157,6 +189,16 @@ export interface CardPlacement {
   counters: Readonly<Record<string, number>>;
   power: string | null;
   toughness: string | null;
+  /** Cards tucked under this one (auras, equipment, cards it exiled), bottom first; empty for everything else. */
+  under: readonly UnderCard[];
+}
+
+/** One card tucked under a host, as the hover preview lists it. */
+export interface UnderCard {
+  obj: ObjId;
+  card: CardKey | null;
+  /** 'exile' for a card the host exiled, else 'battlefield' for an attachment. */
+  zone: Zone;
 }
 
 export interface PilePlacement {
@@ -258,8 +300,10 @@ interface Context {
   targeted: ReadonlySet<ObjId>;
   damaged: ObjId | null;
   blockers: ReadonlySet<ObjId>;
-  /** host obj -> attached battlefield objects, across both seats (auras on enemy creatures). */
+  /** host obj -> attached battlefield objects, across both seats (auras on enemy creatures), plus cards the host exiled. */
   attachments: ReadonlyMap<ObjId, ObjectState[]>;
+  /** Exiled cards shown under their host (kept out of the exile pile). */
+  tucked: ReadonlySet<ObjId>;
   out: CardPlacement[];
 }
 
@@ -286,6 +330,7 @@ function placeObject(
   row: PlacementRow,
   faceCard: CardKey | null = object.card,
   seat: number = frame.seat,
+  under: readonly UnderCard[] = NO_UNDER,
 ): void {
   const { x, y } = toTable(frame, local.x, local.y);
   const faceUp = faceCard !== null && !object.faceDown;
@@ -308,11 +353,14 @@ function placeObject(
     counters: object.counters,
     power: printedStat(ctx, object, 'power'),
     toughness: printedStat(ctx, object, 'toughness'),
+    under,
   });
 }
 
+const NO_UNDER: readonly UnderCard[] = [];
+
 function footprint(object: ObjectState, attachments: number, scale: number): number {
-  return ((object.tapped ? CARD_HEIGHT : CARD_WIDTH) + attachments * ATTACH_DX) * scale;
+  return ((object.tapped ? CARD_HEIGHT : CARD_WIDTH) + attachments * attachStep(attachments).dx) * scale;
 }
 
 function naturalWidth(widths: readonly number[], gap: number): number {
@@ -410,24 +458,39 @@ export function rowCenters(widths: readonly number[], halfWidth: number): number
 }
 
 function attachedHost(state: BoardState, object: ObjectState): ObjectState | undefined {
-  const host = object.attachedTo ? state.objects.get(object.attachedTo) : undefined;
+  const hostId = object.zone === 'exile' ? object.exiledWith : object.attachedTo;
+  const host = hostId ? state.objects.get(hostId) : undefined;
   return host && host.zone === 'battlefield' && host.obj !== object.obj && !host.attachedTo ? host : undefined;
 }
 
+/**
+ * Cards drawn under a battlefield host: auras and equipment attached to it,
+ * and cards it exiled (Deep-Cavern Bat, Pinnacle Starcage) for as long as it
+ * stays on the battlefield; those leave the exile pile.
+ */
 function collectAttachments(state: BoardState, seatIds: number[]): Map<ObjId, ObjectState[]> {
   const attachments = new Map<ObjId, ObjectState[]>();
   for (const seatId of seatIds) {
-    for (const obj of state.seats[seatId].zones.battlefield) {
-      const object = state.objects.get(obj);
-      const host = object && attachedHost(state, object);
-      if (object && host) {
-        const list = attachments.get(host.obj) ?? [];
-        list.push(object);
-        attachments.set(host.obj, list);
+    for (const zone of ['battlefield', 'exile'] as const) {
+      for (const obj of state.seats[seatId].zones[zone]) {
+        const object = state.objects.get(obj);
+        const host = object && attachedHost(state, object);
+        if (object && host) {
+          const list = attachments.get(host.obj) ?? [];
+          list.push(object);
+          attachments.set(host.obj, list);
+        }
       }
     }
   }
   return attachments;
+}
+
+/** Exiled cards tucked under a host are not in the pile. */
+function tuckedAway(attachments: ReadonlyMap<ObjId, ObjectState[]>): ReadonlySet<ObjId> {
+  const tucked = new Set<ObjId>();
+  for (const list of attachments.values()) for (const object of list) if (object.zone === 'exile') tucked.add(object.obj);
+  return tucked;
 }
 
 function placeGroup(
@@ -444,14 +507,21 @@ function placeGroup(
     const attached = ctx.attachments.get(object.obj) ?? [];
     const ownWidth = footprint(object, 0, scale);
     const x = centers[i] - widths[i] / 2 + ownWidth / 2;
-    const cardY = y + (ctx.state.attackers.has(object.obj) ? ATTACK_OFFSET : 0);
+    const step = attachStep(attached.length, attachRoom(frame.opponent));
+    // Up on screen for both seats (seat-local +y maps to world -y for the
+    // opponent), and to the right as seen by the viewer.
+    const up = frame.opponent ? -1 : 1;
+    const right = frame.opponent && frame.mirror ? -1 : 1;
+    // The host slides away from its fan to keep the strips out of the next row.
+    const cardY = y + (ctx.state.attackers.has(object.obj) ? ATTACK_OFFSET : 0) - up * step.shift * scale;
     const z = BASE_Z + 0.004 * (attached.length + 1) + i * 0.0005;
-    placeObject(ctx, frame, object, { x, y: cardY, z, scale }, row);
+    const under = attached.map((child): UnderCard => ({ obj: child.obj, card: child.card, zone: child.zone }));
+    placeObject(ctx, frame, object, { x, y: cardY, z, scale }, row, object.card, frame.seat, under);
     attached.forEach((child, k) => {
-      // Attachments tuck in behind (away from the viewer) and under the host.
+      // Tucked cards sit under the host, each one a title strip higher.
       const local = {
-        x: x + ATTACH_DX * scale * (k + 1),
-        y: cardY + ATTACH_DY * scale * (k + 1),
+        x: x + right * step.dx * scale * (k + 1),
+        y: cardY + up * step.dy * scale * (k + 1),
         z: z - 0.004 * (k + 1),
         scale,
       };
@@ -553,6 +623,7 @@ function layoutHand(ctx: Context, frame: Frame, objects: ObjectState[], hidden: 
       power: null,
       toughness: null,
       attachedTo: null,
+      exiledWith: null,
       faceDown: false,
       inferred: false,
       revealedAt: null,
@@ -586,7 +657,7 @@ function layoutPiles(ctx: Context, frame: Frame, piles: PilePlacement[]): void {
   const rotZ = frameRotation(frame);
   for (const slot of pileSlots(ctx.table, ctx.opts.commandZone ?? false)) {
     const { zone, scale } = slot;
-    const objs = zone === 'library' ? [] : seat.zones[zone];
+    const objs = zone === 'library' ? [] : zone === 'exile' ? seat.zones.exile.filter((obj) => !ctx.tucked.has(obj)) : seat.zones[zone];
     const count = zone === 'library' ? seat.librarySize : objs.length;
     const { x, y } = toTable(pileFrame, slot.x, slot.y);
     const top = objs.length ? ctx.state.objects.get(objs[objs.length - 1]) : undefined;
@@ -673,6 +744,7 @@ function layoutStack(ctx: Context): void {
       power: null,
       toughness: null,
       attachedTo: null,
+      exiledWith: null,
       faceDown: false,
       inferred: false,
       revealedAt: null,
@@ -695,8 +767,9 @@ export function layoutBoard(state: BoardState, opts: LayoutOptions): Layout {
   const damaged = last?.kind === 'damage' ? last.target_obj : null;
   const seatIds = Object.keys(state.seats).map(Number).sort((a, b) => a - b);
   const attachments = collectAttachments(state, seatIds);
+  const tucked = tuckedAway(attachments);
   const table = tableGeometry(opts.tableWidth, opts.commandZone ?? false, opts.handScale);
-  const ctx: Context = { state, opts, table, targeted, damaged, blockers, attachments, out: [] };
+  const ctx: Context = { state, opts, table, targeted, damaged, blockers, attachments, tucked, out: [] };
   const piles: PilePlacement[] = [];
 
   for (const seatId of seatIds) {

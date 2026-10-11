@@ -2,7 +2,7 @@
  * The loaded replay page: header strip, HUD + 3D table (or a notice below
  * 900 px), action log, transport bar, shortcuts and shareable `?at=` links.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatDateTime, outcomeLabel, outcomeTone } from '../../format';
 import { REPLAY_ROUTE_HASH, cardRouteHash, parseReplayRoute, replayRouteHash } from '../../routes';
 import { Badge } from '../../components/Badge';
@@ -23,6 +23,8 @@ import { FidelityBadge, ReplayHud } from './ReplayHud';
 import { ReplayLog } from './ReplayLog';
 import { ReplayScene } from './ReplayScene';
 import { TablePopover } from './TablePopover';
+import { useVideoExport } from '../hooks/useVideoExport';
+import { VideoExportPanel } from './VideoExport';
 
 export const HASH_DEBOUNCE_MS = 300;
 
@@ -42,6 +44,21 @@ export function ReplayViewer({ stream, gameId, at, returnHash }: ReplayViewerPro
   }, []);
   const { timeline, clock, snapshot, state, layout, jumped } = useReplayPlayback(stream, prefs, at, tableFit);
   const store = useTextureStore(stream);
+  const video = useVideoExport(stream, clock, snapshot.index);
+  // The table area's CSS size feeds the export dialog's size and file estimate.
+  const [tableNode, setTableNode] = useState<HTMLDivElement | null>(null);
+  const [stageSize, setStageSize] = useState<{ width: number; height: number } | null>(null);
+  useEffect(() => {
+    if (!tableNode || typeof ResizeObserver === 'undefined') return;
+    const measure = () => {
+      const { width, height } = tableNode.getBoundingClientRect();
+      if (width > 0 && height > 0) setStageSize({ width: Math.round(width), height: Math.round(height) });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(tableNode);
+    return () => observer.disconnect();
+  }, [tableNode]);
   useTexturePriorities(store, timeline, layout, snapshot.turn ?? 0);
   const [hover] = useState(() => new HoverStore());
   const narrow = useNarrowViewport();
@@ -85,6 +102,8 @@ export function ReplayViewer({ stream, gameId, at, returnHash }: ReplayViewerPro
   const playerSeat = stream.seats[String(stream.player_seat)];
   const opponentSeat = Object.entries(stream.seats).find(([seat]) => Number(seat) !== stream.player_seat)?.[1];
   const game = stream.game;
+  // Formatted once: Intl date formatting is far too slow to repeat on every event tick.
+  const startedAt = useMemo(() => (game.started_at ? ` · ${formatDateTime(game.started_at)}` : ''), [game.started_at]);
   const back = returnHash ?? REPLAY_ROUTE_HASH;
   const elapsed = stream.events[snapshot.index]?.t ?? 0;
   // Below 900 px the log stacks under the notice and is never collapsed.
@@ -105,10 +124,24 @@ export function ReplayViewer({ stream, gameId, at, returnHash }: ReplayViewerPro
         <FidelityBadge stream={stream} />
         <span className="replay-meta">
           {game.format}
-          {game.started_at ? ` · ${formatDateTime(game.started_at)}` : ''}
+          {startedAt}
         </span>
         <Badge tone={outcomeTone(game.outcome)}>{outcomeLabel(game.outcome)}</Badge>
         <div className="replay-header-actions">
+          {narrow ? null : (
+            <button
+              type="button"
+              className="replay-btn replay-export-btn"
+              onClick={video.open}
+              disabled={video.state.status === 'running'}
+              title="Render this replay to an MP4 video"
+            >
+              <span className="replay-btn-icon" aria-hidden="true">
+                ⬇
+              </span>
+              {video.state.status === 'running' ? 'Exporting…' : 'Export video'}
+            </button>
+          )}
           <button
             type="button"
             className="replay-btn"
@@ -134,7 +167,7 @@ export function ReplayViewer({ stream, gameId, at, returnHash }: ReplayViewerPro
               still works below.
             </div>
           ) : (
-            <div className="replay-table-area">
+            <div className="replay-table-area" ref={setTableNode}>
               <ReplayScene
                 layout={layout}
                 state={state}
@@ -146,8 +179,12 @@ export function ReplayViewer({ stream, gameId, at, returnHash }: ReplayViewerPro
                 playing={snapshot.playing}
                 onCardClick={onCardClick}
                 onTableFit={onTableFit}
+                exportHandle={video.handle}
               />
-              <GameEndOverlay stream={stream} state={state} clock={clock} backHash={back} />
+              {video.state.status === 'idle' ? (
+                <GameEndOverlay stream={stream} state={state} clock={clock} backHash={back} />
+              ) : null}
+              <VideoExportPanel controller={video} stream={stream} prefs={prefs} currentIndex={snapshot.index} stageSize={stageSize} />
             </div>
           )}
         </section>

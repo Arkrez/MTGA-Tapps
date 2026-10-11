@@ -69,8 +69,13 @@ export class PlaybackClock {
   private disposed = false;
   private current: PlaybackSnapshot;
 
+  /** Index of the first turn header: where "play from the start" begins. */
+  private readonly startIndex: number;
+
   constructor(timeline: ReplayTimeline, opts: PlaybackClockOptions = {}) {
     this.timeline = timeline;
+    const firstTurn = timeline.events.findIndex((event) => event.kind === 'turn');
+    this.startIndex = firstTurn < 0 ? 0 : firstTurn;
     this.now = opts.now ?? defaultNow;
     this.schedule = opts.schedule ?? defaultSchedule;
     this.speed = opts.speed ?? 1;
@@ -109,8 +114,19 @@ export class PlaybackClock {
     return this.listeners.size;
   }
 
+  /** First navigable event: the first turn header, with the opening hands already dealt. */
   get firstSeq(): number {
-    return this.timeline.events[0]?.seq ?? -1;
+    return this.timeline.events[this.startIndex]?.seq ?? -1;
+  }
+
+  /** Same as `firstSeq` (the name the ending screen's Watch again uses). */
+  get startSeq(): number {
+    return this.firstSeq;
+  }
+
+  /** Index of the first navigable event (see `firstSeq`). */
+  get firstIndex(): number {
+    return this.startIndex;
   }
 
   get lastSeq(): number {
@@ -119,7 +135,7 @@ export class PlaybackClock {
 
   play(): void {
     if (this.disposed || this.playing || !this.timeline.events.length) return;
-    if (this.atEnd()) this.index = 0;
+    if (this.atEnd()) this.index = this.startIndex;
     this.playing = true;
     this.scheduleNext(0);
     this.emit();
@@ -211,9 +227,10 @@ export class PlaybackClock {
     this.emit();
   }
 
+  /** Playback never goes before the first turn header: the opening deal is applied, not shown. */
   private clampIndex(index: number): number {
     const last = this.timeline.events.length - 1;
-    return Math.max(Math.min(index, last), last < 0 ? -1 : 0);
+    return Math.max(Math.min(index, last), last < 0 ? -1 : this.startIndex);
   }
 
   private atEnd(): boolean {

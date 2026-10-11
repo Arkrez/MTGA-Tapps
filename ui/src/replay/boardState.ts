@@ -34,6 +34,8 @@ export interface ObjectState {
   power: number | null;
   toughness: number | null;
   attachedTo: ObjId | null;
+  /** In exile: the permanent that exiled it (shown tucked under that host while it is on the battlefield). */
+  exiledWith: ObjId | null;
   faceDown: boolean;
   inferred: boolean;
   /** seq at which the card identity became known; null while hidden. */

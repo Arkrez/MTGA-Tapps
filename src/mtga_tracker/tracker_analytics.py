@@ -804,6 +804,9 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
             mana_index = self.card_db.mana_cost_index_by_name()
             if mana_index:
                 AnalyticsStore.backfill_card_mana(conn, mana_index)
+            stats_index = self.card_db.stats_index_by_name()
+            if stats_index:
+                AnalyticsStore.backfill_card_stats(conn, stats_index)
         except (AttributeError, sqlite3.Error, OSError, TypeError, ValueError):
             return
 
@@ -1795,6 +1798,9 @@ class TrackerAnalyticsMixin(ReplayEventsMixin):
             mana_index = self.card_db.mana_cost_index_by_name()
             if mana_index:
                 AnalyticsStore.backfill_card_mana(conn, mana_index)
+            stats_index = self.card_db.stats_index_by_name()
+            if stats_index:
+                AnalyticsStore.backfill_card_stats(conn, stats_index)
         except (AttributeError, sqlite3.Error, OSError, TypeError, ValueError):
             pass
         try:

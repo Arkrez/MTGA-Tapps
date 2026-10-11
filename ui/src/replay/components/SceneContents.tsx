@@ -52,8 +52,8 @@ function Table({ store, felt, kit, table }: { store: TextureStore; felt: ReplayP
   const invalidate = useThree((s) => s.invalidate);
   const { width, depth } = table;
   useLayoutEffect(() => {
-    // One felt tile per ~4 units, so the weave keeps its size as the table widens.
-    store.felt(felt).repeat.set(width / 4, depth / 4);
+    // One felt tile per ~2.4 units, so the weave keeps its size as the table widens.
+    store.felt(felt).repeat.set(width / 2.4, depth / 2.4);
     invalidate();
   }, [felt, width, depth, store, invalidate]);
   const outerW = width + RAIL_WIDTH * 2;

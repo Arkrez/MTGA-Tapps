@@ -32,11 +32,16 @@ class FakeTime {
   }
 }
 
-/** Events at t = 0, 1, 11, 11.5 seconds (gaps 1 s, 10 s, 0.5 s), two turns. */
+/**
+ * Events at t = 0, 1, 11, 11.5 seconds (gaps 1 s, 10 s, 0.5 s), two turns.
+ * Turn 1's header comes first so the whole fixture is navigable (playback
+ * starts at the first turn header).
+ */
 function smallTimeline() {
   const b = new StreamBuilder();
-  b.add('game_start', { seats_hand_sizes: { 1: 0, 2: 0 }, library_sizes: { 1: 1, 2: 1 } }, { dt: 0 });
   b.turnStart(1, 1);
+  b.events[0].t = 0;
+  b.add('game_start', { seats_hand_sizes: { 1: 0, 2: 0 }, library_sizes: { 1: 1, 2: 1 } }, { dt: 0 });
   b.events[1].t = 1;
   b.add('note', {}, { text: 'a' });
   b.events[2].t = 11;
@@ -153,14 +158,25 @@ describe('PlaybackClock', () => {
     expect(clock.seq).toBe(0);
   });
 
-  it('restarts from the beginning when played at the end', () => {
+  it('restarts from the first turn header when played at the end', () => {
     const { time, clock } = setup();
     clock.seek(99);
     expect(clock.seq).toBe(3);
     clock.play();
-    expect(clock.snapshot).toMatchObject({ seq: 0, playing: true });
-    time.advance(600);
-    expect(clock.seq).toBe(1);
+    const start = clock.startSeq;
+    expect(clock.snapshot).toMatchObject({ seq: start, playing: true });
+    time.advance(3000);
+    expect(clock.seq).toBeGreaterThan(start);
+    // A real stream restarts at turn 1, after the opening deal.
+    const stream = makeSampleStream();
+    const full = new PlaybackClock(buildTimeline(stream), { schedule: () => () => undefined, now: () => 0 });
+    const firstTurn = stream.events.find((e) => e.kind === 'turn')!;
+    expect(full.startSeq).toBe(firstTurn.seq);
+    expect(full.firstSeq).toBe(full.startSeq);
+    full.seek(full.lastSeq);
+    full.play();
+    expect(full.seq).toBe(firstTurn.seq);
+    full.dispose();
   });
 
   it('jumps between turns', () => {
@@ -178,7 +194,9 @@ describe('PlaybackClock', () => {
     expect(clock.seq).toBe(turns[2].first_seq);
     clock.seekTurn(1);
     clock.prevTurn();
-    expect(clock.seq).toBe(0);
+    // Nothing before turn 1 is navigable.
+    expect(clock.seq).toBe(clock.firstSeq);
+    expect(clock.firstSeq).toBe(turns[0].first_seq);
     clock.seekTurn(5);
     clock.nextTurn();
     expect(clock.seq).toBe(clock.lastSeq);

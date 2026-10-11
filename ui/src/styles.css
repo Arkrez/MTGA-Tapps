@@ -997,6 +997,14 @@ a.best-deck-name:focus-visible {
   padding: 12px 12px 0;
 }
 
+.section-heading-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .dashboard-section-collapsed .section-heading {
   padding-bottom: 16px;
 }
@@ -4194,15 +4202,7 @@ tr.deck-change-row-out .card-link {
 .deckfinder-page[data-provider="untapped"], .deckfinder-provider[data-provider="untapped"] { --deckfinder-color: #f3a24b; }
 .deckfinder-page[data-provider="youtube"], .deckfinder-provider[data-provider="youtube"] { --deckfinder-color: #ff5e68; }
 
-.deckfinder-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 14px 16px 0;
-}
-
-/* Muted step labels ("Site", "Format", "Creators", source picker title). */
+/* Muted step labels ("Format", "Creators", source picker title). */
 .deckfinder-step-label {
   color: var(--muted);
   font-size: 0.78rem;
@@ -4267,8 +4267,7 @@ tr.deck-change-row-out .card-link {
 }
 
 .deckfinder-surprise,
-.deckfinder-detail-actions .quick-filter,
-.deckfinder-toolbar .quick-filter {
+.deckfinder-detail-actions .quick-filter {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -4306,7 +4305,7 @@ tr.deck-change-row-out .card-link {
   padding: 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--panel);
+  background: color-mix(in srgb, var(--deckfinder-color) 7%, var(--panel));
   color: var(--text);
   text-align: left;
   cursor: pointer;
@@ -4325,11 +4324,12 @@ tr.deck-change-row-out .card-link {
 
 .deckfinder-provider:hover {
   border-color: color-mix(in srgb, var(--deckfinder-color) 65%, var(--border));
+  background: color-mix(in srgb, var(--deckfinder-color) 11%, var(--panel));
 }
 
 .deckfinder-provider-active {
   border-color: color-mix(in srgb, var(--deckfinder-color) 75%, var(--border));
-  background: color-mix(in srgb, var(--deckfinder-color) 8%, var(--panel));
+  background: color-mix(in srgb, var(--deckfinder-color) 14%, var(--panel));
 }
 
 .deckfinder-provider-active::after {
@@ -4452,6 +4452,25 @@ tr.deck-change-row-out .card-link {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+}
+
+.deckfinder-title-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.deckfinder-title-actions .deck-neutral-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.deckfinder-title-actions .deck-neutral-button svg {
+  width: 14px;
+  height: 14px;
 }
 
 .deckfinder-detail-title-row h3 {

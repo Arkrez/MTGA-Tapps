@@ -6,7 +6,7 @@
  */
 import type { ReplayCard } from './types';
 
-export const FELT_SIZE = 512;
+export const FELT_SIZE = 1024;
 export const SLEEVE_WIDTH = 256;
 export const SLEEVE_HEIGHT = 358;
 export const FACE_WIDTH = 488;
@@ -85,7 +85,7 @@ export function createFeltCanvas(color: string): HTMLCanvasElement {
   const data = image.data;
   for (let y = 0; y < FELT_SIZE; y += 1) {
     for (let x = 0; x < FELT_SIZE; x += 1) {
-      const weave = ((x + y) % 4 < 2 ? 1 : -1) * 0.012;
+      const weave = ((x + y) % 6 < 3 ? 1 : -1) * 0.014;
       const light =
         1 + (broad(x, y) - 0.5) * 0.1 + (fine(x, y) - 0.5) * 0.08 + (random() - 0.5) * 0.06 + weave;
       const offset = (y * FELT_SIZE + x) * 4;

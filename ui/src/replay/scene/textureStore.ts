@@ -199,7 +199,7 @@ export class TextureStore {
   setAnisotropy(value: number): void {
     this.anisotropy = Math.max(1, value);
     for (const texture of this.owned) {
-      if (texture.anisotropy !== this.anisotropy && texture.wrapS !== RepeatWrapping) {
+      if (texture.anisotropy !== this.anisotropy) {
         texture.anisotropy = this.anisotropy;
         texture.needsUpdate = true;
       }
@@ -329,6 +329,9 @@ export class TextureStore {
       const texture = new CanvasTexture(createFeltCanvas(FELT_COLORS[color].hex));
       texture.wrapS = RepeatWrapping;
       texture.wrapT = RepeatWrapping;
+      // Sharp at the tilted camera: mipmaps plus anisotropy (set with the cards').
+      texture.generateMipmaps = true;
+      texture.anisotropy = this.anisotropy;
       texture.repeat.set(4, 2.5);
       return texture;
     });

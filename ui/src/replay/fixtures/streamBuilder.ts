@@ -87,7 +87,7 @@ export class StreamBuilder {
     to: Zone,
     owner: number,
     reason: MoveReason,
-    opts: { controller?: number; inferred?: boolean; index?: number | null; dt?: number } = {},
+    opts: { controller?: number; inferred?: boolean; index?: number | null; with?: ObjId | null; dt?: number } = {},
   ): this {
     return this.add(
       'move',
@@ -101,6 +101,7 @@ export class StreamBuilder {
         reason,
         inferred: opts.inferred ?? false,
         index: opts.index ?? null,
+        with: opts.with ?? null,
       },
       { dt: opts.dt },
     );

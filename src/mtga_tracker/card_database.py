@@ -448,6 +448,53 @@ class CardDatabase:
             self._mana_index_by_name = index
         return index
 
+    def stats_index_by_name(self) -> Dict[str, Tuple[str, str]]:
+        """Build a card-name -> (printed power, printed toughness) index from
+        Arena's card DB.
+
+        Reads the Cards table's ``Power``/``Toughness`` text columns (empty
+        for anything without printed stats) joined to English titles. Only
+        rows with both values are indexed; the first printing of a name wins.
+        Returns an empty dict when the database or the columns are unavailable.
+        """
+        if getattr(self, "_stats_index_by_name", None) is not None:
+            return self._stats_index_by_name
+
+        index: Dict[str, Tuple[str, str]] = {}
+        db_path = self._resolve_mtga_db_path()
+        if db_path:
+            try:
+                conn = self._connect_mtga_db(db_path)
+                cur = conn.cursor()
+                cur.execute('PRAGMA table_info("Cards")')
+                columns = {str(row[1]) for row in cur.fetchall()}
+                power_column = next((n for n in ("Power", "power") if n in columns), None)
+                toughness_column = next(
+                    (n for n in ("Toughness", "toughness") if n in columns), None
+                )
+                if power_column and toughness_column:
+                    rows = self._title_join_rows(
+                        cur,
+                        f'l."Loc", c."{power_column}", c."{toughness_column}"',
+                        f'c."{power_column}" IS NOT NULL AND c."{toughness_column}" IS NOT NULL',
+                    )
+                    for name, power, toughness in rows:
+                        clean_name = str(name or "").strip()
+                        clean_power = str(power if power is not None else "").strip()
+                        clean_toughness = str(toughness if toughness is not None else "").strip()
+                        if not clean_name or clean_name in index:
+                            continue
+                        if not clean_power or not clean_toughness:
+                            continue
+                        index[clean_name] = (clean_power, clean_toughness)
+                conn.close()
+            except Exception:
+                index = {}
+        # Only a populated index is cached — see mana_cost_index_by_name.
+        if index:
+            self._stats_index_by_name = index
+        return index
+
     @staticmethod
     def _title_join_rows(cur, select_cols: str, where: str) -> list:
         """Rows from Cards joined to its English titles table, trying each

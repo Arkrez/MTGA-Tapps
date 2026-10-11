@@ -367,6 +367,40 @@ describe('layoutBoard', () => {
     expect(handOf(1, 1.1).mine[0].scale).toBeCloseTo(1.1, 9);
   });
 
+  it('tucks a card exiled by a permanent under that permanent, back to the pile once the host leaves', () => {
+    const b = new StreamBuilder();
+    b.add('game_start', { seats_hand_sizes: { 1: 1, 2: 0 }, library_sizes: { 1: 40, 2: 40 } });
+    b.move('bat', 'a2', 'limbo', 'battlefield', 2, 'put');
+    b.move('isl', 'a1', 'hand', 'exile', 1, 'exile', { with: 'bat' });
+    b.move('frs', 'a1', 'library', 'exile', 1, 'exile');
+    b.move('bat', 'a2', 'battlefield', 'graveyard', 2, 'destroy');
+    const stream = b.build(
+      { a1: card('Island', 'Land'), a2: card('Deep-Cavern Bat', 'Creature', { power: '1', toughness: '1' }) },
+      { playerSeat: 1 },
+    );
+    const tl = buildTimeline(stream);
+    const moves = stream.events.filter((e) => e.kind === 'move');
+    const under = layoutBoard(stateAt(tl, moves[2].seq), { ...OPTS, playerSeat: 1 });
+    const bat = under.cards.find((c) => c.obj === 'bat')!;
+    const tucked = under.cards.find((c) => c.obj === 'isl')!;
+    expect(tucked.zone).toBe('exile');
+    expect(tucked.row).toBe(bat.row);
+    // Right behind the host, like an aura, not in the pile lane.
+    expect(Math.abs(tucked.x - bat.x)).toBeLessThan(CARD_WIDTH);
+    expect(Math.abs(tucked.y - bat.y)).toBeLessThan(CARD_HEIGHT / 2);
+    expect(tucked.z).toBeLessThan(bat.z);
+    // The host lists what is under it (for the hover preview); the tucked card lists nothing.
+    expect(bat.under).toEqual([{ obj: 'isl', card: 'a1', zone: 'exile' }]);
+    expect(tucked.under).toEqual([]);
+    const exilePile = under.piles.find((p) => p.seat === 1 && p.zone === 'exile')!;
+    expect(exilePile.count).toBe(1);
+    expect(under.cards.find((c) => c.obj === 'frs')?.row).toBe('pile');
+    // The host dies: the card is plain exile again (only the pile's top card is drawn).
+    const after = layoutBoard(stateAt(tl, moves[3].seq), { ...OPTS, playerSeat: 1 });
+    expect(after.cards.some((c) => c.obj === 'isl' && c.row !== 'pile')).toBe(false);
+    expect(after.piles.find((p) => p.seat === 1 && p.zone === 'exile')?.count).toBe(2);
+  });
+
   it('reports pile counts and top cards', () => {
     const state = sampleAt((e) => e.kind === 'game_end');
     const { piles, cards } = layoutBoard(state, OPTS);
@@ -416,6 +450,54 @@ describe('layoutBoard', () => {
     expect(aura.y).toBeLessThan(0);
     expect(aura.x).toBeGreaterThan(host.x);
     expect(aura.z).toBeLessThan(host.z);
+  });
+
+  it('fans tucked cards upward on screen for either seat, sliding the host and compressing so the fan stays out of the next row', () => {
+    const build = (seat: number, count: number) => {
+      const b = new StreamBuilder();
+      b.add('game_start', { seats_hand_sizes: { 1: 0, 2: 0 }, library_sizes: { 1: 40, 2: 40 } });
+      b.move('host', 'a1', 'limbo', 'battlefield', seat, 'put');
+      for (let i = 0; i < count; i += 1) {
+        b.move(`eq${i}`, 'a2', 'limbo', 'battlefield', seat, 'put');
+        b.add('attach', { obj: `eq${i}`, to: 'host' });
+      }
+      const stream = b.build(
+        { a1: card('Tidecaller', 'Creature', { power: '0', toughness: '2' }), a2: card('Sword', 'Artifact', { type_line: 'Artifact — Equipment' }) },
+        { playerSeat: 1 },
+      );
+      return layoutBoard(buildTimeline(stream).final, { ...OPTS, playerSeat: 1 }).cards;
+    };
+    for (const seat of [1, 2]) {
+      // Room before the next row: the opponent's fan rises toward their lands, the player's toward the center.
+      const room = seat === 2 ? 0.36 - 0.04 : 0.52 - 0.04;
+      const plainHost = byObj(build(seat, 1), 'host');
+
+      // Three cards: whole title strips, the host slid a little away from the fan to make room.
+      const three = build(seat, 3);
+      const host3 = byObj(three, 'host');
+      const fan3 = [0, 1, 2].map((i) => byObj(three, `eq${i}`));
+      expect(host3.under.map((u) => u.obj)).toEqual(['eq0', 'eq1', 'eq2']);
+      expect(host3.under.every((u) => u.zone === 'battlefield' && u.card === 'a2')).toBe(true);
+      fan3.forEach((c, i) => expect(c.y - (i === 0 ? host3 : fan3[i - 1]).y).toBeCloseTo(0.17, 6));
+      expect(plainHost.y - host3.y).toBeGreaterThan(0);
+      expect(plainHost.y - host3.y).toBeLessThanOrEqual(0.2 + 1e-9);
+      expect(fan3[2].y - plainHost.y).toBeLessThanOrEqual(room + 1e-9);
+
+      // Five cards: the slide maxes out at 0.2 and the strips compress, still inside the gap.
+      const five = build(seat, 5);
+      const host5 = byObj(five, 'host');
+      const fan5 = [0, 1, 2, 3, 4].map((i) => byObj(five, `eq${i}`));
+      expect(plainHost.y - host5.y).toBeCloseTo(0.2, 6);
+      for (let i = 0; i < fan5.length; i += 1) {
+        const below = i === 0 ? host5 : fan5[i - 1];
+        expect(fan5[i].y - below.y).toBeGreaterThan(0.1);
+        expect(fan5[i].y - below.y).toBeLessThan(0.17);
+        expect(fan5[i].z).toBeLessThan(below.z);
+      }
+      expect(fan5[4].y - plainHost.y).toBeLessThanOrEqual(room + 1e-9);
+      // Barely any sideways spread: the fan does not crowd the neighbour.
+      expect(Math.abs(fan5[4].x - host5.x)).toBeLessThan(0.3);
+    }
   });
 
   it('stacks spells in a column under the stack preview, top item highest, with targets highlighted', () => {

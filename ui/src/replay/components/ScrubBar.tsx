@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent, PointerEvent } from 'react';
 import type { PlaybackClock, PlaybackSnapshot } from '../player';
-import { fractionOfIndex, indexAtFraction, scrubSegments, visibleTurnLabels } from '../scrub';
+import { fractionOfIndex, indexAtFraction, openingEndIndex, scrubSegments, visibleTurnLabels } from '../scrub';
 import type { ReplayStream } from '../types';
 
 interface ScrubBarProps {
@@ -17,7 +17,9 @@ interface ScrubBarProps {
 
 export function ScrubBar({ stream, clock, snapshot }: ScrubBarProps) {
   const segments = useMemo(() => scrubSegments(stream), [stream]);
-  const total = stream.events.length;
+  // The bar covers the navigable range: from the first turn header to the end.
+  const first = useMemo(() => openingEndIndex(stream.events), [stream]);
+  const total = stream.events.length - first;
   const track = useRef<HTMLDivElement>(null);
   const drag = useRef<{ resume: boolean; frame: number; fraction: number } | null>(null);
   const [width, setWidth] = useState(800);
@@ -40,7 +42,7 @@ export function ScrubBar({ stream, clock, snapshot }: ScrubBarProps) {
   }, []);
 
   const seekFraction = (fraction: number) => {
-    const event = stream.events[indexAtFraction(fraction, total)];
+    const event = stream.events[first + indexAtFraction(fraction, total)];
     if (event) clock.seek(event.seq);
   };
   const fractionAt = (clientX: number) => {
@@ -87,7 +89,7 @@ export function ScrubBar({ stream, clock, snapshot }: ScrubBarProps) {
 
   const turnSegments = segments.filter((segment) => segment.turn !== null);
   const labelled = useMemo(() => visibleTurnLabels(segments, width), [segments, width]);
-  const position = fractionOfIndex(snapshot.index, total) * 100;
+  const position = fractionOfIndex(snapshot.index - first, total) * 100;
   const current = stream.events[snapshot.index];
   return (
     <div className="replay-scrub">
@@ -108,8 +110,8 @@ export function ScrubBar({ stream, clock, snapshot }: ScrubBarProps) {
         aria-label="Replay position"
         aria-valuemin={0}
         aria-valuemax={Math.max(0, total - 1)}
-        aria-valuenow={snapshot.index}
-        aria-valuetext={`Event ${snapshot.index + 1} of ${total}${snapshot.turn ? `, turn ${snapshot.turn}` : ''}`}
+        aria-valuenow={Math.max(0, snapshot.index - first)}
+        aria-valuetext={`Event ${snapshot.index - first + 1} of ${total}${snapshot.turn ? `, turn ${snapshot.turn}` : ''}`}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}

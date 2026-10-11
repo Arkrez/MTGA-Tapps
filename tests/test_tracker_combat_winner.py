@@ -8083,3 +8083,22 @@ def test_draw_of_a_non_card_object_is_counted_but_not_recorded_as_a_card():
     unknown_card = {"grpId": 120001, "instanceId": 701, "ownerSeatId": 1, "type": "GameObjectType_Card", "cardTypes": ["CardType_Creature"]}
     tracker._handle_draw_zone_transfer(unknown_card, {}, {701: unknown_card}, zones, 10, 11)
     assert [event.card_name for event in tracker.game_state.drawn_card_events.get(1, [])] == ["Card #120001"]
+
+
+def test_zero_power_creature_labels_as_zero_not_unknown():
+    """Arena omits zero-valued stat fields: ``"power": {}`` is 0, so a 0/2 prints
+    as "(0/2)" instead of dropping its stats (which also kept the cards table
+    from ever learning them)."""
+    tracker = make_tracker()
+    assert tracker._extract_stat_value({}) == 0
+    assert tracker._extract_stat_value({"value": 3}) == 3
+    assert tracker._extract_stat_value({"value": "x"}) is None
+    assert tracker._extract_stat_value(None) is None
+    creature = {
+        "instanceId": 7,
+        "grpId": 120002,
+        "cardTypes": ["CardType_Creature"],
+        "power": {},
+        "toughness": {"value": 2},
+    }
+    assert tracker._object_display_label(creature, 7).endswith(" (0/2)")

@@ -8,8 +8,8 @@
  */
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { formatCardName } from '../../format';
-import { previewPosition } from '../scene/hoverStore';
-import type { HoverStore } from '../scene/hoverStore';
+import { PICTURES_MAX, UNDER_MAX_ROWS, previewPosition, underPictures } from '../scene/hoverStore';
+import type { HoverStore, HoverUnder, PreviewBox } from '../scene/hoverStore';
 import type { TextureStore } from '../scene/textureStore';
 import type { CardKey } from '../types';
 
@@ -84,19 +84,76 @@ export function PreviewCard({ store, card, name }: { store: TextureStore; card: 
   return <PreviewImage key={url ?? 'none'} url={url} name={name} fallback={url ? null : store.generatedFaceUrl(card)} />;
 }
 
+/** The cards tucked under the hovered permanent: top of the stack first, a thumbnail and name each. */
+function UnderList({ store, under }: { store: TextureStore; under: readonly HoverUnder[] }) {
+  const shown = under.slice(-UNDER_MAX_ROWS).reverse();
+  const more = under.length - shown.length;
+  return (
+    <div className="replay-preview-under">
+      <div className="replay-preview-under-title">
+        Under this card <span>{under.length}</span>
+      </div>
+      <ul>
+        {shown.map((item, i) => (
+          <li key={`${item.card ?? ''}|${item.name}|${i}`}>
+            <span className="replay-preview-under-thumb" aria-hidden="true">
+              {item.name ? <PreviewCard store={store} card={item.card} name={item.name} /> : null}
+            </span>
+            <span className="replay-preview-under-name">{item.name ? formatCardName(item.name) : 'Face-down card'}</span>
+            {item.zone === 'exile' ? <span className="replay-preview-under-tag">exiled</span> : null}
+          </li>
+        ))}
+      </ul>
+      {more > 0 ? <div className="replay-preview-under-more">and {more} more below</div> : null}
+    </div>
+  );
+}
+
+/** Each distinct card in the tucked stack, pictured beside the hovered card so none of them needs its own hover. */
+function UnderPictures({ store, under, box }: { store: TextureStore; under: readonly HoverUnder[]; box: PreviewBox }) {
+  const pictures = underPictures(under);
+  const shown = pictures.slice(0, PICTURES_MAX);
+  const more = pictures.length - shown.length;
+  return (
+    <div className="replay-preview-pictures">
+      <div
+        className="replay-preview-pictures-grid"
+        style={{ gridTemplateColumns: `repeat(${box.pictureColumns}, ${box.pictureWidth}px)` }}
+      >
+        {shown.map((picture) => (
+          <figure key={picture.card} className="replay-preview-picture">
+            <div className="card-preview-media">
+              <PreviewCard store={store} card={picture.card} name={picture.name} />
+            </div>
+            {picture.count > 1 ? <figcaption className="replay-preview-picture-count">×{picture.count}</figcaption> : null}
+          </figure>
+        ))}
+      </div>
+      {more > 0 ? <div className="replay-preview-under-more">and {more} more</div> : null}
+    </div>
+  );
+}
+
 export function CardPreview({ hover, store }: { hover: HoverStore; store: TextureStore }) {
   const info = useSyncExternalStore(hover.subscribe, hover.get);
   if (!info || !info.name) return null;
-  const { left, top, width } = previewPosition(info, { width: window.innerWidth, height: window.innerHeight });
+  const box = previewPosition(info, { width: window.innerWidth, height: window.innerHeight });
+  const under = info.under ?? [];
   return (
     <div
       className="card-preview replay-card-preview"
       role="tooltip"
       data-card-name={info.name}
-      style={{ position: 'fixed', left, top, width }}
+      style={{ position: 'fixed', left: box.left, top: box.top, width: box.width }}
     >
-      <div className="card-preview-media">
-        <PreviewCard key={`${info.card ?? ''}|${info.name}`} store={store} card={info.card} name={info.name} />
+      <div className="replay-preview-body">
+        <div className="replay-preview-host" style={{ width: box.hostWidth - 10 }}>
+          <div className="card-preview-media">
+            <PreviewCard key={`${info.card ?? ''}|${info.name}`} store={store} card={info.card} name={info.name} />
+          </div>
+          {under.length ? <UnderList store={store} under={under} /> : null}
+        </div>
+        {box.pictureColumns ? <UnderPictures store={store} under={under} box={box} /> : null}
       </div>
     </div>
   );

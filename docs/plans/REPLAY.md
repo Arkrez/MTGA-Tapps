@@ -1,9 +1,9 @@
 # Replay: watch any recorded game on a 3D table
 
-Status: phases 0–3 built 2026-10-07 (contract in `docs/REPLAY_FORMAT.md`; delivered
-behavior is summarized in `CHANGELOG.md` and `AGENTS.md`). Remaining: video export
-(phase 4), the overlay button, and validation on real recorded games once the new
-tracker build has tracked live games. Measured capture cost: about 34 KB per game. Researched 2026-10-06 against current
+Status: phases 0–3 built 2026-10-07, phase 4 (video export) built 2026-10-10 and
+validated on live recorded games (contract in `docs/REPLAY_FORMAT.md`; delivered
+behavior is summarized in `CHANGELOG.md` and `AGENTS.md`). Remaining: the overlay
+button and an optional local image cache. Measured capture cost: about 34 KB per game. Researched 2026-10-06 against current
 source and a read-only inspection of the local analytics database
 (1108 games, 121,500 `game_events` rows, 285,661 `console_logs` rows).
 Revised the same day after review: three.js renderer, one enriched event

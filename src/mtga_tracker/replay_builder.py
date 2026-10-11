@@ -300,6 +300,7 @@ class RecordedBuilder:
         reason: str,
         inferred: bool = False,
         index: Optional[int] = None,
+        exiled_with: Optional[str] = None,
     ) -> Dict[str, Any]:
         if card is not None:
             self.card_of[obj] = card
@@ -309,7 +310,7 @@ class RecordedBuilder:
             "move",
             obj=obj,
             card=card if card is not None else self.card_of.get(obj),
-            **{"from": source, "to": dest},
+            **{"from": source, "to": dest, "with": exiled_with},
             owner=owner,
             controller=controller if controller is not None else owner,
             reason=reason if reason in MOVE_REASONS else "unknown",
@@ -641,6 +642,7 @@ class RecordedBuilder:
             controller,
             str(payload.get("reason") or "unknown"),
             index=_int(payload.get("index")),
+            exiled_with=_obj(payload.get("with")) if dest == "exile" else None,
         )
 
     def _on_tap(self, row, payload, kind="tap"):

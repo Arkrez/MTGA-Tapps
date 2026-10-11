@@ -64,7 +64,7 @@ export function GameEndOverlay({ stream, state, clock, backHash }: GameEndOverla
             type="button"
             className="replay-btn replay-btn-primary"
             onClick={() => {
-              clock.seek(clock.firstSeq);
+              clock.seek(clock.startSeq);
               clock.play();
             }}
           >

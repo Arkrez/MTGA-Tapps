@@ -118,8 +118,15 @@ function samePlacement(a: CardPlacement, b: CardPlacement): boolean {
     a.scale === b.scale &&
     a.highlight === b.highlight &&
     a.inferred === b.inferred &&
-    a.seat === b.seat
+    a.seat === b.seat &&
+    sameUnder(a.under, b.under)
   );
+}
+
+function sameUnder(a: CardPlacement['under'], b: CardPlacement['under']): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  return a.every((u, i) => u.obj === b[i].obj && u.card === b[i].card && u.zone === b[i].zone);
 }
 
 export const CardMesh = memo(

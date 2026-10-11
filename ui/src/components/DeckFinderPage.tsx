@@ -424,14 +424,12 @@ export function DeckFinderPage() {
         id="deck-finder-browse"
         title="Browse Decks"
         description="Pick a site and creator, then copy a deck into Arena."
-      >
-        <div className="deckfinder-toolbar">
-          <span className="deckfinder-step-label">Site</span>
+        headingAction={(
           <button className="quick-filter deckfinder-surprise" type="button" onClick={() => void runSurprise()}>
             <Dices aria-hidden="true" /> Surprise Me
           </button>
-        </div>
-
+        )}
+      >
         {providersError ? (
           <p className="empty-state deckfinder-state">{providersError}</p>
         ) : providers === null ? (
@@ -692,19 +690,29 @@ export function DeckFinderPage() {
                 <div className="deckfinder-detail-heading">
                   <div className="deckfinder-detail-title-row">
                     <h3>{parsedDeck?.name || selectedDeck.name}</h3>
-                    <button
-                      className="deck-export-button deckfinder-title-export"
-                      disabled={!selectedDeck.deck_text}
-                      type="button"
-                      onClick={() => void copyDeck(selectedDeck)}
-                    >
-                      {copyStatus === 'copied' ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-                      {copyStatus === 'copied'
-                        ? 'Copied'
-                        : copyStatus === 'error'
-                          ? 'Export Failed'
-                          : 'Export to Arena'}
-                    </button>
+                    <div className="deckfinder-title-actions">
+                      <a
+                        className="deck-neutral-button"
+                        href={selectedDeck.source_url}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        <ExternalLink aria-hidden="true" /> Source
+                      </a>
+                      <button
+                        className="deck-export-button deckfinder-title-export"
+                        disabled={!selectedDeck.deck_text}
+                        type="button"
+                        onClick={() => void copyDeck(selectedDeck)}
+                      >
+                        {copyStatus === 'copied' ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+                        {copyStatus === 'copied'
+                          ? 'Copied'
+                          : copyStatus === 'error'
+                            ? 'Export Failed'
+                            : 'Export to Arena'}
+                      </button>
+                    </div>
                   </div>
                   <p className="section-description">
                     {[selectedDeck.player_name, selectedDeck.format_label,
@@ -728,16 +736,6 @@ export function DeckFinderPage() {
                     {selectedDeck.source_site}.
                   </p>
                 )}
-                <div className="deckfinder-detail-actions">
-                  <a
-                    className="deck-neutral-button"
-                    href={selectedDeck.source_url}
-                    rel="noreferrer"
-                    target="_blank"
-                  >
-                    <ExternalLink aria-hidden="true" /> Source
-                  </a>
-                </div>
               </aside>
             ) : (
               <div className="deckfinder-detail deckfinder-detail-empty">

@@ -35,6 +35,14 @@ export class MotionRegistry {
   snap = false;
   /** The perspective camera's position; null under the straight-down camera. */
   private viewer: Viewer | null = null;
+  /** Seconds per frame while a video export drives the frames; null follows wall time. */
+  fixedStep: number | null = null;
+  private fixedPending = false;
+
+  /** Lets exactly one fixed step through on the next frame (the export calls it per frame). */
+  tick(): void {
+    this.fixedPending = true;
+  }
 
   setSnap(snap: boolean): void {
     this.snap = snap;
@@ -100,8 +108,15 @@ export class MotionRegistry {
 
   /** Advances every moving card; returns true while any card is still moving. */
   step(deltaSeconds: number): boolean {
+    let delta = deltaSeconds;
+    if (this.fixedStep !== null) {
+      // Exporting: stray frames (R3F's own invalidations) must not advance time.
+      if (!this.fixedPending) return this.moving > 0;
+      this.fixedPending = false;
+      delta = this.fixedStep;
+    }
     if (!this.moving) return false;
-    const alpha = dampFactor(deltaSeconds);
+    const alpha = dampFactor(delta);
     for (const entry of this.entries.values()) {
       if (entry.settled) continue;
       if (stepPose(entry.pose, entry.target, alpha)) {

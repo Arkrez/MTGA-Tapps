@@ -483,6 +483,15 @@ class ReplayCaptureMixin:
         card_type = self._get_card_type_category(obj.get("cardTypes") or [])
         if card_type != "Other":
             payload["type"] = card_type
+        if "CardType_Creature" in (obj.get("cardTypes") or []):
+            # The stream's card entry takes its printed stats from the first
+            # row that names them, so the viewer never depends on the cards
+            # table (a 0-power creature never earned a "(0/2)" label there).
+            power = stat_value(obj, "power")
+            toughness = stat_value(obj, "toughness")
+            if power is not None and toughness is not None:
+                payload["power"] = power
+                payload["toughness"] = toughness
         return grp_id
 
     # -- buffer -----------------------------------------------------------
@@ -689,11 +698,15 @@ class ReplayCaptureMixin:
             visibility = (card_obj or {}).get("visibility")
             if owner == self.game_state.opponent_seat_id and visibility == "Visibility_Private":
                 grp_id = None
-                payload.pop("name", None)
-                payload.pop("type", None)
+                for hidden in ("name", "type", "power", "toughness"):
+                    payload.pop(hidden, None)
         root = self._replay_root(instance_id)
         if root is not None:
             self._replay_state().latest[root] = int(instance_id)
+        if zone_to == "exile":
+            host = self._replay_exile_host(annotation, instance_id, game_objects_by_id, zones_by_id)
+            if host is not None:
+                payload["with"] = host
         return ReplayFact(
             "move",
             object_id=root,
@@ -704,6 +717,44 @@ class ReplayCaptureMixin:
             zone_to=zone_to,
             payload=payload,
         )
+
+    def _replay_exile_host(
+        self,
+        annotation: Dict[str, Any],
+        instance_id: int,
+        game_objects_by_id: Dict[int, Dict[str, Any]],
+        zones_by_id: Optional[Dict[int, Dict[str, Any]]],
+    ) -> Optional[int]:
+        """Root id of the battlefield permanent that exiled the card, if one did.
+
+        Arena's ``affectorId`` on an exile transfer is the resolving ability
+        object (whose ``parentId`` is its source permanent) or, for static and
+        replacement effects, the permanent itself. Spells on the stack and
+        sources no longer on the battlefield give None: the card just sits in
+        exile. The viewer tucks a card under its host (Deep-Cavern Bat,
+        Pinnacle Starcage) while the host stays on the battlefield.
+        """
+        try:
+            affector = int(annotation.get("affectorId"))
+        except (TypeError, ValueError):
+            return None
+        snapshots = getattr(self.game_state, "object_snapshots", {}) or {}
+        obj = game_objects_by_id.get(affector) or snapshots.get(affector) or {}
+        host_id = affector
+        if obj.get("type") == "GameObjectType_Ability" or obj.get("parentId") is not None:
+            try:
+                host_id = int(obj.get("parentId"))
+            except (TypeError, ValueError):
+                return None
+            obj = game_objects_by_id.get(host_id) or snapshots.get(host_id) or {}
+        if not obj or obj.get("type") != "GameObjectType_Card":
+            return None
+        if self._replay_zone_name(obj.get("zoneId"), zones_by_id) != "battlefield":
+            return None
+        root = self._replay_root(host_id)
+        if root is None or root == self._replay_root(instance_id):
+            return None
+        return root
 
     @replay_safe()
     def _replay_settle_move(self, fact: Optional[ReplayFact], start: int) -> None:

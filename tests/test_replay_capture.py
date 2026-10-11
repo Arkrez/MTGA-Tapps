@@ -1143,6 +1143,45 @@ def test_ability_stack_push_is_activated_or_trigger(tmp_path):
     assert rows[0]["payload"]["text"] == "Draw a card." and rows[0]["zone_from"] is None
 
 
+def test_exile_by_a_permanents_ability_records_the_host(tmp_path):
+    """Deep-Cavern Bat: its trigger (an ability whose parentId is the Bat) exiles a
+    card from the opponent's hand. The move carries ``with`` = the Bat's root so the
+    viewer tucks the card under it; a spell or a source off the battlefield does not."""
+    tracker = started_tracker(tmp_path)
+    bat = obj(318, 2003, O, BF)
+    trigger = {
+        "instanceId": 322,
+        "grpId": 9001,
+        "type": "GameObjectType_Ability",
+        "ownerSeatId": O,
+        "controllerSeatId": O,
+        "zoneId": STACK,
+        "parentId": 318,
+    }
+    taken = obj(323, 1008, P, EXILE)
+    tracker._handle_event(
+        message(
+            oic(280, 323, 322),
+            zt(323, HAND[P], EXILE, "Exile", 322),
+            objects=[bat, trigger, taken],
+        )
+    )
+    # Pinnacle Starcage style: the permanent itself is the affector.
+    cage = obj(312, 1005, P, BF)
+    swept = obj(315, 2001, O, EXILE)
+    tracker._handle_event(message(zt(315, BF, EXILE, "Exile", 312), objects=[cage, swept]))
+    # A sorcery on the stack exiling a card links nothing.
+    spell = obj(400, 2004, O, STACK)
+    gone = obj(401, 1001, P, EXILE)
+    tracker._handle_event(message(zt(401, BF, EXILE, "Exile", 400), objects=[spell, gone]))
+    rows = event_rows(tmp_path / "analytics.sqlite3", "zone_to = 'exile'")
+    assert [(r["object_id"], r["payload"].get("with")) for r in rows] == [
+        (280, 318),
+        (315, 312),
+        (401, None),
+    ]
+
+
 def test_one_message_is_one_transaction(tmp_path):
     tracker = started_tracker(tmp_path)
     tracker._handle_event(message())  # create the schema
@@ -1388,3 +1427,19 @@ def test_zone_types_are_remembered_from_earlier_messages(tmp_path):
     )
     row = event_rows(tmp_path / "analytics.sqlite3", "event_type = 'draw'")[0]
     assert (row["zone_from"], row["zone_to"], row["seat_id"]) == ("library", "hand", O)
+
+
+def test_creature_rows_carry_current_stats_including_zero_power(tmp_path):
+    """Arena drops zero-valued fields, so a 0/2 arrives as ``"power": {}``. Every
+    structured row for a creature carries its stats (the stream's card entry is
+    seeded from the first one), and a hidden opponent card reveals nothing."""
+    tracker = started_tracker(tmp_path)
+    tidecaller = obj(500, 1004, P, BF, power={}, toughness={"value": 2})
+    tracker._handle_event(message(zt(500, STACK, BF, "Resolve"), objects=[tidecaller]))
+    hidden = obj(501, 2003, O, HAND[O], visibility="Visibility_Private")
+    tracker._handle_event(message(zt(501, LIB[O], HAND[O], "Draw"), objects=[hidden]))
+    rows = event_rows(tmp_path / "analytics.sqlite3", "event_subtype = 'move'")
+    landed = next(r for r in rows if r["object_id"] == 500)
+    assert (landed["payload"]["power"], landed["payload"]["toughness"]) == (0, 2)
+    drawn = next(r for r in rows if r["object_id"] == 501)
+    assert not {"name", "type", "power", "toughness"} & set(drawn["payload"])

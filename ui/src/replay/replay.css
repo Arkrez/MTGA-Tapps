@@ -97,6 +97,9 @@
 
 .replay-header-actions {
   position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-left: auto;
 }
 
@@ -116,8 +119,27 @@
 }
 
 .replay-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   cursor: pointer;
+  line-height: 1;
   white-space: nowrap;
+  text-decoration: none;
+}
+
+/* Symbol glyphs sit on their own metrics; one line-height keeps them level with the label. */
+.replay-btn-icon {
+  display: inline-block;
+  font-size: 0.86em;
+  line-height: 1;
+  transform: translateY(-0.04em);
+}
+
+.replay-btn:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 
 .replay-btn:hover {
@@ -1048,9 +1070,271 @@
   box-shadow: 0 0 0 2px var(--stack-flash), var(--preview-shadow);
 }
 
+/* Held while paused, the leaving card stands beside the stack instead of over its top card. */
+.replay-stack-held .replay-stack-exits {
+  right: calc(100% + 10px);
+}
+
 @media (prefers-reduced-motion: reduce) {
   /* Held items are static, so they show even with reduced motion. */
   .replay-stack-held .replay-stack-exits {
     display: flex;
   }
+}
+
+/* --- WebGL notice --- */
+
+.replay-webgl-notice {
+  margin: 16px;
+}
+
+.replay-webgl-detail {
+  color: var(--muted);
+}
+
+/* --- Video export --- */
+
+/* The export button carries the replay color so it reads as the page's headline action. */
+.replay-export-btn {
+  border-color: color-mix(in srgb, var(--replay, #2bb3a3) 70%, var(--border));
+  background: color-mix(in srgb, var(--replay, #2bb3a3) 26%, var(--panel-strong));
+  color: var(--text);
+}
+
+.replay-export-btn:hover:not(:disabled) {
+  border-color: var(--replay, #2bb3a3);
+  background: color-mix(in srgb, var(--replay, #2bb3a3) 38%, var(--panel-strong));
+}
+
+.replay-export {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+  backdrop-filter: blur(2px);
+}
+
+.replay-export-card {
+  width: min(460px, 100%);
+  padding: 18px 20px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 45%);
+}
+
+.replay-export-card h3 {
+  margin: 0 0 8px;
+  font-size: 1.05rem;
+}
+
+.replay-export-lead {
+  margin: 0 0 12px;
+  color: var(--text);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.replay-export-error {
+  color: var(--danger);
+}
+
+.replay-export-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 14px;
+  margin-bottom: 10px;
+}
+
+.replay-export-grid label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
+.replay-export-grid select {
+  width: 100%;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
+}
+
+.replay-export-check {
+  grid-column: 1 / -1;
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  color: var(--text) !important;
+  font-size: 0.8rem !important;
+}
+
+.replay-export-check input {
+  accent-color: var(--replay);
+}
+
+.replay-export-estimate,
+.replay-export-note {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.replay-export-progress {
+  display: block;
+  width: 100%;
+  height: 8px;
+  margin: 2px 0 10px;
+  accent-color: var(--replay);
+}
+
+.replay-export-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.replay-export-actions .replay-btn {
+  text-decoration: none;
+}
+
+.replay-btn-primary {
+  border-color: color-mix(in srgb, var(--replay) 60%, var(--border));
+  background: color-mix(in srgb, var(--replay) 22%, var(--panel));
+  color: var(--text);
+}
+
+/* Hover preview: what is tucked under the hovered permanent (heights match hoverStore.underListHeight). */
+.replay-preview-under {
+  margin-top: 6px;
+}
+
+.replay-preview-under-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 20px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.replay-preview-under-title span {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.replay-preview-under ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.replay-preview-under li {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 4px;
+  border-radius: 6px;
+  background: var(--panel-strong);
+}
+
+.replay-preview-under-thumb {
+  position: relative;
+  display: block;
+  width: 20px;
+  overflow: hidden;
+  aspect-ratio: 488 / 680;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--border) 60%, var(--panel-strong));
+}
+
+.replay-preview-under-thumb .card-preview-loading,
+.replay-preview-under-thumb .card-preview-fallback {
+  display: none;
+}
+
+.replay-preview-under-name {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.replay-preview-under-tag {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--replay) 24%, var(--panel));
+  color: var(--text);
+  font-size: 0.66rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.replay-preview-under-more {
+  height: 20px;
+  padding-top: 4px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-align: center;
+}
+
+/* The hovered card beside pictures of each distinct card tucked under it (widths from hoverStore.previewPosition). */
+.replay-preview-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.replay-preview-host {
+  flex: none;
+}
+
+.replay-preview-pictures {
+  flex: none;
+}
+
+.replay-preview-pictures-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.replay-preview-picture {
+  position: relative;
+  margin: 0;
+}
+
+.replay-preview-picture .card-preview-loading,
+.replay-preview-picture .card-preview-fallback {
+  padding: 10px;
+  font-size: 0.7rem;
+}
+
+.replay-preview-picture-count {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--replay) 80%, #000);
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 700;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.4);
 }

@@ -918,6 +918,41 @@ class AnalyticsStore:
         return updated
 
     @staticmethod
+    def backfill_card_stats(conn: sqlite3.Connection, stats_by_name) -> int:
+        """Fill cards.power/toughness for rows that have neither, by base name.
+
+        stats_by_name maps clean card names to (power, toughness) strings from
+        the Arena card database (CardDatabase.stats_index_by_name). Rows that
+        already carry a value (parsed from a "(Creature 2/2)" console label)
+        are left alone; the rows this fills are the ones no label ever
+        covered, 0-power creatures above all, which is what the replay's stat
+        badges fall back to. Split cards use their front face.
+        """
+        if not stats_by_name:
+            return 0
+        from .analytics_persistence import analytics_card_base_name
+
+        updated = 0
+        for card_id, name in conn.execute(
+            "SELECT id, name FROM cards WHERE power IS NULL AND toughness IS NULL"
+        ).fetchall():
+            base = analytics_card_base_name(str(name or ""))
+            entry = stats_by_name.get(base)
+            if entry is None and " // " in base:
+                entry = stats_by_name.get(base.split(" // ")[0].strip())
+            if entry is None:
+                continue
+            power, toughness = entry
+            conn.execute(
+                "UPDATE cards SET power = ?, toughness = ? WHERE id = ?",
+                (str(power), str(toughness), card_id),
+            )
+            updated += 1
+        if updated:
+            conn.commit()
+        return updated
+
+    @staticmethod
     def _migrate_v10_delete_unknown_deck_games(conn: sqlite3.Connection) -> None:
         """Delete half-tracked games recorded without a player deck name.
 

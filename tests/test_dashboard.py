@@ -3679,3 +3679,55 @@ def test_scry_totals_reach_the_game_and_deck_pages(tmp_path):
     # The per-event rows (with the bottomed card names) are kept but not
     # surfaced on the deck page for now.
     assert "bottomed_most" not in interaction
+
+
+def test_dashboard_static_files_are_cached_and_connections_reused(tmp_path):
+    """Hashed assets are immutable; index.html revalidates by Last-Modified;
+    one HTTP/1.1 connection serves several requests."""
+    db_path = _sample_dashboard_db(tmp_path)
+    dist_dir = tmp_path / "dist"
+    (dist_dir / "assets").mkdir(parents=True)
+    (dist_dir / "index.html").write_text("<!doctype html><div id='root'></div>", encoding="utf-8")
+    (dist_dir / "assets" / "index-AbC123.js").write_text("console.log(1)", encoding="utf-8")
+    handler = type(
+        "TestDashboardHandler",
+        (DashboardHandler,),
+        {"db_path": db_path, "static_dir": dist_dir},
+    )
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    conn = None
+    thread.start()
+    try:
+        conn = HTTPConnection("127.0.0.1", server.server_address[1])
+        conn.request("GET", "/assets/index-AbC123.js")
+        asset = conn.getresponse()
+        asset.read()
+        sock = conn.sock
+        conn.request("GET", "/")
+        index = conn.getresponse()
+        index.read()
+        conn.request("GET", "/", headers={"If-Modified-Since": index.getheader("Last-Modified")})
+        revalidated = conn.getresponse()
+        revalidated.read()
+        conn.request("GET", "/", headers={"If-Modified-Since": "Thu, 01 Jan 2015 00:00:00 GMT"})
+        stale = conn.getresponse()
+        stale.read()
+        reused = conn.sock is sock
+    finally:
+        if conn is not None:
+            conn.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+
+    assert asset.version == 11 and reused
+    assert asset.status == 200
+    assert asset.getheader("Cache-Control") == "public, max-age=31536000, immutable"
+    assert index.status == 200
+    assert index.getheader("Cache-Control") == "no-cache"
+    assert index.getheader("Last-Modified")
+    assert revalidated.status == 304
+    assert stale.status == 200

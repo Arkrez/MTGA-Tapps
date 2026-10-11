@@ -5,6 +5,7 @@ import { formatClock } from '../logText';
 import { PLAYBACK_SPEEDS } from '../player';
 import type { PlaybackClock, PlaybackSnapshot, PlaybackSpeed } from '../player';
 import { savePrefs } from '../prefs';
+import { openingEndIndex } from '../scrub';
 import type { ReplayStream } from '../types';
 import { ScrubBar } from './ScrubBar';
 
@@ -18,7 +19,9 @@ interface ReplayControlsProps {
 export function ReplayControls({ stream, clock, snapshot, goToTurnRef }: ReplayControlsProps) {
   const [turnInput, setTurnInput] = useState('');
   const events = stream.events;
-  const total = events.length;
+  // Counted from the first turn header: the opening deal is not part of playback.
+  const first = openingEndIndex(events);
+  const total = events.length - first;
   const current = events[snapshot.index];
   const duration = events[total - 1]?.t ?? 0;
   const turns = stream.turns;
@@ -40,10 +43,12 @@ export function ReplayControls({ stream, clock, snapshot, goToTurnRef }: ReplayC
       <div className="replay-controls-row">
         <div className="replay-transport" role="group" aria-label="Playback">
           <button type="button" className="replay-btn" onClick={() => clock.prevTurn()} title="Previous turn (J)">
-            ⏮ Turn
+            <span className="replay-btn-icon" aria-hidden="true">⏮</span>
+            Turn
           </button>
           <button type="button" className="replay-btn" onClick={() => clock.step(-1)} title="Step back (←)">
-            ◀ Step
+            <span className="replay-btn-icon" aria-hidden="true">◀</span>
+            Step
           </button>
           <button
             type="button"
@@ -52,13 +57,16 @@ export function ReplayControls({ stream, clock, snapshot, goToTurnRef }: ReplayC
             aria-pressed={snapshot.playing}
             title="Play / pause (Space)"
           >
-            {snapshot.playing ? '❚❚ Pause' : '▶ Play'}
+            <span className="replay-btn-icon" aria-hidden="true">{snapshot.playing ? '❚❚' : '▶'}</span>
+            {snapshot.playing ? 'Pause' : 'Play'}
           </button>
           <button type="button" className="replay-btn" onClick={() => clock.step(1)} title="Step forward (→)">
-            Step ▶
+            Step
+            <span className="replay-btn-icon" aria-hidden="true">▶</span>
           </button>
           <button type="button" className="replay-btn" onClick={() => clock.nextTurn()} title="Next turn (K)">
-            Turn ⏭
+            Turn
+            <span className="replay-btn-icon" aria-hidden="true">⏭</span>
           </button>
           <label className="replay-speed" title="Speed ([ and ])">
             <span className="visually-hidden">Speed</span>
@@ -101,7 +109,7 @@ export function ReplayControls({ stream, clock, snapshot, goToTurnRef }: ReplayC
         </div>
         <div className="replay-counters" aria-live="off">
           <span>
-            Event {total ? snapshot.index + 1 : 0} / {total}
+            Event {total ? snapshot.index - first + 1 : 0} / {total}
           </span>
           <span>
             {formatClock(current?.t ?? 0)} / {formatClock(duration)}

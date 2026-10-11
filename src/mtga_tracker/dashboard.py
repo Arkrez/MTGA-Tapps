@@ -14,6 +14,7 @@ import re
 import sqlite3
 import threading
 import time
+from email.utils import formatdate, parsedate_to_datetime
 import traceback
 import sys
 from datetime import datetime, timedelta
@@ -5788,6 +5789,10 @@ def _send_bytes(
         handler.send_response(status)
         handler.send_header("Content-Type", content_type)
         handler.send_header("Content-Length", str(len(body)))
+        if handler.close_connection:
+            # Tell the client (a POST, an HTTP/1.0 peer) so it reconnects for
+            # the next request instead of writing into a closed socket.
+            handler.send_header("Connection", "close")
         for name, value in (headers or {}).items():
             handler.send_header(name, value)
         handler.end_headers()
@@ -5879,6 +5884,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     db_path: Path = DEFAULT_DB_PATH
     static_dir: Path | None = DEFAULT_STATIC_DIR if DEFAULT_STATIC_DIR.exists() else None
+    #: Keep-alive: a page load is a dozen asset and API requests plus the
+    #: replay's card images, and HTTP/1.0 opened a connection for each. Every
+    #: response goes through _send_bytes (Content-Length) or is a bodiless
+    #: 304/error, which is what makes persistent connections safe.
+    protocol_version = "HTTP/1.1"
+    #: Idle keep-alive connections release their thread after this long.
+    timeout = 60
 
     def log_message(self, message_format: str, *args: Any) -> None:
         """Avoid writing request logs when a windowed build has no stderr stream."""
@@ -5902,6 +5914,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self):  # noqa: N802 - http.server API
+        # Not every POST branch drains its body (unknown routes answer 404 at
+        # once); closing afterwards keeps a leftover body off the next request.
+        self.close_connection = True
         """Handle the dashboard's writes: game notes/tags and the DB reset."""
         # Any write invalidates every memoized read body, whatever the fingerprint sees.
         clear_response_cache()
@@ -6198,6 +6213,39 @@ class DashboardHandler(BaseHTTPRequestHandler):
             _send_bytes(self, 500, str(exc).encode("utf-8"), "text/plain; charset=utf-8", no_store)
             return
         _send_bytes(self, 200, body, json_type, no_store)
+
+    def _send_static(self, path: Path, request_path: str) -> None:
+        """A file of the built frontend. Vite names everything under assets/
+        by content hash, so those are immutable for a year (a rebuild changes
+        the name); index.html and the icons carry Last-Modified and answer
+        If-Modified-Since with 304, so a rebuild shows on the next load
+        without re-sending unchanged files."""
+        try:
+            modified = int(path.stat().st_mtime)
+            body = path.read_bytes()
+        except OSError:
+            self.send_error(404)
+            return
+        if "/assets/" in f"/{request_path.lstrip('/')}":
+            headers = {"Cache-Control": "public, max-age=31536000, immutable"}
+        else:
+            headers = {
+                "Cache-Control": "no-cache",
+                "Last-Modified": formatdate(modified, usegmt=True),
+            }
+            since = self.headers.get("If-Modified-Since")
+            if since:
+                try:
+                    unchanged = modified <= int(parsedate_to_datetime(since).timestamp())
+                except (TypeError, ValueError, OverflowError):
+                    unchanged = False
+                if unchanged:
+                    self.send_response(304)
+                    for name, value in headers.items():
+                        self.send_header(name, value)
+                    self.end_headers()
+                    return
+        _send_bytes(self, 200, body, _content_type(path), headers)
 
     def do_GET(self) -> None:  # noqa: N802 - http.server API
         parsed = urlparse(self.path)
@@ -6746,7 +6794,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if self.static_dir:
             static_path = _safe_static_path(Path(self.static_dir), request_path)
             if static_path:
-                _send_bytes(self, 200, static_path.read_bytes(), _content_type(static_path))
+                self._send_static(static_path, request_path)
                 return
             if request_path not in {"/", "/index.html"}:
                 self.send_error(404)

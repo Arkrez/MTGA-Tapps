@@ -92,6 +92,11 @@ Primary code paths:
   over history), `_split_card_index` replaces per-row LIKE lookups, and All Games gathers
   opponent colors in one grouped query. Profile with a copy of a real database before
   adding a correlated subquery that runs once per game.
+  The handler speaks HTTP/1.1 with keep-alive: every response must carry a
+  Content-Length (`_send_bytes`) or be bodiless (304, `send_error`); POSTs close the
+  connection because not every branch drains its body. Built files under `assets/` are
+  served immutable for a year (Vite content-hashes them), `index.html` and icons revalidate
+  by Last-Modified; API responses stay `no-store`.
 - `src/mtga_tracker/live_api.py`: `/api/live` payload — current game, frozen previous-game
   scoreboard, records vs. deck / opponent / opponent commander, local archetype guess.
 - `src/mtga_tracker/draw_quality.py`: CLI/report helpers for land flood/screw and repeated-card draw audits.
@@ -133,7 +138,8 @@ Primary code paths:
   `scripts/export_replay_fixture.py`. `python -m mtga_tracker.replay_dump <game_id>` prints a
   stream.
 - `ui/src/replay/`: the Replay page — pure reducer/layout/playback-clock/image-queue/prefs
-  modules with tests, and `components/` holding the `@react-three/fiber` scene (lazy-loaded
+  modules with tests, `export/` (pure video plan, Canvas 2D frame composer, WebCodecs +
+  mp4-muxer encoder for the in-browser MP4 export), and `components/` holding the `@react-three/fiber` scene (lazy-loaded
   route `#/replay/<id>`, list at `#/replay`). Teal `--replay` is reserved for replay
   affordances; everything replay-related carries `replay-wide-only` and is hidden below
   900 px.
@@ -158,14 +164,17 @@ Primary code paths:
   scraper imports are covered by the packaging spec's package-wide collection.
   The dashboard's provider cards use compact subtitles with full descriptions
   in tooltips, bundled site icons on tinted backgrounds, and a responsive grid
-  sized for all seven sites on desktop. AetherHub uses a 228px asset; Magic.gg
+  sized for all seven sites on desktop. Provider cards have subtle site-colored
+  fills, stronger on hover and selection; the picker omits the redundant Site
+  label. Surprise Me sits beside the section collapse control in the Browse
+  Decks heading. AetherHub uses a 228px asset; Magic.gg
   uses a vector Planeswalker mark. Results use a 40/60 browser/selected-deck
   layout that stacks on narrow screens. Detail results open the first deck;
   the main-deck count sits beside the format, and filter pills hover in the
   provider's selection color. Deck names and titles share that provider hue,
   with a subtle matching selected-row tint and darker text in the light theme.
-  Export to Arena sits at the far right of the deck-name row; Source stays below
-  the card list. The heading wraps on narrow screens.
+  Source and Export to Arena sit together at the far right of the deck-name
+  row. The heading wraps on narrow screens.
   Stale hydration responses cannot replace a newer selection or clear its
   loading state. `ui/src/deckFinderImport.ts` parses import text for display,
   retaining separate Deck/Sideboard/Commander/Companion sections; clipboard
@@ -389,7 +398,11 @@ Preserve these behaviors unless the user explicitly changes requirements:
   printed costs, lands excluded, X = 0) build on this; the deck payload also ships raw
   per-seat inputs via `played_mana` (play totals + turns from `games.player_turns`/
   `opponent_turns`). `scripts/probe_mtga_card_db.py` verifies the cost column/format against
-  a real Arena install.
+  a real Arena install. Printed power/toughness follow the same pattern
+  (`CardDatabase.stats_index_by_name` → `AnalyticsStore.backfill_card_stats`, both call
+  sites): the console-label parser never sees a 0-power creature (Arena encodes a zero stat
+  as `{}`; `_extract_stat_value`/`stat_value` read that as 0), so never rely on display
+  names for stats, and replay rows for creatures carry `power`/`toughness`.
 - The product's display name is **Tapps Tracker** (`ui/src/branding.ts`, `PRODUCT_NAME`);
   the sidebar brand uses the dashboard heading typography, links to the very top of Overview,
   and displays local vector W/U/B/R/G mana symbols rather than upscaled raster icons. Browser
