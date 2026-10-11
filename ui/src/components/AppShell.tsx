@@ -43,7 +43,7 @@ import {
 } from 'lucide-react';
 import { TRACKER_NAME } from '../branding';
 import { dashboardNavItems, type AppNavItem } from '../nav';
-import { REPLAY_ROUTE_HASH } from '../routes';
+import { REPLAY_ROUTE_HASH, parseDeckFinderRoute, parseDeckManagerRoute } from '../routes';
 import type { ThemeName } from '../theme';
 import { checkForUpdate, type UpdateInfo } from '../updateCheck';
 import { CardSearch } from './CardSearch';
@@ -128,8 +128,14 @@ function NavIcon({ id }: { id: string }) {
   return <Icon aria-hidden="true" className="sidebar-nav-icon" />;
 }
 
-function isReplayHash(hash: string): boolean {
-  return hash === REPLAY_ROUTE_HASH || hash.startsWith(`${REPLAY_ROUTE_HASH}/`) || hash.startsWith(`${REPLAY_ROUTE_HASH}?`);
+type Launcher = 'replay' | 'deck-finder' | 'deck-manager';
+
+/** The bottom-left launcher tile for the current page, highlighted while it is open. */
+function activeLauncher(hash: string): Launcher | null {
+  if (hash === REPLAY_ROUTE_HASH || hash.startsWith(`${REPLAY_ROUTE_HASH}/`) || hash.startsWith(`${REPLAY_ROUTE_HASH}?`)) return 'replay';
+  if (parseDeckFinderRoute(hash)) return 'deck-finder';
+  if (parseDeckManagerRoute(hash)) return 'deck-manager';
+  return null;
 }
 
 function scrollToSection(id: string) {
@@ -161,11 +167,14 @@ export function AppShell({
     setActiveSection(id);
     scrollToSection(id);
   }
-  // Highlight the Replay tile on the replay list and player routes.
-  const [replayActive, setReplayActive] = useState(() => isReplayHash(window.location.hash));
+  // Highlight the launcher tile (Replay, Deck Finder, Deck Manager) for the open page.
+  const [launcher, setLauncher] = useState(() => activeLauncher(window.location.hash));
+  const replayActive = launcher === 'replay';
+  const finderActive = launcher === 'deck-finder';
+  const managerActive = launcher === 'deck-manager';
   useEffect(() => {
     function onHashChange() {
-      setReplayActive(isReplayHash(window.location.hash));
+      setLauncher(activeLauncher(window.location.hash));
     }
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
@@ -435,14 +444,15 @@ export function AppShell({
               <Play aria-hidden="true" />
             </a>
             <a
+              aria-current={finderActive ? 'page' : undefined}
               aria-label="Deck Finder"
-              className="sidebar-deck-finder sidebar-deck-finder-mini"
+              className={`sidebar-deck-finder sidebar-deck-finder-mini${finderActive ? ' sidebar-deck-finder-active' : ''}`}
               href="#/deck-finder"
               title="Deck Finder"
             >
               <Search aria-hidden="true" />
             </a>
-            <a aria-label="Deck Manager (Beta)" className="sidebar-deck-finder sidebar-deck-manager sidebar-deck-finder-mini" href="#/deck-manager" title="Deck Manager (Beta)">
+            <a aria-current={managerActive ? 'page' : undefined} aria-label="Deck Manager (Beta)" className={`sidebar-deck-finder sidebar-deck-manager sidebar-deck-finder-mini${managerActive ? ' sidebar-deck-manager-active' : ''}`} href="#/deck-manager" title="Deck Manager (Beta)">
               <Layers aria-hidden="true" />
             </a>
           </div>
@@ -468,11 +478,11 @@ export function AppShell({
               <Play aria-hidden="true" />
               <span className="sidebar-nav-label">Replay <span className="sidebar-beta">Beta</span></span>
             </a>
-            <a className="sidebar-deck-finder" href="#/deck-finder" title="Browse top decks inside the dashboard">
+            <a aria-current={finderActive ? 'page' : undefined} className={`sidebar-deck-finder${finderActive ? ' sidebar-deck-finder-active' : ''}`} href="#/deck-finder" title="Browse top decks inside the dashboard">
               <Search aria-hidden="true" />
               <span className="sidebar-nav-label">Deck Finder</span>
             </a>
-            <a className="sidebar-deck-finder sidebar-deck-manager" href="#/deck-manager" title="Back up and restore your decks">
+            <a aria-current={managerActive ? 'page' : undefined} className={`sidebar-deck-finder sidebar-deck-manager${managerActive ? ' sidebar-deck-manager-active' : ''}`} href="#/deck-manager" title="Back up and restore your decks">
               <Layers aria-hidden="true" />
               <span className="sidebar-nav-label">Deck Manager <span className="sidebar-beta">Beta</span></span>
             </a>

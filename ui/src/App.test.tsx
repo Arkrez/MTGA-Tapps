@@ -802,13 +802,14 @@ describe('App', () => {
 
     // Generous timeouts: under full-suite load the first render of the list
     // (fetch stub -> state update) can exceed the 1 s findBy default.
-    expect(await screen.findByRole('heading', { level: 2, name: 'Replay' }, { timeout: 4000 })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 2, name: 'Replay Beta' }, { timeout: 4000 })).toBeInTheDocument();
     await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('/api/games'))).toBe(true), {
       timeout: 4000,
     });
     expect(await screen.findByRole('table', { name: 'Games to replay' }, { timeout: 4000 })).toBeInTheDocument();
     expect(screen.getByText('Boros Mouse')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Replay Beta' })).toHaveClass('sidebar-replay-active');
+    expect(screen.getByRole('link', { name: 'Deck Finder' })).not.toHaveClass('sidebar-deck-finder-active');
     expect(screen.getByRole('link', { name: 'Recent games' })).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('/api/snapshot'))).toBe(false);
     expect(document.title).toContain('Replay');
@@ -900,6 +901,8 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: /Surprise Me/ })).toBeInTheDocument();
     // The sidebar entry is now a route link, not a launch button.
     expect(screen.getByRole('link', { name: 'Deck Finder' })).toHaveAttribute('href', '#/deck-finder');
+    // Navigating there highlights the tile, like Replay and Deck Manager.
+    expect(screen.getByRole('link', { name: 'Deck Finder' })).toHaveClass('sidebar-deck-finder-active');
   });
 
   it('opens Deck Finder directly without loading Overview analytics', async () => {

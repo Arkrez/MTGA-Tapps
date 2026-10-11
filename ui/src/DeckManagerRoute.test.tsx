@@ -19,7 +19,12 @@ it('opens Deck Manager as a separate page without fetching overview history', as
   expect(fetchDashboardSnapshot).not.toHaveBeenCalled();
   expect(screen.queryByRole('link', { name: 'Add a Deck' })).not.toBeInTheDocument();
   expect(screen.queryByRole('link', { name: 'Deck Collection' })).not.toBeInTheDocument();
-  expect(screen.getByRole('link', { name: 'Deck Manager Beta' })).toHaveClass('sidebar-deck-manager');
+  const tile = screen.getByRole('link', { name: 'Deck Manager Beta' });
+  // Like Replay and Deck Finder, the open page's launcher tile is highlighted.
+  expect(tile).toHaveClass('sidebar-deck-manager', 'sidebar-deck-manager-active');
+  expect(tile).toHaveAttribute('aria-current', 'page');
+  expect(screen.getByRole('link', { name: 'Deck Finder' })).not.toHaveAttribute('aria-current');
+  expect(screen.getByRole('link', { name: 'Replay Beta' })).not.toHaveClass('sidebar-replay-active');
 });
 
 

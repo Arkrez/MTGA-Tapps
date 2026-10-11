@@ -4102,6 +4102,14 @@ tr.deck-change-row-out .card-link {
   color: color-mix(in srgb, var(--draw) 70%, var(--text));
 }
 
+/* The open page's launcher tile, matching the Replay tile's active state. */
+.sidebar-deck-finder-active {
+  border-color: var(--draw);
+  color: color-mix(in srgb, var(--draw) 70%, var(--text));
+  background: color-mix(in srgb, var(--draw) 24%, transparent);
+  box-shadow: inset 0 0 0 1px var(--draw);
+}
+
 /* Replay tile: the Deck Finder box, in replay teal, directly above it. */
 .sidebar-replay {
   display: flex;
@@ -6187,6 +6195,8 @@ a.sidebar-deck-finder {
 }
 .sidebar-beta { margin-left: 2px; padding: 0 4px; border: 1px solid currentColor; border-radius: 999px; font-size: 0.55rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; vertical-align: 2px; opacity: 0.85; }
 .sidebar-deck-manager:hover, .sidebar-deck-manager:focus-visible { border-color: var(--deck-manager-accent); color: var(--deck-manager-accent); }
+.sidebar-deck-manager.sidebar-deck-manager-active { border-color: var(--deck-manager-accent); color: var(--deck-manager-accent); background: color-mix(in srgb, var(--deck-manager-accent) 24%, transparent); box-shadow: inset 0 0 0 1px var(--deck-manager-accent); }
+.deck-manager-beta.replay-heading-beta { border-color: var(--replay); color: var(--replay); }
 .deck-manager-collection { min-height: calc(100dvh - 145px); }
 .deck-manager-collection-toolbar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
 .deck-manager-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 16px 0; }

@@ -73,6 +73,10 @@
   read. **Connect to Arena** is now **Load Arena decks** (then **Refresh Arena
   decks**), since Deck Manager only reads Arena when asked and never stays
   connected; the help panel says so. Messages can be dismissed.
+- Replay and Deck Manager carry a **Beta** pill in the sidebar and beside their
+  page headings (teal for Replay). The sidebar's Replay, Deck Finder and Deck
+  Manager tiles all highlight while their page is open. The Replay list fetches
+  the 3D player in the background, so opening a game no longer waits for it.
 - The page no longer shifts sideways when a Deck Manager or Deck Finder dialog
   opens: the browser scrollbar's space stays reserved while the page is locked.
 - Deck Manager selection moves to the top right with a larger click target.

@@ -86,7 +86,8 @@ import {
 } from './routes';
 import './styles.css';
 
-const ReplayPage = lazy(() => import('./replay/components/ReplayPage'));
+const loadReplayPage = () => import('./replay/components/ReplayPage');
+const ReplayPage = lazy(loadReplayPage);
 import { getInitialTheme, hasStoredTheme, persistTheme, systemTheme, type ThemeName } from './theme';
 
 type LoadState =
@@ -844,6 +845,14 @@ export default function App() {
   const settingsRoute = useMemo(() => parseSettingsRoute(routeHash), [routeHash]);
   const liveRoute = useMemo(() => parseLiveRoute(routeHash), [routeHash]);
   const replayRoute = useMemo(() => parseReplayRoute(routeHash), [routeHash]);
+  // The player (three.js, ~1 MB) downloads on first use. Fetch it while the
+  // Replay list is open so choosing a game does not wait for it.
+  const onReplayList = Boolean(replayRoute && !replayRoute.gameId);
+  useEffect(() => {
+    if (!onReplayList) return;
+    const timer = window.setTimeout(() => { void loadReplayPage().catch(() => {}); }, 300);
+    return () => window.clearTimeout(timer);
+  }, [onReplayList]);
   const gamesRoute = useMemo(() => parseGamesRoute(routeHash), [routeHash]);
   const opponentsRoute = useMemo(() => parseOpponentsRoute(routeHash), [routeHash]);
   const deckName = deckRoute?.name ?? null;
@@ -1082,7 +1091,8 @@ export default function App() {
                   : undefined
         }
         heading={replayRoute ? 'Replay' : opponentsRoute ? 'Opponents' : gamesRoute ? 'All Games' : auditRoute ? 'Database Health' : deckManagerRoute ? 'Deck Manager' : deckFinderRoute ? 'Deck Finder' : settingsRoute ? 'Settings' : liveRoute ? 'Live Scoreboard' : cardName ? formatCardName(cardName) : gameRoute ? 'Game Detail' : deckName ? 'Deck Details' : (opponentRoute ? 'Opponent Information' : dashboardTitle)}
-        headingBadge={deckManagerRoute ? <span className="deck-manager-beta deck-manager-heading-beta">Beta</span> : undefined}
+        headingBadge={deckManagerRoute ? <span className="deck-manager-beta deck-manager-heading-beta">Beta</span>
+          : replayRoute ? <span className="deck-manager-beta deck-manager-heading-beta replay-heading-beta">Beta</span> : undefined}
         mainClassName={liveRoute ? 'live-page-main' : replayRoute?.gameId ? 'replay-page-main' : undefined}
       >
         {replayRoute ? (
