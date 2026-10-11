@@ -6185,6 +6185,7 @@ a.sidebar-deck-finder {
   border-color: color-mix(in srgb, var(--deck-manager-accent) 55%, var(--border));
   background: color-mix(in srgb, var(--deck-manager-accent) 12%, transparent);
 }
+.sidebar-beta { margin-left: 2px; padding: 0 4px; border: 1px solid currentColor; border-radius: 999px; font-size: 0.55rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; vertical-align: 2px; opacity: 0.85; }
 .sidebar-deck-manager:hover, .sidebar-deck-manager:focus-visible { border-color: var(--deck-manager-accent); color: var(--deck-manager-accent); }
 .deck-manager-collection { min-height: calc(100dvh - 145px); }
 .deck-manager-collection-toolbar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }

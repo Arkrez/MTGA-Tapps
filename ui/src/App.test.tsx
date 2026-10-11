@@ -753,7 +753,7 @@ describe('App', () => {
     render(<App />);
     expect(await screen.findByText('Tapps Tracker')).toBeInTheDocument();
 
-    const replayTile = screen.getByRole('link', { name: 'Replay' });
+    const replayTile = screen.getByRole('link', { name: 'Replay Beta' });
     const deckFinderTile = screen.getByRole('link', { name: 'Deck Finder' });
     expect(replayTile).toHaveAttribute('href', '#/replay');
     expect(replayTile).toHaveAttribute('title', 'Watch replays of your games');
@@ -808,7 +808,7 @@ describe('App', () => {
     });
     expect(await screen.findByRole('table', { name: 'Games to replay' }, { timeout: 4000 })).toBeInTheDocument();
     expect(screen.getByText('Boros Mouse')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Replay' })).toHaveClass('sidebar-replay-active');
+    expect(screen.getByRole('link', { name: 'Replay Beta' })).toHaveClass('sidebar-replay-active');
     expect(screen.getByRole('link', { name: 'Recent games' })).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('/api/snapshot'))).toBe(false);
     expect(document.title).toContain('Replay');

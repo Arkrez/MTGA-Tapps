@@ -427,7 +427,7 @@ export function AppShell({
           <div className="sidebar-bottom sidebar-bottom-mini">
             <a
               aria-current={replayActive ? 'page' : undefined}
-              aria-label="Replay"
+              aria-label="Replay (Beta)"
               className={`sidebar-replay sidebar-replay-mini replay-wide-only${replayActive ? ' sidebar-replay-active' : ''}`}
               href={REPLAY_ROUTE_HASH}
               title="Watch replays of your games"
@@ -442,7 +442,7 @@ export function AppShell({
             >
               <Search aria-hidden="true" />
             </a>
-            <a aria-label="Deck Manager" className="sidebar-deck-finder sidebar-deck-manager sidebar-deck-finder-mini" href="#/deck-manager" title="Deck Manager">
+            <a aria-label="Deck Manager (Beta)" className="sidebar-deck-finder sidebar-deck-manager sidebar-deck-finder-mini" href="#/deck-manager" title="Deck Manager (Beta)">
               <Layers aria-hidden="true" />
             </a>
           </div>
@@ -466,7 +466,7 @@ export function AppShell({
               title="Watch replays of your games"
             >
               <Play aria-hidden="true" />
-              <span className="sidebar-nav-label">Replay</span>
+              <span className="sidebar-nav-label">Replay <span className="sidebar-beta">Beta</span></span>
             </a>
             <a className="sidebar-deck-finder" href="#/deck-finder" title="Browse top decks inside the dashboard">
               <Search aria-hidden="true" />
@@ -474,7 +474,7 @@ export function AppShell({
             </a>
             <a className="sidebar-deck-finder sidebar-deck-manager" href="#/deck-manager" title="Back up and restore your decks">
               <Layers aria-hidden="true" />
-              <span className="sidebar-nav-label">Deck Manager</span>
+              <span className="sidebar-nav-label">Deck Manager <span className="sidebar-beta">Beta</span></span>
             </a>
             {version ? (
               <span aria-label={`Tracker version ${version}`} className="sidebar-version">
