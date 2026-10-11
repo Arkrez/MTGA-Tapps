@@ -442,7 +442,7 @@ export function AppShell({
             >
               <Search aria-hidden="true" />
             </a>
-            <a aria-label="Deck Manager (Beta)" className="sidebar-deck-finder sidebar-deck-manager sidebar-deck-finder-mini" href="#/deck-manager" title="Deck Manager (Beta)">
+            <a aria-label="Deck Manager" className="sidebar-deck-finder sidebar-deck-manager sidebar-deck-finder-mini" href="#/deck-manager" title="Deck Manager">
               <Layers aria-hidden="true" />
             </a>
           </div>
@@ -474,7 +474,7 @@ export function AppShell({
             </a>
             <a className="sidebar-deck-finder sidebar-deck-manager" href="#/deck-manager" title="Back up and restore your decks">
               <Layers aria-hidden="true" />
-              <span className="sidebar-nav-label">Deck Manager <span className="sidebar-beta">Beta</span></span>
+              <span className="sidebar-nav-label">Deck Manager</span>
             </a>
             {version ? (
               <span aria-label={`Tracker version ${version}`} className="sidebar-version">
