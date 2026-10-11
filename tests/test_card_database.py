@@ -267,3 +267,33 @@ def test_empty_cost_index_not_cached_for_the_session(tmp_path, monkeypatch):
     # The DB "came back" — the empty result was not cached, so this resolves.
     assert db.mana_cost_index_by_name()["Dusk Rat"] == ("{1}{B}", 2.0)
     assert db.color_identity_index_by_name()["Dusk Rat"] == "B"
+
+
+def test_stats_index_by_name_reads_printed_power_and_toughness(tmp_path, monkeypatch):
+    """Arena's Cards table carries printed Power/Toughness as text ('' when the
+    card has none). A 0-power creature is indexed like any other; the first
+    printing of a name wins; cards without both values stay out."""
+    raw_dir = tmp_path / "Raw"
+    raw_dir.mkdir()
+    conn = sqlite3.connect(raw_dir / "Raw_CardDatabase_test.mtga")
+    conn.execute(
+        'CREATE TABLE "Cards" ("GrpId" INTEGER, "TitleId" INTEGER, "Power" TEXT, "Toughness" TEXT)'
+    )
+    conn.execute('CREATE TABLE "Localizations_enUS" ("LocId" INTEGER, "Loc" TEXT)')
+    conn.executemany(
+        'INSERT INTO "Cards" VALUES (?, ?, ?, ?)',
+        [(1, 10, "0", "2"), (2, 20, "", ""), (3, 30, "*", "*"), (4, 10, "1", "1"), (5, 40, None, None)],
+    )
+    conn.executemany(
+        'INSERT INTO "Localizations_enUS" VALUES (?, ?)',
+        [(10, "Exhibition Tidecaller"), (20, "Island"), (30, "Tarmogoyf"), (40, "Blank")],
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(
+        card_database, "get_mtga_raw_card_db_folders", lambda mtga_data_dir=None, log_path=None: [raw_dir]
+    )
+
+    index = CardDatabase().stats_index_by_name()
+
+    assert index == {"Exhibition Tidecaller": ("0", "2"), "Tarmogoyf": ("*", "*")}

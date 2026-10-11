@@ -53,7 +53,7 @@ can be dismissed. While a dialog is open, its result shows in the dialog instead
   native backup in your collection, and uses the same journaled create/verification
   path as restore. Arena must be on **Decks outside a match**, with a free slot.
   No previous connection click is required. Missing/unresolved cards or a reduced
-  list stop before creation; the button never crafts cards. **Copy for Arena**
+  list stop before creation; the button never crafts cards. **Export to Arena**
   remains available for manual import. Arena's parser leaves Format and the deck tile
   empty, and Arena would then store the deck with format `""` and no art. The added
   deck's summary therefore gets the Format from the Deck Finder label (`Standard`; a
@@ -216,8 +216,8 @@ a full native revision, preserving its collection, notes and earlier text revisi
 
 ## Restore and export
 
-For revisions without native backup data, the yellow **Copy for Arena** button
-beside the dialog's close button copies the selected revision. Open Arena's Decks screen and
+**Copy deck list** in the deck dialog's header copies the selected revision as Arena
+import text (with exact printings for full backups). Open Arena's Decks screen and
 click **Import** when an active slot is available. Slot availability and the
 import result are controlled by Arena; the tracker does not report them as known.
 On supported native builds, **Move to collection** frees slots after durable backup;
@@ -240,7 +240,7 @@ The library preserves a list without claiming current format legality.
 
 ## Persistence and backups
 
-Migration 32 adds independent library tables in the tracker's selected `--db`:
+Migration 33 adds independent library tables in the tracker's selected `--db`:
 `managed_decks`, immutable `managed_deck_revisions`, per-pile `managed_deck_cards`
 and `managed_deck_bindings`. Log capture uses the observed Arena GUID to
 group snapshots but writes no authenticated binding, account or presence claim.
@@ -248,11 +248,11 @@ Manual imports get independent local UUIDs. Repeated scans deduplicate snapshots
 and retain the latest observed revision; a later explicit reversion can become
 current without duplicating a stored snapshot.
 
-Migration 33 adds `managed_deck_transfers`, the durable native journal, with one
+Migration 34 adds `managed_deck_transfers`, the durable native journal, with one
 pending operation per account. Native backups record authenticated bindings and
 verified presence observations. Full backups carry the journal; merging skips
 transfers and Arena bindings, since another machine's operation cannot be replayed.
-Migration 34 adds `managed_deck_collections` and nullable `managed_decks.collection_id`.
+Migration 35 adds `managed_deck_collections` and nullable `managed_decks.collection_id`.
 Backup merge maps collection membership and combines collections with equal names.
 Gameplay reset preserves these tables. SQLite uses full synchronization for native
 archive and journal commits; no source deck is removed before archive read-back.

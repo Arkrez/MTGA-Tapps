@@ -3,6 +3,7 @@ import { fetchOpponentDetail, type OpponentDetail, type OpponentGameRow, type Sn
 import { formatPercent } from '../dashboardData';
 import { formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone, shortFormatLabel } from '../format';
 import { gameRouteHash, opponentRouteHash } from '../routes';
+import { ReplayLink } from './ReplayLink';
 import { Badge } from './Badge';
 import { ColorPips } from './ColorPips';
 import { MetricCard } from './MetricCard';
@@ -151,6 +152,21 @@ const columns = (opponentName: string): Column<OpponentGameOrMatchRow>[] => [
     render: (row) => `${formatNumber(row.player_final_life)} / ${formatNumber(row.opponent_final_life)}`,
     sortValue: (row) => row.player_final_life,
     numeric: true,
+  },
+  {
+    key: 'replay',
+    header: '',
+    sortable: false,
+    // Bo3 rollups have no single game to watch; each nested game row has one.
+    render: (row) =>
+      row.match_row ? null : (
+        <ReplayLink
+          availability={row.replay}
+          gameId={row.game_id}
+          returnHash={opponentRouteHash(opponentName)}
+          variant="icon"
+        />
+      ),
   },
 ];
 

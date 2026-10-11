@@ -175,3 +175,53 @@ describe('scry lines', () => {
     expect(screen.getByText(/scried 2/)).toBeTruthy();
   });
 });
+
+describe('TimelineList replay deep links', () => {
+  const rows: GameTimelineRow[] = timelineRows.map((row, index) => ({ ...row, id: 700 + index }));
+
+  it('turns each row elapsed time into a replay link when given an href builder', () => {
+    render(<TimelineList rows={rows} replayHref={(row) => (row.id ? `#/replay/g?row=${row.id}` : null)} />);
+    const link = screen.getByRole('link', { name: 'Watch the replay from 1:14' });
+    expect(link).toHaveAttribute('href', '#/replay/g?row=700');
+    expect(link).toHaveClass('timeline-replay-link', 'replay-wide-only');
+    expect(link.querySelector('svg')).not.toBeNull();
+    expect(link).toHaveTextContent('1:14');
+    // The time is not repeated in the text; narrow screens get a plain fallback.
+    const item = link.closest('li') as HTMLElement;
+    expect(within(item).getByText('[1:14]', { exact: false })).toHaveClass('replay-narrow-only');
+    expect(item.querySelector('.timeline-text')?.textContent).toBe('1:14[1:14] Opponent: played [Island]');
+    expect(screen.getByRole('link', { name: 'Watch the replay from 0:25' })).toHaveAttribute('href', '#/replay/g?row=701');
+  });
+
+  it('renders no replay links without an href builder or for rows without an id', () => {
+    const { unmount } = render(<TimelineList rows={rows} />);
+    expect(screen.queryByRole('link', { name: /Watch the replay/ })).not.toBeInTheDocument();
+    unmount();
+    render(<TimelineList rows={timelineRows} replayHref={(row) => (row.id ? `#/replay/g?row=${row.id}` : null)} />);
+    expect(screen.queryByRole('link', { name: /Watch the replay/ })).not.toBeInTheDocument();
+    expect(screen.getAllByText(/\[1:14\] Opponent: played/).length).toBeGreaterThan(0);
+  });
+
+  it('links the time of indented stack lines too', () => {
+    const stackRow: GameTimelineRow = {
+      ...rows[0],
+      id: 12,
+      event_type: 'stack_resolve',
+      text: '\t[0:37] Stack: [Opt (Instant)] [resolved]',
+      text_segments: [
+        { kind: 'text', text: '\t[0:37] Stack: [' },
+        { kind: 'card', text: 'Opt', card_name: 'Opt', card_type: 'Instant' },
+        { kind: 'text', text: ' (Instant)] [resolved]' },
+      ],
+    };
+    render(<TimelineList rows={[stackRow]} replayHref={() => '#/replay/g?row=12'} />);
+    const link = screen.getByRole('link', { name: 'Watch the replay from 0:37' });
+    expect(link.closest('li')?.querySelector('.timeline-text')?.textContent).toBe('0:37[0:37] Stack: [Opt]Instant');
+  });
+
+  it('puts an icon link at the end of rows that have no elapsed time', () => {
+    const untimed: GameTimelineRow = { ...rows[0], id: 9, text: 'Opponent conceded', text_segments: [{ kind: 'text', text: 'Opponent conceded' }] };
+    render(<TimelineList rows={[untimed]} replayHref={() => '#/replay/g?row=9'} />);
+    expect(screen.getByRole('link', { name: 'Watch the replay from this event' })).toHaveClass('timeline-replay-link-icon');
+  });
+});

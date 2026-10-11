@@ -1092,3 +1092,34 @@ def test_backfill_card_mana_fills_null_rows_only(tmp_path):
     assert rows["Unknown To Arena"] == (None, None)
     # Idempotent: nothing left to fill for known names.
     assert AnalyticsStore.backfill_card_mana(conn, index) == 0
+
+
+def test_backfill_card_stats_fills_rows_without_stats_only(tmp_path):
+    conn = sqlite3.connect(tmp_path / "stats.sqlite3")
+    AnalyticsStore.ensure_schema(conn)
+    conn.executemany(
+        "INSERT INTO cards (name, power, toughness, first_seen_at) VALUES (?, ?, ?, '2026-08-01T00:00:00')",
+        [
+            ("Exhibition Tidecaller", None, None),  # 0-power: never labelled in the console
+            ("Geist of Saint Thalia (Creature 1/2)", "1", "2"),  # already parsed from a label
+            ("Fire // Ice", None, None),  # split: front face
+            ("Island", None, None),  # no printed stats anywhere
+        ],
+    )
+    index = {
+        "Exhibition Tidecaller": ("0", "2"),
+        "Geist of Saint Thalia": ("9", "9"),
+        "Fire": ("2", "2"),
+    }
+
+    assert AnalyticsStore.backfill_card_stats(conn, index) == 2
+    rows = {
+        name: (power, toughness)
+        for name, power, toughness in conn.execute("SELECT name, power, toughness FROM cards")
+    }
+    assert rows["Exhibition Tidecaller"] == ("0", "2")
+    assert rows["Geist of Saint Thalia (Creature 1/2)"] == ("1", "2")
+    assert rows["Fire // Ice"] == ("2", "2")
+    assert rows["Island"] == (None, None)
+    assert AnalyticsStore.backfill_card_stats(conn, index) == 0
+    assert AnalyticsStore.backfill_card_stats(conn, {}) == 0

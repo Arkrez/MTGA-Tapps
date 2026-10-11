@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from .replay_capture import replay_safe
 from .state import CardEvent
 
 
@@ -58,6 +59,9 @@ class TrackerStackMixin:
             "status": "pending",
             "show_lifecycle": bool(pending_keys) or (isinstance(item, dict) and bool(item.get("show_lifecycle"))),
         }
+        # Replay: the cast/ability line just printed becomes this item's
+        # stack_push (stack id, source object, targets).
+        self._replay_stack_push(instance_id, stack_key, seat_id=seat_id, kind=kind)
         return stack_key
 
     def _is_mana_ability_stack_item(self, item: Dict[str, Any]) -> bool:
@@ -89,6 +93,7 @@ class TrackerStackMixin:
             stats = self._seat_stack_stats(item.get("seat"))
             if stats is not None:
                 stats["resolved"] += 1
+            self._record_replay_stack_status(stack_key, "resolved")
             return True
 
         seat_id = item.get("seat")
@@ -117,10 +122,23 @@ class TrackerStackMixin:
             if match_stats is not None:
                 match_stats["spells_countered"] += 1
         if status == "resolved" and not item.get("show_lifecycle"):
+            # Single-item resolves stay off the console; replay still needs them.
+            self._record_replay_stack_status(stack_key, status)
             return True
         turn_prefix = self._turn_prefix_for_number(self._event_turn_number(seat_id, item.get("turn")))
-        self._print_event(f"\t{turn_prefix}Stack: {label} {status_text}", style)
+        self._print_event_fact(
+            f"\t{turn_prefix}Stack: {label} {status_text}",
+            style,
+            self._replay_stack_status_fact(stack_key, status),
+        )
         return True
+
+    @replay_safe()
+    def _record_replay_stack_status(self, stack_key: Optional[int], status: str) -> None:
+        """Silent stack_resolve/stack_fizzle/stack_countered row."""
+        fact = self._replay_stack_status_fact(stack_key, status)
+        if fact is not None:
+            self._record_silent_event(fact)
 
     def _record_played_card_once(
         self,

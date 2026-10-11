@@ -76,3 +76,47 @@ describe('all-games route', () => {
     expect(parseGamesRoute('#/game/abc')).toBeNull();
   });
 });
+
+describe('replay routes', () => {
+  it('parses the replay list route', async () => {
+    const { parseReplayRoute, replayRouteHash } = await import('./routes');
+    expect(replayRouteHash()).toBe('#/replay');
+    expect(parseReplayRoute('#/replay')).toEqual({ gameId: null, at: null, row: null, returnHash: null });
+    expect(parseReplayRoute('#/replay/')).toEqual({ gameId: null, at: null, row: null, returnHash: null });
+    expect(parseReplayRoute('#/replays')).toBeNull();
+    expect(parseReplayRoute('#/game/abc')).toBeNull();
+  });
+
+  it('round-trips a game replay with seq and return hash', async () => {
+    const { gameRouteHash, parseReplayRoute, replayRouteHash } = await import('./routes');
+    const back = gameRouteHash('game:1', '#recent-games');
+    const hash = replayRouteHash('game:1/2', { at: 42, returnHash: back });
+    expect(parseReplayRoute(hash)).toEqual({ gameId: 'game:1/2', at: 42, row: null, returnHash: back });
+    expect(parseReplayRoute(replayRouteHash('g', { at: 0 }))).toEqual({ gameId: 'g', at: 0, row: null, returnHash: null });
+  });
+
+  it('round-trips a timeline row deep link', async () => {
+    const { gameRouteHash, parseReplayRoute, replayRouteHash } = await import('./routes');
+    const back = gameRouteHash('g1', '#overview');
+    const hash = replayRouteHash('g1', { row: 1234, returnHash: back });
+    expect(hash).toBe(`#/replay/g1?row=1234&return=${encodeURIComponent(back)}`);
+    expect(parseReplayRoute(hash)).toEqual({ gameId: 'g1', at: null, row: 1234, returnHash: back });
+    expect(parseReplayRoute('#/replay/g1?at=5&row=9')).toMatchObject({ at: 5, row: 9 });
+    expect(parseReplayRoute('#/replay/g1?row=abc')?.row).toBeNull();
+    expect(parseReplayRoute('#/replay/g1?row=-2')?.row).toBeNull();
+    expect(replayRouteHash('g1', { row: null })).toBe('#/replay/g1');
+    expect(replayRouteHash('g1', { row: 1.5 })).toBe('#/replay/g1');
+  });
+
+  it('drops malformed seq and non-hash return targets', async () => {
+    const { parseReplayRoute, replayRouteHash } = await import('./routes');
+    expect(parseReplayRoute('#/replay/g?at=-3&return=https%3A%2F%2Fexample.com')).toEqual({
+      gameId: 'g',
+      at: null,
+      row: null,
+      returnHash: null,
+    });
+    expect(parseReplayRoute('#/replay/g?at=1.5')?.at).toBeNull();
+    expect(replayRouteHash('g', { at: -1, returnHash: 'https://x' })).toBe('#/replay/g');
+  });
+});

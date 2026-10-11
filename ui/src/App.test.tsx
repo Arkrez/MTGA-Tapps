@@ -1,8 +1,19 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ReactNode } from 'react';
 import App from './App';
-import { cardRouteHash, gameRouteHash } from './routes';
+import { makeSampleStream } from './replay/fixtures/sampleStream';
+import { cardRouteHash, gameRouteHash, replayRouteHash } from './routes';
+
+// No WebGL under jsdom: the replay canvas becomes a plain div and R3F hooks are inert.
+vi.mock('@react-three/fiber', () => ({
+  Canvas: ({ className }: { className?: string; children?: ReactNode }) => (
+    <div className={className} data-testid="replay-canvas" />
+  ),
+  useFrame: () => undefined,
+  useThree: () => undefined,
+}));
 
 const snapshot = {
   summary: { games: 2, wins: 1, losses: 1, draws: 0, win_rate: 50 },
@@ -162,6 +173,7 @@ const snapshot = {
       is_flood: true,
       screw_reasons: [],
       is_screw: false,
+      replay: { state: 'recorded', reason: null },
     },
   ],
   matches: [
@@ -362,6 +374,7 @@ const deckDetail = {
       format_label: 'Standard Best-of-1',
       mulligans: 0,
       play_draw: 'On the play',
+      replay: { state: 'reconstructed', reason: null },
     },
   ],
   trend: snapshot.trend,
@@ -383,6 +396,7 @@ const gameDetail = {
     raw_format: 'Play',
     format_label: 'Standard Best-of-1',
     best_of: 1,
+    replay: { state: 'reconstructed', reason: null },
   },
   player: {
     role: 'player',
@@ -716,7 +730,10 @@ describe('App', () => {
     expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '#/settings');
     // DB Health moved into Settings — it is no longer a sidebar entry.
     expect(screen.queryByRole('link', { name: 'DB Health' })).not.toBeInTheDocument();
-  });
+    // About 0.5 s alone, but it is the file's first full App render plus four
+    // user-event clicks, and with the replay suite running in parallel workers
+    // it has crossed the 5 s default. Same assertions, more headroom.
+  }, 15000);
 
   it('links every deck mention to the deck detail page', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(snapshot), { status: 200 })));
@@ -730,6 +747,119 @@ describe('App', () => {
       expect(link).toHaveAttribute('href', '#/deck/Boros%20Mouse');
     });
   });
+
+  it('shows the teal Replay tile directly above Deck Finder in the sidebar', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(snapshot), { status: 200 })));
+    render(<App />);
+    expect(await screen.findByText('Tapps Tracker')).toBeInTheDocument();
+
+    const replayTile = screen.getByRole('link', { name: 'Replay' });
+    const deckFinderTile = screen.getByRole('link', { name: 'Deck Finder' });
+    expect(replayTile).toHaveAttribute('href', '#/replay');
+    expect(replayTile).toHaveAttribute('title', 'Watch replays of your games');
+    expect(replayTile).toHaveClass('sidebar-replay', 'replay-wide-only');
+    expect(replayTile.parentElement).toBe(deckFinderTile.parentElement);
+    expect(replayTile.nextElementSibling).toBe(deckFinderTile);
+    expect(replayTile.compareDocumentPosition(deckFinderTile) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(replayTile).not.toHaveClass('sidebar-replay-active');
+  });
+
+  it('routes #/replay to the replay list without loading Overview analytics', async () => {
+    const games = {
+      total: 2,
+      games: [
+        {
+          game_id: 'game-9',
+          match_id: 'm9',
+          game_number: 1,
+          started_at: '2026-06-05T10:00:00',
+          deck_name: 'Boros Mouse',
+          format_label: 'Standard Best-of-1',
+          best_of: 1,
+          outcome: 'win',
+          mulligans: 0,
+          duration_seconds: 300,
+          total_turns: 9,
+          flood_reasons: [],
+          is_flood: false,
+          opp_colors: 'UB',
+          cards_seen: 16,
+          lands_seen: 6,
+          land_seen_pct: 37.5,
+          replay: { state: 'recorded', reason: null },
+        },
+      ],
+    };
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).startsWith('/api/games')) {
+        return new Response(JSON.stringify(games), { status: 200 });
+      }
+      return new Response(JSON.stringify(snapshot), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    window.location.hash = '#/replay';
+    render(<App />);
+
+    // Generous timeouts: under full-suite load the first render of the list
+    // (fetch stub -> state update) can exceed the 1 s findBy default.
+    expect(await screen.findByRole('heading', { level: 2, name: 'Replay' }, { timeout: 4000 })).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('/api/games'))).toBe(true), {
+      timeout: 4000,
+    });
+    expect(await screen.findByRole('table', { name: 'Games to replay' }, { timeout: 4000 })).toBeInTheDocument();
+    expect(screen.getByText('Boros Mouse')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Replay' })).toHaveClass('sidebar-replay-active');
+    expect(screen.getByRole('link', { name: 'Recent games' })).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('/api/snapshot'))).toBe(false);
+    expect(document.title).toContain('Replay');
+    window.location.hash = '';
+  });
+
+  it('leaves the replay player instantly from the dashboard nav, while playing and after a seek', async () => {
+    // Regression: on the replay player the sidebar keeps the dashboard's
+    // section links, which only replaceState'd the hash (no hashchange), so
+    // App never left the replay. No leave warning either: navigation is silent.
+    const stream = makeSampleStream();
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 });
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) =>
+        String(url).startsWith('/api/replay')
+          ? new Response(JSON.stringify(stream), { status: 200 })
+          : new Response(JSON.stringify(snapshot), { status: 200 }),
+      ),
+    );
+    const replace = vi.spyOn(window.history, 'replaceState');
+    const confirm = vi.spyOn(window, 'confirm');
+    window.location.hash = '#/replay/game-1';
+    render(<App />);
+    const nav = () => screen.getByRole('navigation', { name: 'Dashboard sections' });
+
+    // 1. Leave while playing.
+    await screen.findByRole('slider', { name: 'Replay position' }, { timeout: 4000 });
+    fireEvent.keyDown(window, { key: ' ' });
+    expect(screen.getByRole('button', { name: /Pause/ })).toBeInTheDocument();
+    fireEvent.click(within(nav()).getByRole('link', { name: 'Overview' }));
+    await waitFor(() => expect(window.location.hash).toBe('#overview'));
+    await waitFor(() => expect(screen.queryByRole('slider', { name: 'Replay position' })).not.toBeInTheDocument());
+    expect(await screen.findByRole('heading', { name: 'Recent Games' }, { timeout: 4000 })).toBeInTheDocument();
+
+    // 2. Come back, seek (arms the debounced ?at= writer), leave before it fires.
+    window.location.hash = '#/replay/game-1';
+    await screen.findByRole('slider', { name: 'Replay position' }, { timeout: 4000 });
+    fireEvent.keyDown(window, { key: 'End' });
+    replace.mockClear();
+    fireEvent.click(within(nav()).getByRole('link', { name: 'Recent Games' }));
+    await waitFor(() => expect(screen.queryByRole('slider', { name: 'Replay position' })).not.toBeInTheDocument());
+    // Past the 300 ms debounce: the hash the user chose sticks.
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    expect(window.location.hash).toBe('#recent-games');
+    expect(replace.mock.calls.some(([, , url]) => String(url).startsWith('#/replay'))).toBe(false);
+    expect(screen.queryByTestId('replay-canvas')).not.toBeInTheDocument();
+    expect(confirm).not.toHaveBeenCalled();
+    window.location.hash = '';
+  }, 15000);
 
   it('routes to the Deck Finder page and lists providers', async () => {
     const providers = [
@@ -770,6 +900,21 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: /Surprise Me/ })).toBeInTheDocument();
     // The sidebar entry is now a route link, not a launch button.
     expect(screen.getByRole('link', { name: 'Deck Finder' })).toHaveAttribute('href', '#/deck-finder');
+  });
+
+  it('opens Deck Finder directly without loading Overview analytics', async () => {
+    window.location.hash = '#/deck-finder';
+    const fetchMock = vi.fn(async (url: string) => {
+      const target = String(url);
+      const payload = target.startsWith('/api/deckfinder/providers') ? { providers: [] } : {};
+      return new Response(JSON.stringify(payload), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: 'Browse Decks' })).toBeInTheDocument();
+    expect(document.title).toBe('Tapps Tracker – Deck Finder');
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('/api/snapshot'))).toBe(false);
   });
 
   it('routes to the Opponents page with its own back-to-dashboard nav', async () => {
@@ -916,7 +1061,7 @@ describe('App', () => {
         last_game_frozen: true,
         match_id: 'M1',
         game_id: 'G8',
-        format: 'Standard',
+        format: 'Standard Best-of-1 (Unranked)',
         match_type: 'best_of_1',
         game_number: 1,
         player_name: 'Tapps',
@@ -957,6 +1102,7 @@ describe('App', () => {
           best_of: 1,
           deck_name: 'Skellies',
           opponent_name: 'Villain#12345',
+          replay: { state: 'recorded', reason: null },
         },
       ],
       events: [],
@@ -978,10 +1124,24 @@ describe('App', () => {
     });
 
     // The frozen scoreboard renders (not the "Waiting for a match" panel),
-    // with the Previous Game chip and the waiting pill beside it.
+    // with the Previous Game chip and the waiting pill beside the format.
     expect(await screen.findByText('Villain#12345')).toBeInTheDocument();
-    expect(screen.getByText(/Previous Game — Win · Opponent conceded/)).toBeInTheDocument();
-    expect(screen.getAllByText(/Waiting for next match…/).length).toBeGreaterThan(0);
+    const previousChip = screen.getByText(/Previous Game — Win · Opponent conceded/);
+    expect(previousChip).toBeInTheDocument();
+    // A teal Watch replay pill sits right beside the Previous Game chip,
+    // and Today's Games carries a replay icon per row.
+    const chipReplay = previousChip.nextElementSibling as HTMLElement;
+    expect(chipReplay).toHaveClass('replay-link-button', 'replay-link-recorded');
+    expect(chipReplay).toHaveAttribute('href', '#/replay/G8?return=%23%2Flive');
+    expect(chipReplay).toHaveTextContent('Watch replay');
+    const todays = document.querySelector('.live-games') as HTMLElement;
+    expect(within(todays).getByRole('link', { name: 'Watch replay' })).toHaveAttribute(
+      'href',
+      '#/replay/G8?return=%23%2Flive',
+    );
+    const rightChips = document.querySelector('.live-chips-right') as HTMLElement;
+    const waitingChip = within(rightChips).getByText(/Waiting for next match…/);
+    expect(waitingChip.previousElementSibling).toHaveTextContent('Std. BO1');
     // The blank waiting panel ("Last game: …") must not replace the scoreboard.
     expect(screen.queryByText(/Last game: Win with Skellies/)).not.toBeInTheDocument();
     window.location.hash = '#overview';
@@ -1347,10 +1507,10 @@ describe('App', () => {
     expect(strip.parentElement).toBe(screen.getByLabelText('Search decks').parentElement);
   });
 
-  it('shows ten decks at a time and pages through the remaining decks', async () => {
+  it('pages and searches the full deck history beyond one hundred decks', async () => {
     const pagedSnapshot = {
       ...snapshot,
-      decks: Array.from({ length: 17 }, (_, index) => ({
+      decks: Array.from({ length: 117 }, (_, index) => ({
         ...snapshot.decks[0],
         deck_name: `Deck ${String(index + 1).padStart(2, '0')}`,
         games: index + 1,
@@ -1362,13 +1522,51 @@ describe('App', () => {
 
     const deckTable = await screen.findByRole('table', { name: 'Deck performance' });
     expect(within(deckTable).getAllByRole('row')).toHaveLength(11);
-    expect(within(deckTable).getByText('Deck 17')).toBeInTheDocument();
+    expect(within(deckTable).getByText('Deck 117')).toBeInTheDocument();
     expect(within(deckTable).queryByText('Deck 01')).not.toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: 'Deck performance pagination' })).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'Next page' }));
+    const pagination = screen.getByRole('navigation', { name: 'Deck performance pagination' });
+    await user.click(within(pagination).getByRole('button', { name: 'Page 4' }));
+    expect(within(deckTable).getByText('Deck 87')).toBeInTheDocument();
+    await user.click(within(pagination).getByRole('button', { name: 'Last page' }));
     expect(within(deckTable).getAllByRole('row')).toHaveLength(8);
     expect(within(deckTable).getByText('Deck 01')).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText('Search decks'), 'Deck 117');
+    expect(within(deckTable).getAllByRole('row')).toHaveLength(2);
+    expect(within(deckTable).getByText('Deck 117')).toBeInTheDocument();
+  });
+
+  it('offers numbered pages and direct jumps through all tracker sessions', async () => {
+    const sessionSnapshot = {
+      ...snapshot,
+      sessions: Array.from({ length: 41 }, (_, index) => ({
+        ...snapshot.sessions[0],
+        session_id: `session-${index}`,
+        started_at: new Date(Date.UTC(2026, 5, 4, 0, index)).toISOString(),
+        games: index + 1,
+      })),
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(sessionSnapshot), { status: 200 })));
+    const user = userEvent.setup();
+    render(<App />);
+    const pagination = await screen.findByRole('navigation', { name: 'Tracker sessions pagination' });
+    const table = screen.getByRole('table', { name: 'Tracker sessions' });
+    expect(within(table).getAllByRole('row')).toHaveLength(16);
+    expect(within(table).getByText('41')).toBeInTheDocument();
+    await user.click(within(pagination).getByRole('button', { name: 'Page 2' }));
+    expect(within(pagination).getByText('Showing 16-30 of 41')).toBeInTheDocument();
+    await user.click(within(pagination).getByRole('button', { name: 'Last page' }));
+    expect(within(table).getAllByRole('row')).toHaveLength(12);
+    expect(within(table).getByText('11')).toBeInTheDocument();
+    const jump = within(pagination).getByRole('spinbutton', { name: 'Go to page' });
+    await user.clear(jump);
+    await user.type(jump, '2');
+    await user.click(within(pagination).getByRole('button', { name: 'Go' }));
+    expect(within(pagination).getByText('Page 2 of 3')).toBeInTheDocument();
+    await user.click(within(pagination).getByRole('button', { name: 'First page' }));
+    expect(within(table).getByText('41')).toBeInTheDocument();
   });
 
   it('shows setup guidance when there are no tracked games yet', async () => {
@@ -1433,6 +1631,7 @@ describe('App', () => {
       'Lands Seen',
       'Turns',
       'Game Time',
+      '',
     ]);
     expect(within(recentTable).queryByRole('columnheader', { name: 'Land Seen' })).not.toBeInTheDocument();
     expect(within(recentTable).queryByRole('columnheader', { name: /Your Avg Turn/i })).not.toBeInTheDocument();
@@ -1441,6 +1640,9 @@ describe('App', () => {
     expect(within(recentGameRow).getByText('Flood')).toHaveClass('badge-flood');
     expect(within(recentGameRow).getAllByText('10')).toHaveLength(2);
     expect(within(recentGameRow).getByText('7 (71%)')).toBeInTheDocument();
+    const replayLink = within(recentGameRow).getByRole('link', { name: 'Watch replay' });
+    expect(replayLink).toHaveAttribute('href', '#/replay/game-2?return=%23recent-games');
+    expect(replayLink).toHaveClass('replay-link-recorded', 'replay-wide-only');
   });
 
   it('shows mana-screwed games in Recent Games with the legacy API shape', async () => {
@@ -1572,6 +1774,17 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: /Game 6\/4\/26/i })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith('/api/game?id=game-1', expect.anything());
     expect(document.title).toContain('Game 6/4/26');
+    // Teal Watch replay button right-aligned in the actions row directly
+    // above the Game metrics cards (like the Deck page's Copy Arena Deck),
+    // with the fixture's reconstructed availability (outline style + tooltip).
+    const summary = document.getElementById('game-summary') as HTMLElement;
+    expect(within(summary).queryByRole('link', { name: /Watch replay/ })).not.toBeInTheDocument();
+    const actionsRow = screen.getByRole('region', { name: 'Game metrics' }).previousElementSibling as HTMLElement;
+    expect(actionsRow).toHaveClass('game-detail-actions', 'replay-wide-only');
+    const watch = within(actionsRow).getByRole('link', { name: /Watch replay/ });
+    expect(watch).toHaveAttribute('href', '#/replay/game-1?return=%23%2Fgame%2Fgame-1%3Freturn%3D%2523overview');
+    expect(watch).toHaveClass('replay-link-button', 'replay-link-reconstructed', 'replay-wide-only');
+    expect(watch).toHaveAttribute('title', 'Reconstructed from the event log (approximate board)');
     ['Turn Timing', 'Draw Quality', 'Life Totals', 'Opening Hand', 'Drawn Cards', 'Cards Played', 'Opponent Deck', 'Timeline'].forEach((sectionName) => {
       expect(screen.getByRole('heading', { name: sectionName })).toBeInTheDocument();
     });
@@ -1625,6 +1838,41 @@ describe('App', () => {
     expect(timingToggle).toHaveAttribute('aria-expanded', 'false');
     expect(screen.getByText('Your Turn Time')).not.toBeVisible();
     expect(screen.getByRole('button', { name: 'Expand Turn Timing' })).toBeInTheDocument();
+  });
+
+  it('links each Game Detail timeline row to the replay at that event', async () => {
+    const withIds = {
+      ...gameDetail,
+      timeline: gameDetail.timeline.map((row, index) => ({ ...row, id: 4100 + index })),
+    };
+    let detail: unknown = withIds;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) =>
+        String(url).startsWith('/api/game')
+          ? new Response(JSON.stringify(detail), { status: 200 })
+          : new Response(JSON.stringify(snapshot), { status: 200 }),
+      ),
+    );
+    window.location.hash = '#/game/game-1';
+    const { unmount } = render(<App />);
+    const timelineHeading = await screen.findByRole('heading', { name: 'Timeline' });
+    const timeline = within(timelineHeading.closest('section') as HTMLElement);
+    const link = timeline.getByRole('link', { name: 'Watch the replay from 0:20' });
+    expect(link).toHaveAttribute(
+      'href',
+      replayRouteHash('game-1', { row: 4101, returnHash: gameRouteHash('game-1', '#overview', 'game-timeline') }),
+    );
+    expect(link).toHaveClass('replay-wide-only');
+    unmount();
+
+    // No links when the game cannot be replayed.
+    detail = { ...withIds, game: { ...withIds.game, replay: { state: 'unavailable', reason: 'no events' } } };
+    window.location.hash = '#/game/game-1';
+    render(<App />);
+    const heading = await screen.findByRole('heading', { name: 'Timeline' });
+    expect(within(heading.closest('section') as HTMLElement).queryByRole('link', { name: /Watch the replay/ })).toBeNull();
+    window.location.hash = '';
   });
 
   it('marks a three-draw low-land drought as mana screw', async () => {

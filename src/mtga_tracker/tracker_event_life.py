@@ -44,6 +44,7 @@ class TrackerLifeMixin:
         turn_override: Optional[int] = None,
         source_seat_override: Optional[int] = None,
         source_label: Optional[str] = None,
+        source_object_id: Optional[int] = None,
     ) -> None:
         """Print one life-change line with optional turn override for late-arriving events."""
         if not self.game_state.in_match or diff == 0:
@@ -69,6 +70,7 @@ class TrackerLifeMixin:
             self._flush_pending_turn_header_for_seat(seat_id)
         actor = self._seat_label(seat_id)
         turn_prefix = self._turn_prefix_for_number(turn_for_display)
+        life_fact = self._replay_life_fact(seat_id, diff, source_object_id)
         if diff > 0:
             stats = self._seat_stats(seat_id)
             if stats is not None:
@@ -76,9 +78,9 @@ class TrackerLifeMixin:
             source_text = f" [{source_label}]" if source_label else ""
             text = f"{turn_prefix}{actor}: gained {diff} life{source_text} (now {life})"
             if late_life_event:
-                self._print_event(text, "life_gain")
+                self._print_event_fact(text, "life_gain", life_fact)
             else:
-                self._print_event(
+                self._print_event_fact(
                     self._format_actor_event(
                         "💚",
                         seat_id,
@@ -86,6 +88,7 @@ class TrackerLifeMixin:
                         turn_override=turn_for_display,
                     ),
                     "life_gain",
+                    life_fact,
                 )
         elif diff < 0:
             lost_life = -diff
@@ -121,9 +124,9 @@ class TrackerLifeMixin:
             source_text = f" [{source_label}]" if source_label else ""
             text = f"{turn_prefix}{actor}: lost {-diff} life{source_text} (now {life})"
             if late_life_event:
-                self._print_event(text, "life_loss")
+                self._print_event_fact(text, "life_loss", life_fact)
             else:
-                self._print_event(
+                self._print_event_fact(
                     self._format_actor_event(
                         "💔",
                         seat_id,
@@ -131,6 +134,7 @@ class TrackerLifeMixin:
                         turn_override=turn_for_display,
                     ),
                     "life_loss",
+                    life_fact,
                 )
 
     def _collect_life_updates(self, data: Dict[str, Any]) -> List[tuple]:
@@ -274,4 +278,5 @@ class TrackerLifeMixin:
                 new_life,
                 source_seat_override=source_seat,
                 source_label=source_label,
+                source_object_id=source_obj.get("instanceId") if source_obj else None,
             )

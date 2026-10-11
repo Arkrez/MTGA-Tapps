@@ -6,6 +6,8 @@ or operational documentation only.
 
 | Plan | Current status | Remaining work |
 | --- | --- | --- |
+| [Replay](REPLAY.md) | Built 2026-10-07: one enriched `game_events` stream (capture + builder), text reconstructor for older games, `GET /api/replay`, three.js replay page with turn scrubber, action log, felt/sleeve colors, and entry points (sidebar tile, list, Game Detail, row icons, Live, console link, menu). Contract: `docs/REPLAY_FORMAT.md` Phase 4 built 2026-10-10: in-browser MP4 export (WebCodecs + mp4-muxer), cards exiled by a permanent tucked under it, hover list and pictures of a stack, printed stats from Arena's card DB; validated on live recorded games. | Overlay "Watch replay" button, optional local image cache |
+| [Deck Manager](DECK_MANAGER.md) | Researched 2026-10-06; proposal only. Windows native local-deck precedent found; current local Mac Arena is IL2CPP | Current-build/platform feasibility, durable deck library, exact capture, verified store/restore, full-slot swaps, and an optional native collection section |
 | [Backups and carrying history between computers](BACKUP_AND_SYNC.md) | Phases 1–2 shipped: `.tappsbackup` export/restore/merge, synced-folder picks, previews with confirmation, undo, delete and open-location (Settings → Backup & restore) | Automatic post-session backups; Google Drive by API only if the folder route proves insufficient |
 | [Deck Manager](DECK_MANAGER.md) | Local library plus native dashboard bulk backup/move/restore, account guards, transfer progress, collapsible collections and migrations 33–34 implemented on `deck-manager`; integrated live roster refresh and 94-deck backup passed; [Mac POC](deck-manager/NATIVE_POC.md) proves disk restoration | Integrated move/restore validation through isolated live dashboard, persistent native collection/tiles, installed-bundle permissions and Windows support |
 | [Linux support](linux_implementation.md) | Not implemented as a supported distribution | Prefix discovery/rotation, tray-free controller, overlay, packaging and desktop validation |
@@ -23,6 +25,9 @@ superseded choices (off by default, its own tray, no card art, known-top
 odds) and unverified performance targets; those are not outstanding promises.
 Original `overlay-mockup.html` and `overlay-mockup.png` remain as historical
 visual assets, not implementation specifications.
+The approved Deck Finder previews in `deck-finder-style/` also remain as
+historical visual assets; the implemented layout is described in the
+[Deck Finder guide](../DECK_FINDER_YOUTUBE.md#browsing-and-deck-details).
 
 When a plan is completed, move durable behavioral information into the
 appropriate reference, record the delivered feature in the changelog, remove

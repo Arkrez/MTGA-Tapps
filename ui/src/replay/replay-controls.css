@@ -1,0 +1,209 @@
+/* Replay transport bar and Table popover (see replay.css for the page layout). */
+
+/* --- Transport --- */
+
+.replay-controls {
+  padding: 2px 12px 8px;
+  container-type: inline-size;
+}
+
+.replay-scrub-labels {
+  position: relative;
+  height: 14px;
+  color: var(--subtle);
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.replay-scrub-labels span {
+  position: absolute;
+  top: 0;
+  white-space: nowrap;
+}
+
+.replay-scrub-track {
+  position: relative;
+  height: 20px;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.replay-scrub-segment {
+  position: absolute;
+  top: 8px;
+  height: 4px;
+  border-right: 1px solid var(--panel);
+  opacity: 0.75;
+}
+
+.replay-seg-you {
+  background: var(--draw);
+}
+
+.replay-seg-opp {
+  background: var(--danger);
+}
+
+.replay-seg-pre {
+  background: var(--border);
+}
+
+.replay-seg-current {
+  top: 7px;
+  height: 6px;
+  opacity: 1;
+}
+
+.replay-scrub-head {
+  position: absolute;
+  top: 3px;
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  border: 2px solid var(--panel);
+  border-radius: 50%;
+  background: var(--replay, #2bb3a3);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 35%);
+  pointer-events: none;
+}
+
+.replay-controls-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 4px;
+}
+
+.replay-transport {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.replay-goto input {
+  width: 128px;
+  font-weight: 500;
+}
+
+.replay-counters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The hint would wrap the bar onto a second row (stealing table height) on
+   narrower layouts; the Replay Options popover lists the shortcuts too. */
+@container (max-width: 1260px) {
+  .replay-shortcuts {
+    display: none;
+  }
+}
+
+.replay-shortcuts {
+  color: var(--subtle);
+  font-size: 0.72rem;
+}
+
+/* --- Table popover --- */
+
+.replay-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 60;
+  display: grid;
+  gap: 12px;
+  width: 300px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.replay-popover fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.replay-popover legend {
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.replay-swatches > div,
+.replay-segmented > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.replay-swatch {
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--border);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.replay-swatch[aria-pressed="true"] {
+  border-color: var(--replay, #2bb3a3);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--replay, #2bb3a3) 35%, transparent);
+}
+
+.replay-segmented button {
+  flex: 1;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-strong);
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.replay-segmented button[aria-pressed="true"] {
+  border-color: var(--replay, #2bb3a3);
+  color: var(--replay, #2bb3a3);
+}
+
+.replay-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--text);
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.replay-card-preview {
+  z-index: 1000;
+}
+
+
+.replay-popover-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.replay-popover-shortcuts {
+  margin: 0;
+  color: var(--subtle);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}

@@ -13,7 +13,7 @@ GET /api/live?since=<console_logs.id> returns:
       "session": {games, wins, losses, draws, win_rate, runtime_seconds,
                   started_at} | null,
       "games": [{id, started_at, deck_name, opponent_name, outcome,
-                 total_turns, duration_seconds, game_number, format}],
+                 total_turns, duration_seconds, game_number, format, replay}],
       "events": [{id, at, turn, style, text, player_life, opponent_life}],
       "seq": <highest console_logs id sent>
     }
@@ -108,7 +108,9 @@ def _log_cantopen(db_uri: str, exc: BaseException) -> None:
         from .paths import DATA_DIR
 
         path = Path(db_uri.split("?", 1)[0].replace("file://", "")).expanduser()
-        exists = {suffix: (path.parent / (path.name + suffix)).exists() for suffix in ("", "-wal", "-shm")}
+        exists = {
+            suffix: (path.parent / (path.name + suffix)).exists() for suffix in ("", "-wal", "-shm")
+        }
         fds: Any = "?"
         limit: Any = "?"
         try:
@@ -150,7 +152,9 @@ def _tracker_state(status: Optional[Dict[str, Any]], now: datetime) -> str:
     return "live" if status.get("in_game") else "idle"
 
 
-def _session_payload(conn: sqlite3.Connection, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
+def _session_payload(
+    conn: sqlite3.Connection, session_id: Optional[str]
+) -> Optional[Dict[str, Any]]:
     if session_id:
         cursor = conn.execute(
             """
@@ -422,6 +426,7 @@ def _archetype_guess(
         ).fetchall()
     except sqlite3.OperationalError:
         return None
+
     # Base card names, so "(Land)" suffixes and split faces still match.
     def base(name: str) -> str:
         return str(name or "").split(" (")[0].split(" // ")[0].strip().casefold()
@@ -466,9 +471,7 @@ def _archetype_guess(
     }
 
 
-def _latest_event_game_id(
-    conn: sqlite3.Connection, session_id: Optional[str]
-) -> Optional[str]:
+def _latest_event_game_id(conn: sqlite3.Connection, session_id: Optional[str]) -> Optional[str]:
     """game_id of the newest game_events row in the CURRENT tracker session —
     the game whose feed the page should keep showing between games. The
     tracker clears live_status.game_id the moment a match completes, and
@@ -485,7 +488,8 @@ def _latest_event_game_id(
         return None
     try:
         row = conn.execute(
-            "SELECT game_id FROM game_events WHERE session_id = ? ORDER BY id DESC LIMIT 1",
+            "SELECT game_id FROM game_events WHERE session_id = ? AND visible = 1 "
+            "ORDER BY id DESC LIMIT 1",
             (session_id,),
         ).fetchone()
     except sqlite3.OperationalError:
@@ -493,16 +497,20 @@ def _latest_event_game_id(
     return str(row[0]) if row and row[0] else None
 
 
-def _games_payload(conn: sqlite3.Connection, session_id: Optional[str] = None) -> List[Dict[str, Any]]:
+def _games_payload(
+    conn: sqlite3.Connection, session_id: Optional[str] = None
+) -> List[Dict[str, Any]]:
     """Today's finished games plus this tracker session's, and always the
     most recent game, newest first, ready to link to #/game/<id>. The
     session's games matter past midnight: a game that started at 23:58 must
     still be the "previous game" — with its outcome — at 00:05, not vanish
     because the calendar day rolled over; the most recent game keeps the
     "Last game: …" line honest after a restart."""
+    from .dashboard import _attach_replay_availability
+
     today = datetime.now().strftime("%Y-%m-%d")
     session_prefix = f"{session_id}:%" if session_id else ""
-    return _dict_rows(
+    rows = _dict_rows(
         conn.execute(
             """
             SELECT
@@ -530,6 +538,8 @@ def _games_payload(conn: sqlite3.Connection, session_id: Optional[str] = None) -
             (today, session_prefix, session_prefix),
         )
     )
+    _attach_replay_availability(conn, rows, key="id")
+    return rows
 
 
 def _events_payload(
@@ -544,6 +554,10 @@ def _events_payload(
     game_events, so they never reach the feed."""
     if not game_id:
         return [], since
+    from .dashboard import _visible_events_clause
+
+    # Silent replay-only rows (visible = 0) are not printed history.
+    visible = _visible_events_clause(conn)
     columns = """
               id,
               event_time,
@@ -562,8 +576,8 @@ def _events_payload(
         query = f"""
             SELECT {columns}
             FROM game_events
-            WHERE game_id = ? AND (id > ? OR id IN (
-                SELECT id FROM game_events WHERE game_id = ?
+            WHERE game_id = ?{visible} AND (id > ? OR id IN (
+                SELECT id FROM game_events WHERE game_id = ?{visible}
                 ORDER BY id DESC LIMIT {REFRESH_TAIL_ROWS}
             ))
             ORDER BY id ASC
@@ -574,7 +588,7 @@ def _events_payload(
         query = f"""
             SELECT {columns}
             FROM game_events
-            WHERE game_id = ? AND id > ?
+            WHERE game_id = ? AND id > ?{visible}
             ORDER BY id ASC
             LIMIT {MAX_EVENT_LINES}
             """
@@ -693,9 +707,7 @@ def build_live_payload(db_path: Path, since: int = 0) -> Dict[str, Any]:
                 "ramped_lands": source.get("ramped_lands"),
                 "deck_size": source.get("deck_size"),
                 "deck_lands": source.get("deck_lands"),
-                "head_to_head": _head_to_head(
-                    conn, source.get("opponent_name"), feed_game_id
-                ),
+                "head_to_head": _head_to_head(conn, source.get("opponent_name"), feed_game_id),
                 "deck_record": _deck_record(conn, source.get("deck_name"), feed_game_id),
                 "commander_record": _commander_record(
                     conn, source.get("opponent_commanders"), feed_game_id
@@ -813,7 +825,9 @@ def overlay_response(db_path: Path) -> Tuple[bytes, str]:
     cached = _overlay_response_cache.get(db_uri)
     if cached is not None and cached[0] == key:
         return cached[1], cached[2]
-    payload = json.dumps(build_overlay_payload(db_path, status=status, now=now), separators=(",", ":")).encode("utf-8")
+    payload = json.dumps(
+        build_overlay_payload(db_path, status=status, now=now), separators=(",", ":")
+    ).encode("utf-8")
     etag = '"' + hashlib.sha1(payload).hexdigest()[:20] + '"'
     _overlay_response_cache[db_uri] = (key, payload, etag)
     return payload, etag
@@ -845,7 +859,9 @@ def build_overlay_payload(
                 state = None
         head_to_head = None
         if state and state.get("game_active") and status:
-            head_to_head = _head_to_head(conn, status.get("opponent_name"), status.get("game_id"), cache_scope=db_uri)
+            head_to_head = _head_to_head(
+                conn, status.get("opponent_name"), status.get("game_id"), cache_scope=db_uri
+            )
     tracker_state = _tracker_state(status, now)
     if tracker_state == "offline":
         # A stale row must not keep a finished game's library on screen.

@@ -143,6 +143,10 @@ class UnifiedLauncher:
         tracker.analytics.close()
         tracker._console_db_path = self.db_path
         tracker.analytics = AnalyticsStore(self.db_path)
+        # The console prints "Replay: <dashboard>/#/replay/<game_id>" after a
+        # game is saved; resolved lazily because the port is known only once
+        # the dashboard server is listening.
+        tracker.dashboard_url_provider = lambda: self.dashboard_url
         if self.use_colors is not None:
             tracker.use_colors = self.use_colors
         elif self.output_stream is not sys.stdout:

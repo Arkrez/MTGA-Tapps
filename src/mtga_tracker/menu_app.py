@@ -5,10 +5,12 @@ from __future__ import annotations
 import ctypes
 import os
 import re
+import sqlite3
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
+from urllib.parse import quote
 
 from PyQt6.QtCore import QLockFile, QObject, QPoint, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import (
@@ -216,6 +218,42 @@ class LiveLogWindow(QMainWindow):
         self.hide()
 
 
+def newest_finished_game_id(db_path: Path) -> Optional[str]:
+    """Id of the most recently finished persisted game, or None.
+
+    One indexed read-only query, run only when the menu item is clicked;
+    any database problem just means "no game" (the caller opens the list).
+    """
+    path = Path(db_path).expanduser()
+    if not path.is_file():
+        return None
+    try:
+        conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
+    except sqlite3.Error:
+        return None
+    try:
+        row = conn.execute(
+            """
+            SELECT id FROM games
+            WHERE ended_at IS NOT NULL
+            ORDER BY ended_at DESC, rowid DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+    return str(row[0]) if row and row[0] else None
+
+
+def replay_fragment(game_id: Optional[str]) -> str:
+    """Dashboard hash for a game's replay, or the Replay list without one."""
+    if not game_id:
+        return "/#/replay"
+    return f"/#/replay/{quote(game_id, safe='')}"
+
+
 class MenuBarController(QObject):
     """Coordinate the native menu, tracker worker, dashboard, and log window."""
 
@@ -269,11 +307,20 @@ class MenuBarController(QObject):
         self.menu.addAction(self.overlay_status_action)
         self.menu.addSeparator()
 
-        # Order matters (same on macOS and Windows): Live Scoreboard, Dashboard,
-        # Deck Finder, Open Data Folder — then the overlay and tracker sections.
+        # Order matters (same on macOS and Windows): Live Scoreboard, Replays,
+        # Watch last replay, Dashboard, Deck Finder, Open Data Folder — then
+        # the overlay and tracker sections.
         self.show_log_action = QAction("Live Scoreboard", self)
         self.show_log_action.triggered.connect(self.open_live_log)
         self.menu.addAction(self.show_log_action)
+
+        self.replays_action = QAction("Replays", self)
+        self.replays_action.triggered.connect(self.open_replays)
+        self.menu.addAction(self.replays_action)
+
+        self.last_replay_action = QAction("Watch last replay", self)
+        self.last_replay_action.triggered.connect(self.open_last_replay)
+        self.menu.addAction(self.last_replay_action)
 
         self.open_dashboard_action = QAction("Dashboard", self)
         self.open_dashboard_action.triggered.connect(lambda: self.open_dashboard())
@@ -380,6 +427,14 @@ class MenuBarController(QObject):
     def open_live_log(self) -> None:
         """The Live Scoreboard lives in the dashboard (#/live)."""
         self.open_dashboard("/#/live")
+
+    def open_replays(self) -> None:
+        """The Replay list lives in the dashboard (#/replay)."""
+        self.open_dashboard(replay_fragment(None))
+
+    def open_last_replay(self) -> None:
+        """Replay the newest finished game; the list when there is none yet."""
+        self.open_dashboard(replay_fragment(newest_finished_game_id(self.launcher.db_path)))
 
     def show_live_log(self) -> None:
         """Show the legacy Qt log window (debug fallback; see start())."""

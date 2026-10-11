@@ -40,11 +40,15 @@ class TrackerEventsMixin(
 
     @staticmethod
     def _is_ignored_diagnostic_annotation(ann_type: List[str]) -> bool:
-        """Return True for routine annotations that are already represented elsewhere."""
+        """Return True for routine annotations that are already represented elsewhere.
+
+        Counters, tokens, attachments, shuffles, reveals, P/T changes, target
+        submissions and new-turn markers are captured for replay by
+        ``_process_replay_annotation`` and never reach this check; taps come
+        from the objects' ``isTapped`` state.
+        """
         ignored_types = {
             "AnnotationType_ChoiceResult",
-            "AnnotationType_CounterAdded",
-            "AnnotationType_CounterRemoved",
             "AnnotationType_GainDesignation",
             "AnnotationType_LayeredEffectCreated",
             "AnnotationType_LayeredEffectDestroyed",
@@ -52,19 +56,10 @@ class TrackerEventsMixin(
             "AnnotationType_ModifiedLife",
             "AnnotationType_MultistepEffectComplete",
             "AnnotationType_MultistepEffectStarted",
-            "AnnotationType_NewTurnStarted",
             "AnnotationType_PlayerSelectingTargets",
-            "AnnotationType_PlayerSubmittedTargets",
-            "AnnotationType_PowerToughnessModCreated",
-            "AnnotationType_RevealedCardCreated",
-            "AnnotationType_RevealedCardDeleted",
             "AnnotationType_ResolutionComplete",
-            "AnnotationType_Shuffle",
             "AnnotationType_ShouldntPlay",
             "AnnotationType_SyntheticEvent",
-            "AnnotationType_TappedUntappedPermanent",
-            "AnnotationType_TokenCreated",
-            "AnnotationType_TokenDeleted",
         }
         return any(item in ignored_types for item in ann_type)
 
@@ -95,6 +90,8 @@ class TrackerEventsMixin(
 
     def _process_game_events(self, data: Dict[str, Any]):
         """Process and display important game events."""
+        replay_state = self._replay_state()
+        replay_state.hand_arrivals = set()
         self._capture_arena_game_info(data)
         game_objects = data.get("gameObjects", [])
         game_objects_by_id = {
@@ -103,6 +100,7 @@ class TrackerEventsMixin(
             if isinstance(obj, dict) and obj.get("instanceId") is not None
         }
         zones_by_id = self._zone_index(data)
+        self._replay_learn_zones(zones_by_id)
         if self.game_state.battlefield_zone_id is None:
             for zone_id, zone in zones_by_id.items():
                 if isinstance(zone, dict) and zone.get("type") == "ZoneType_Battlefield":
@@ -139,6 +137,7 @@ class TrackerEventsMixin(
                 and annotation.get("affectedIds")
                 and annotation.get("affectedIds")[0] is not None
             }
+            replay_state.user_action_ids = user_action_instance_ids
             target_selecting_instance_ids = {
                 int(annotation["affectedIds"][0])
                 for annotation in annotations
@@ -181,6 +180,7 @@ class TrackerEventsMixin(
         self._flush_deferred_life_updates()
         self._reconcile_deleted_stack_items(data.get("diffDeletedInstanceIds"))
         self._reconcile_hidden_hand_changes(data, game_objects_by_id, zones_by_id)
+        self._replay_flush_object_changes()
 
     def _process_annotation(
         self,
@@ -222,7 +222,13 @@ class TrackerEventsMixin(
             return
 
         if "AnnotationType_TokenCreated" in ann_type:
+            self._replay_token_created(affected_ids, game_objects_by_id)
             self._count_token_creations(affected_ids, game_objects_by_id)
+            return
+
+        if self._process_replay_annotation(
+            ann_type, annotation, affected_ids, affector_id, details, game_objects_by_id
+        ):
             return
 
         if not target_ids:
@@ -411,6 +417,8 @@ class TrackerEventsMixin(
         zones_by_id: Dict[int, Dict[str, Any]],
     ) -> None:
         """Infer hidden hand draws from zone-count deltas when MTGA omits draw annotations."""
+        replay_state = self._replay_state()
+        previous_hand_ids = dict(replay_state.hand_ids)
         current_hand_sizes = self._extract_hand_sizes(data)
         if not current_hand_sizes:
             return
@@ -433,6 +441,9 @@ class TrackerEventsMixin(
             )
             if residual <= 0:
                 continue
+            self._replay_hidden_hand_draws(
+                int(seat_id), residual, previous_hand_ids.get(int(seat_id))
+            )
             stats = self._seat_stats(seat_id)
             if stats is not None:
                 stats["cards_drawn"] += residual

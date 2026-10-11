@@ -404,7 +404,12 @@ class TrackerSummaryMixin:
         self._print_line("\n" + "=" * 75)
         self._print_line("Ready for next game...\n")
 
-        self._persist_game_analytics(outcome, reason)
+        # The game row exists only once this returns True; the replay link is
+        # printed only when the unified launcher told us the dashboard URL.
+        if self._persist_game_analytics(outcome, reason):
+            replay_url = self._replay_link(self._current_game_id())
+            if replay_url:
+                self._print_line(f"Replay: {replay_url}")
 
         if self._bo3_match_continues():
             # The Bo3 match is undecided, so the next game belongs to THIS

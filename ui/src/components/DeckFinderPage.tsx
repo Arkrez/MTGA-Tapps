@@ -1,9 +1,9 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Archive, Check, Copy, Dices, ExternalLink, FolderOpen, Plus, RefreshCw, Search } from 'lucide-react';
+import { fetchDeckLibrary, type DeckCollection, type NativeDeckJob, importManagedDeck, addDeckToArena, fetchNativeDeckStatus, fetchNativeDeckJob, type NativeDeckStatus } from '../deckManagerApi';
 import { DeckTransferProgress } from './DeckTransferProgress';
 import { DeckModal } from './DeckModal';
 import { exportedDeckName } from '../deckFinderName';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Archive, Check, Copy, Dices, ExternalLink, FolderOpen, Plus, RefreshCw } from 'lucide-react';
-import { fetchDeckLibrary, type DeckCollection, type NativeDeckJob, importManagedDeck, addDeckToArena, fetchNativeDeckStatus, fetchNativeDeckJob, type NativeDeckStatus } from '../deckManagerApi';
 import {
   fetchDeckFinderJob,
   fetchDeckFinderProviders,
@@ -19,6 +19,8 @@ import {
 } from '../api';
 import { Section } from './Section';
 import { SortableTable, type Column } from './SortableTable';
+import { parseDeckFinderImport } from '../deckFinderImport';
+import { DeckFinderDeckList } from './DeckFinderDeckList';
 
 const JOB_POLL_MS = 700;
 const JOB_TIMEOUT_MS = 120_000;
@@ -40,6 +42,11 @@ function addBlockedReason(status: NativeDeckStatus): string | null {
   if (status.limit_reached === true) return 'Arena’s deck slots are full. Move a deck to your collection first.';
   return null;
 }
+
+const SITE_ICONS: Record<string, string> = {
+  aetherhub: 'aetherhub.png', magic_gg: 'magic.svg', moxfield: 'moxfield.ico',
+  mtgo: 'mtgo.ico', tcgplayer: 'tcgplayer.ico', untapped: 'untapped.ico', youtube: 'youtube.svg',
+};
 
 /** Port of the terminal app's Arena import formatting: blank line before
     section headers (Sideboard, Companion, Commander) so Arena accepts it. */
@@ -131,6 +138,7 @@ export function DeckFinderPage() {
   const [addedSource, setAddedSource] = useState<string | null>(null);
   const [nativeRefresh, setNativeRefresh] = useState(0);
   const requestSeq = useRef(0);
+  const deckRequestSeq = useRef(0);
   // What produced the current results — reused by Refresh, variants context,
   // and "back to results" after a variants drill-down.
   const [lastFetch, setLastFetch] = useState<FetchArgs | null>(null);
@@ -217,9 +225,33 @@ export function DeckFinderPage() {
 
   const beginRequest = useCallback(() => {
     requestSeq.current += 1;
+    deckRequestSeq.current += 1;
+    setHydrating(false);
     setError(null);
     return requestSeq.current;
   }, []);
+
+  const openDeck = useCallback(
+    async (deck: DeckFinderDeck, deckProvider = provider) => {
+      const seq = ++deckRequestSeq.current;
+      setCopyStatus('idle');
+      setSelectedDeck(deck);
+      if (deck.deck_text || !deckProvider) {
+        setHydrating(false);
+        return;
+      }
+      setHydrating(true);
+      try {
+        const hydrated = await hydrateDeckFinderDeck(deckProvider.key, deck);
+        if (deckRequestSeq.current === seq) setSelectedDeck(hydrated);
+      } catch {
+        // Keep the source link available when a deck cannot be hydrated.
+      } finally {
+        if (deckRequestSeq.current === seq) setHydrating(false);
+      }
+    },
+    [provider],
+  );
 
   const runFetch = useCallback(
     async (nextProvider: DeckFinderProvider, args: FetchArgs, refresh = false) => {
@@ -252,6 +284,9 @@ export function DeckFinderPage() {
         }
         if (requestSeq.current === seq && decks && view) {
           setResults({ decks, view });
+          if (view.selection_action === 'details' && decks[0]) {
+            void openDeck(decks[0], nextProvider);
+          }
         }
       } catch (exc: unknown) {
         if (requestSeq.current === seq) {
@@ -263,7 +298,7 @@ export function DeckFinderPage() {
         }
       }
     },
-    [beginRequest],
+    [beginRequest, openDeck],
   );
 
   const loadSources = useCallback(
@@ -328,6 +363,9 @@ export function DeckFinderPage() {
           setResults({ decks: finished.decks, view: finished.view });
           setVariantsParent(parent);
           setSelectedDeck(null);
+          if (finished.view.selection_action === 'details' && finished.decks[0]) {
+            void openDeck(finished.decks[0]);
+          }
         }
       } catch (exc: unknown) {
         if (requestSeq.current === seq) {
@@ -339,30 +377,7 @@ export function DeckFinderPage() {
         }
       }
     },
-    [beginRequest, format, lastFetch, provider],
-  );
-
-  const openDeck = useCallback(
-    async (deck: DeckFinderDeck) => {
-      setCopyStatus('idle');
-      setSelectedDeck(deck);
-      if (deck.deck_text || !provider) {
-        setHydrating(false);
-        return;
-      }
-      setHydrating(true);
-      try {
-        const hydrated = await hydrateDeckFinderDeck(provider.key, deck);
-        setSelectedDeck((current) =>
-          current && current.source_url === deck.source_url ? hydrated : current,
-        );
-      } catch {
-        // The drawer shows "deck list unavailable" and keeps the source link.
-      } finally {
-        setHydrating(false);
-      }
-    },
-    [provider],
+    [beginRequest, format, lastFetch, openDeck, provider],
   );
 
   const runSurprise = useCallback(async () => {
@@ -420,43 +435,55 @@ export function DeckFinderPage() {
     }
   }
 
-  const deckColumns: Column<DeckFinderDeck>[] = (results?.view.columns ?? []).map((column) => ({
-    // Column identity is the server-provided table-spec key, not a DeckEntry
-    // field; SortableTable only uses it as an identifier.
-    key: column.key as keyof DeckFinderDeck,
-    header: column.label,
-    numeric: column.numeric,
-    render: (row) =>
-      column.key === 'name' ? (
-        <button
-          className="deckfinder-deck-link"
-          type="button"
-          onClick={() =>
-            results?.view.selection_action === 'details' ? void openDeck(row) : void runVariants(row)
-          }
-        >
-          {row.name}
-        </button>
-      ) : (
-        (row.cells?.[column.key] ?? '—')
-      ),
-    sortValue: (row) => {
-      switch (column.key) {
-        case 'index':
-          return Number(row.cells?.index ?? 0);
-        case 'name':
-          return row.name;
-        case 'win_rate':
-          return row.win_rate;
-        case 'matches':
-          return row.matches;
-        case 'date':
-          return row.event_date ?? '';
-        default:
-          return row.cells?.[column.key] ?? '';
-      }
-    },
-  }));
+  const metadataColumns = (results?.view.columns ?? []).filter((column) =>
+    !['index', 'name', 'win_rate', 'matches', 'placing'].includes(column.key),
+  );
+  const deckColumns: Column<DeckFinderDeck>[] = (results?.view.columns ?? [])
+    .filter((column) => ['index', 'name', 'win_rate', 'matches', 'placing'].includes(column.key))
+    .map((column) => ({
+      // Column identity is the server-provided table-spec key, not a DeckEntry
+      // field; SortableTable only uses it as an identifier.
+      key: column.key as keyof DeckFinderDeck,
+      header: column.label,
+      numeric: column.numeric,
+      render: (row) =>
+        column.key === 'name' ? (
+          <>
+            <button
+              className="deckfinder-deck-link"
+              type="button"
+              aria-pressed={selectedDeck?.source_url === row.source_url && selectedDeck?.name === row.name}
+              onClick={() =>
+                results?.view.selection_action === 'details' ? void openDeck(row) : void runVariants(row)
+              }
+            >
+              {row.name}
+            </button>
+            <span className="deckfinder-row-meta">
+              {metadataColumns.map((column) => row.cells?.[column.key])
+                .filter((value) => value && value !== '-' && value !== '—').join(' · ')}
+            </span>
+          </>
+        ) : (
+          (row.cells?.[column.key] ?? '—')
+        ),
+      sortValue: (row) => {
+        switch (column.key) {
+          case 'index':
+            return Number(row.cells?.index ?? 0);
+          case 'name':
+            return row.name;
+          case 'win_rate':
+            return row.win_rate;
+          case 'matches':
+            return row.matches;
+          case 'date':
+            return row.event_date ?? '';
+          default:
+            return row.cells?.[column.key] ?? '';
+        }
+      },
+    }));
 
   const showFormatChips = Boolean(provider && provider.format_options.length > 1);
   // Creator-backed sources (name "Creator: X") get their own chip row, like
@@ -465,232 +492,241 @@ export function DeckFinderPage() {
   const creatorSources = sources.filter((source) => source.name.startsWith('Creator: '));
   const showSources = Boolean(
     provider?.uses_source_picker &&
-      (sources.length > 1 || (provider.key === 'youtube' && sources.length > 0)),
+    (sources.length > 1 || (provider.key === 'youtube' && sources.length > 0)),
   );
   const resultContext = provider
     ? [
-        provider.display_name,
-        FORMAT_LONG_LABELS[lastFetch?.format ?? format] ?? format,
-        lastFetch?.sourceName
-          ? lastFetch.sourceName
-          : provider.uses_source_picker
-            ? `All (${provider.source_picker_all_label})`
-            : null,
-      ]
-        .filter(Boolean)
-        .join(' · ')
+      provider.display_name,
+      FORMAT_LONG_LABELS[lastFetch?.format ?? format] ?? format,
+      lastFetch?.sourceName
+        ? lastFetch.sourceName
+        : provider.uses_source_picker
+          ? `All (${provider.source_picker_all_label})`
+          : null,
+    ]
+      .filter(Boolean)
+      .join(' · ')
     : '';
 
+  const parsedDeck = useMemo(() => parseDeckFinderImport(selectedDeck?.deck_text), [selectedDeck?.deck_text]);
+
   return (
-    <Section
-      id="deck-finder-browse"
-      title="Browse Decks"
-      description="Pick a site and format, then find and export any deck list to your clipboard to be imported into Arena."
-    >
-      <div className="deckfinder-toolbar">
-        <span className="deckfinder-step-label">Site</span>
-        <button className="quick-filter deckfinder-surprise" type="button" onClick={() => void runSurprise()}>
-          <Dices aria-hidden="true" /> Surprise Me
-        </button>
-      </div>
-
-      {providersError ? (
-        <p className="empty-state deckfinder-state">{providersError}</p>
-      ) : providers === null ? (
-        <p className="state-panel deckfinder-state" role="status" aria-busy="true">
-          Loading sites...
-        </p>
-      ) : (
-        <div className="deckfinder-providers" role="group" aria-label="Deck sites">
-          {providers.map((candidate) => (
-            <button
-              key={candidate.key}
-              type="button"
-              className={
-                provider?.key === candidate.key
-                  ? 'deckfinder-provider deckfinder-provider-active'
-                  : 'deckfinder-provider'
-              }
-              aria-pressed={provider?.key === candidate.key}
-              title={candidate.description}
-              onClick={() => selectProvider(candidate)}
-            >
-              <strong>{candidate.display_name}</strong>
-              <span>{SITE_SUBTITLES[candidate.key] ?? candidate.description}</span>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {showFormatChips && provider ? (
-        <div className="deckfinder-filter-row">
-          <span className="deckfinder-step-label">Format</span>
-          <div className="quick-filters deckfinder-chips" role="group" aria-label="Match format">
-            {provider.format_options.map((option) => (
+    <div className="deckfinder-page" data-provider={provider?.key}>
+      <Section
+        id="deck-finder-browse"
+        title="Browse Decks"
+        description="Pick a site and creator, then copy a deck into Arena."
+        headingAction={(
+          <button className="quick-filter deckfinder-surprise" type="button" onClick={() => void runSurprise()}>
+            <Dices aria-hidden="true" /> Surprise Me
+          </button>
+        )}
+      >
+        {providersError ? (
+          <p className="empty-state deckfinder-state">{providersError}</p>
+        ) : providers === null ? (
+          <p className="state-panel deckfinder-state" role="status" aria-busy="true">
+            Loading sites...
+          </p>
+        ) : (
+          <div className="deckfinder-providers" role="group" aria-label="Deck sites">
+            {providers.map((candidate) => (
               <button
-                key={option}
+                key={candidate.key}
                 type="button"
-                className={format === option ? 'quick-filter quick-filter-active' : 'quick-filter'}
-                aria-pressed={format === option}
-                onClick={() => selectFormat(option)}
+                className={
+                  provider?.key === candidate.key
+                    ? 'deckfinder-provider deckfinder-provider-active'
+                    : 'deckfinder-provider'
+                }
+                data-provider={candidate.key}
+                aria-pressed={provider?.key === candidate.key}
+                title={candidate.description}
+                onClick={() => selectProvider(candidate)}
               >
-                {FORMAT_CHIP_LABELS[option] ?? option}
+                <span className="deckfinder-site-icon" aria-hidden="true">
+                  {SITE_ICONS[candidate.key] ? (
+                    <img src={`/providers/${SITE_ICONS[candidate.key]}`} alt="" width={24} height={24} />
+                  ) : <Search />}
+                </span>
+                <strong>{candidate.display_name}</strong>
+                <span className="deckfinder-site-subtitle">{SITE_SUBTITLES[candidate.key] ?? candidate.description}</span>
               </button>
             ))}
           </div>
-        </div>
-      ) : null}
+        )}
 
-      {showSources && provider && regularSources.length > 0 ? (
-        <div className="deckfinder-filter-row">
-          <span className="deckfinder-step-label">{provider.source_picker_title}</span>
-          <div className="quick-filters deckfinder-chips" role="group" aria-label={provider.source_picker_title === 'Creators' ? 'Creators' : 'Deck sources'}>
-            {provider.allow_all_sources ? (
-              <button
-                className={
-                  lastFetch && lastFetch.sourceUrl === ''
-                    ? 'quick-filter quick-filter-active'
-                    : 'quick-filter'
-                }
-                aria-pressed={Boolean(lastFetch && lastFetch.sourceUrl === '')}
-                type="button"
-                onClick={() =>
-                  provider &&
-                  void runFetch(provider, { format, sourceUrl: '', sourceName: '' })
-                }
-              >
-                All ({provider.source_picker_all_label})
-              </button>
-            ) : null}
-            {regularSources.map((source) => (
-              <button
-                key={`${source.name}-${source.url}`}
-                className={
-                  lastFetch?.sourceUrl === source.url
-                    ? 'quick-filter quick-filter-active'
-                    : 'quick-filter'
-                }
-                aria-pressed={lastFetch?.sourceUrl === source.url}
-                title={source.description}
-                type="button"
-                onClick={() =>
-                  provider &&
-                  void runFetch(provider, {
-                    format,
-                    sourceUrl: source.url,
-                    sourceName: source.name,
-                  })
-                }
-              >
-                {source.name}
-              </button>
-            ))}
+        {showFormatChips && provider ? (
+          <div className="deckfinder-filter-row">
+            <span className="deckfinder-step-label">Format</span>
+            <div className="quick-filters deckfinder-chips" role="group" aria-label="Match format">
+              {provider.format_options.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  className={format === option ? 'quick-filter quick-filter-active' : 'quick-filter'}
+                  aria-pressed={format === option}
+                  onClick={() => selectFormat(option)}
+                >
+                  {FORMAT_CHIP_LABELS[option] ?? option}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
 
-      {showSources && provider && creatorSources.length > 0 ? (
-        <div className="deckfinder-filter-row">
-          <span className="deckfinder-step-label">
-            {regularSources.length > 0 ? 'Creators' : provider.source_picker_title}
-          </span>
-          <div className="quick-filters deckfinder-chips" role="group" aria-label="Creators">
-            {regularSources.length === 0 && provider.allow_all_sources ? (
-              <button
-                className={
-                  lastFetch && lastFetch.sourceUrl === ''
-                    ? 'quick-filter quick-filter-active'
-                    : 'quick-filter'
-                }
-                aria-pressed={Boolean(lastFetch && lastFetch.sourceUrl === '')}
-                type="button"
-                onClick={() =>
-                  provider &&
-                  void runFetch(provider, { format, sourceUrl: '', sourceName: '' })
-                }
-              >
-                All ({provider.source_picker_all_label})
-              </button>
-            ) : null}
-            {creatorSources.map((source) => (
-              <button
-                key={`${source.name}-${source.url}`}
-                className={
-                  lastFetch?.sourceUrl === source.url
-                    ? 'quick-filter quick-filter-active'
-                    : 'quick-filter'
-                }
-                aria-pressed={lastFetch?.sourceUrl === source.url}
-                title={source.description}
-                type="button"
-                onClick={() =>
-                  provider &&
-                  void runFetch(provider, {
-                    format,
-                    sourceUrl: source.url,
-                    sourceName: source.name,
-                  })
-                }
-              >
-                {source.name.replace(/^Creator:\s*/u, '')}
-              </button>
-            ))}
+        {showSources && provider && regularSources.length > 0 ? (
+          <div className="deckfinder-filter-row">
+            <span className="deckfinder-step-label">{provider.source_picker_title}</span>
+            <div className="quick-filters deckfinder-chips" role="group" aria-label={provider.source_picker_title === 'Creators' ? 'Creators' : 'Deck sources'}>
+              {provider.allow_all_sources ? (
+                <button
+                  className={
+                    lastFetch && lastFetch.sourceUrl === ''
+                      ? 'quick-filter quick-filter-active'
+                      : 'quick-filter'
+                  }
+                  aria-pressed={Boolean(lastFetch && lastFetch.sourceUrl === '')}
+                  type="button"
+                  onClick={() =>
+                    provider &&
+                    void runFetch(provider, { format, sourceUrl: '', sourceName: '' })
+                  }
+                >
+                  All ({provider.source_picker_all_label})
+                </button>
+              ) : null}
+              {regularSources.map((source) => (
+                <button
+                  key={`${source.name}-${source.url}`}
+                  className={
+                    lastFetch?.sourceUrl === source.url
+                      ? 'quick-filter quick-filter-active'
+                      : 'quick-filter'
+                  }
+                  aria-pressed={lastFetch?.sourceUrl === source.url}
+                  title={source.description}
+                  type="button"
+                  onClick={() =>
+                    provider &&
+                    void runFetch(provider, {
+                      format,
+                      sourceUrl: source.url,
+                      sourceName: source.name,
+                    })
+                  }
+                >
+                  {source.name}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
 
-      {provider && provider.creators.length > 0 ? (
-        <div className="deckfinder-filter-row">
-          <span className="deckfinder-step-label">Creators</span>
-          <div className="quick-filters deckfinder-chips" role="group" aria-label="Creators">
-            {provider.creators.map((creator) => (
-              <button
-                key={creator.url}
-                className={
-                  lastFetch?.sourceUrl === creator.url
-                    ? 'quick-filter quick-filter-active'
-                    : 'quick-filter'
-                }
-                aria-pressed={lastFetch?.sourceUrl === creator.url}
-                title={creator.description}
-                type="button"
-                onClick={() =>
-                  provider &&
-                  void runFetch(provider, {
-                    format: 'any',
-                    sourceUrl: creator.url,
-                    sourceName: creator.name,
-                  })
-                }
-              >
-                {creator.label}
-              </button>
-            ))}
+        {showSources && provider && creatorSources.length > 0 ? (
+          <div className="deckfinder-filter-row">
+            <span className="deckfinder-step-label">
+              {regularSources.length > 0 ? 'Creators' : provider.source_picker_title}
+            </span>
+            <div className="quick-filters deckfinder-chips" role="group" aria-label="Creators">
+              {regularSources.length === 0 && provider.allow_all_sources ? (
+                <button
+                  className={
+                    lastFetch && lastFetch.sourceUrl === ''
+                      ? 'quick-filter quick-filter-active'
+                      : 'quick-filter'
+                  }
+                  aria-pressed={Boolean(lastFetch && lastFetch.sourceUrl === '')}
+                  type="button"
+                  onClick={() =>
+                    provider &&
+                    void runFetch(provider, { format, sourceUrl: '', sourceName: '' })
+                  }
+                >
+                  All ({provider.source_picker_all_label})
+                </button>
+              ) : null}
+              {creatorSources.map((source) => (
+                <button
+                  key={`${source.name}-${source.url}`}
+                  className={
+                    lastFetch?.sourceUrl === source.url
+                      ? 'quick-filter quick-filter-active'
+                      : 'quick-filter'
+                  }
+                  aria-pressed={lastFetch?.sourceUrl === source.url}
+                  title={source.description}
+                  type="button"
+                  onClick={() =>
+                    provider &&
+                    void runFetch(provider, {
+                      format,
+                      sourceUrl: source.url,
+                      sourceName: source.name,
+                    })
+                  }
+                >
+                  {source.name.replace(/^Creator:\s*/u, '')}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
 
-      {provider?.key === 'youtube' && sourcesLoaded && sources.length === 0 ? (
-        <p className="empty-state deckfinder-state">
-          Add a YouTube creator in <a href="#/settings">Settings</a> to find their decks.
-        </p>
-      ) : null}
+        {provider && provider.creators.length > 0 ? (
+          <div className="deckfinder-filter-row">
+            <span className="deckfinder-step-label">Creators</span>
+            <div className="quick-filters deckfinder-chips" role="group" aria-label="Creators">
+              {provider.creators.map((creator) => (
+                <button
+                  key={creator.url}
+                  className={
+                    lastFetch?.sourceUrl === creator.url
+                      ? 'quick-filter quick-filter-active'
+                      : 'quick-filter'
+                  }
+                  aria-pressed={lastFetch?.sourceUrl === creator.url}
+                  title={creator.description}
+                  type="button"
+                  onClick={() =>
+                    provider &&
+                    void runFetch(provider, {
+                      format: 'any',
+                      sourceUrl: creator.url,
+                      sourceName: creator.name,
+                    })
+                  }
+                >
+                  {creator.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
-      {busyNote ? (
-        <p className="state-panel deckfinder-state deckfinder-busy" role="status" aria-busy="true">
-          <span className="deckfinder-spinner" aria-hidden="true" />
-          {busyNote}
-        </p>
-      ) : null}
-      {error ? (
-        <div className="state-panel error-state deckfinder-state" role="alert">
-          <p>{error}</p>
-        </div>
-      ) : null}
+        {provider?.key === 'youtube' && sourcesLoaded && sources.length === 0 ? (
+          <p className="empty-state deckfinder-state">
+            Add a YouTube creator in <a href="#/settings">Settings</a> to find their decks.
+          </p>
+        ) : null}
 
-      {results ? (
-        <>
-          <div className="section-heading">
+        {busyNote ? (
+          <p className="state-panel deckfinder-state deckfinder-busy" role="status" aria-busy="true">
+            <span className="deckfinder-spinner" aria-hidden="true" />
+            {busyNote}
+          </p>
+        ) : null}
+        {error ? (
+          <div className="state-panel error-state deckfinder-state" role="alert">
+            <p>{error}</p>
+          </div>
+        ) : null}
+
+      </Section>
+
+      {results || selectedDeck ? (
+        <section className="dashboard-section deckfinder-results" aria-label="Deck results">
+          {results ? <div className="section-heading deckfinder-results-heading">
             <div>
               <h3>{results.view.title}</h3>
               <p className="section-description">
@@ -727,89 +763,105 @@ export function DeckFinderPage() {
                 <RefreshCw aria-hidden="true" /> Refresh
               </button>
             )}
-          </div>
-          <SortableTable
-            caption="Deck Finder results"
-            columns={deckColumns}
-            getRowKey={(row) => `${row.source_url}#${row.cells?.index ?? row.name}`}
-            pageSize={15}
-            rows={results.decks}
-          />
-        </>
-      ) : null}
+          </div> : null}
+          <div className={results ? 'deckfinder-workspace' : 'deckfinder-workspace deckfinder-workspace-single'}>
+            {results ? <div className="deckfinder-browser">
+              <SortableTable
+                caption="Deck Finder results"
+                columns={deckColumns}
+                getRowKey={(row) => `${row.source_url}#${row.cells?.index ?? row.name}`}
+                pageSize={15}
+                paginationKey={`${provider?.key}:${lastFetch?.sourceUrl}:${variantsParent?.source_url}`}
+                rows={results.decks}
+                getRowClassName={(row) => selectedDeck?.source_url === row.source_url && selectedDeck?.name === row.name ? 'deckfinder-row-selected' : undefined}
+              />
+            </div> : null}
 
-      {selectedDeck ? (
-        <div className="deckfinder-detail">
-          <div className="section-heading">
-            <div>
-              <h3>{selectedDeck.name}</h3>
-              <p className="section-description">
-                {[selectedDeck.player_name, selectedDeck.format_label, selectedDeck.event_name]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </p>
-            </div>
-            <div className="deckfinder-detail-actions">
-              {nativeStatus?.available ? <button className="deck-export-button" type="button"
-                disabled={saving || adding || addedSource === selectedDeck.source_url + selectedDeck.name || nativeStatus.busy || nativeStatus.in_game || nativeStatus.limit_reached === true || Boolean(nativeStatus.pending_transfers?.length) || !selectedDeck.deck_text}
-                title={addBlockedReason(nativeStatus) ?? 'Arena must be open on Decks outside a match.'}
-                onClick={() => void addSelectedDeck()}>{addedSource === selectedDeck.source_url + selectedDeck.name ? <Check aria-hidden="true" /> : <Plus aria-hidden="true" />}{adding ? 'Adding…' : addedSource === selectedDeck.source_url + selectedDeck.name ? 'Added to Arena' : 'Add to Arena'}</button> : null}
-              <button className="deck-neutral-button" disabled={saving || adding || !selectedDeck.deck_text} type="button" onClick={(event) => {
-                setCollectionQuery(''); setPickingCollection(event.currentTarget);
-              }}><Archive aria-hidden="true" />{saving ? 'Saving…' : 'Save to collection'}</button>
-              <button
-                className="deck-export-button"
-                disabled={!selectedDeck.deck_text}
-                type="button"
-                onClick={() => void copyDeck(selectedDeck)}
-              >
-                {copyStatus === 'copied' ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-                {copyStatus === 'copied'
-                  ? 'Copied'
-                  : copyStatus === 'error'
-                    ? 'Export Failed'
-                    : 'Copy for Arena'}
-              </button>
-              <a
-                className="deck-neutral-button"
-                href={selectedDeck.source_url}
-                rel="noreferrer"
-                target="_blank"
-              >
-                <ExternalLink aria-hidden="true" /> Source
-              </a>
-            </div>
+            {selectedDeck ? (
+              <aside className="deckfinder-detail" aria-label="Selected deck">
+                <div className="deckfinder-detail-heading">
+                  <div className="deckfinder-detail-title-row">
+                    <h3>{parsedDeck?.name || selectedDeck.name}</h3>
+                    <div className="deckfinder-title-actions">
+                      <a
+                        className="deck-neutral-button"
+                        href={selectedDeck.source_url}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        <ExternalLink aria-hidden="true" /> Source
+                      </a>
+                      <button
+                        className="deck-export-button deckfinder-title-export"
+                        disabled={!selectedDeck.deck_text}
+                        type="button"
+                        onClick={() => void copyDeck(selectedDeck)}
+                      >
+                        {copyStatus === 'copied' ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+                        {copyStatus === 'copied'
+                          ? 'Copied'
+                          : copyStatus === 'error'
+                            ? 'Export Failed'
+                            : 'Export to Arena'}
+                      </button>
+                    </div>
+                  </div>
+                  <p className="section-description">
+                    {[selectedDeck.player_name, selectedDeck.format_label,
+                      parsedDeck ? `${parsedDeck.mainCount} cards` : null, selectedDeck.event_name]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </p>
+                  <div className="deckfinder-detail-actions">
+                    {nativeStatus?.available ? <button className="deck-export-button" type="button"
+                      disabled={saving || adding || addedSource === selectedDeck.source_url + selectedDeck.name || nativeStatus.busy || nativeStatus.in_game || nativeStatus.limit_reached === true || Boolean(nativeStatus.pending_transfers?.length) || !selectedDeck.deck_text}
+                      title={addBlockedReason(nativeStatus) ?? 'Adds the deck with Arena’s importer. Arena must be open on Decks outside a match, with a free deck slot.'}
+                      onClick={() => void addSelectedDeck()}>{addedSource === selectedDeck.source_url + selectedDeck.name ? <Check aria-hidden="true" /> : <Plus aria-hidden="true" />}{adding ? 'Adding…' : addedSource === selectedDeck.source_url + selectedDeck.name ? 'Added to Arena' : 'Add to Arena'}</button> : null}
+                    <button className="deck-neutral-button" disabled={saving || adding || !selectedDeck.deck_text} type="button" onClick={(event) => {
+                      setCollectionQuery(''); setPickingCollection(event.currentTarget);
+                    }}><Archive aria-hidden="true" />{saving ? 'Saving…' : 'Save to collection'}</button>
+                  </div>
+                  {adding && arenaFeedback?.source === selectedDeck.source_url + selectedDeck.name ? <DeckTransferProgress detail={arenaFeedback.message} progress={transferProgress} /> : null}
+                  {nativeStatus?.available && !adding && addBlockedReason(nativeStatus) ? <p className="deckfinder-arena-blocked">{addBlockedReason(nativeStatus)} {nativeStatus.pending_transfers?.length ? <a href="#/deck-manager">Open Deck Manager</a> : null}</p> : null}
+                  {savedDeckId?.source === selectedDeck.source_url + selectedDeck.name ? <p role="status">Deck saved to {collections.find((c) => c.id === savedDeckId.collection)?.name ?? 'Unsorted'}. <a href="#/deck-manager">Open Deck Manager</a></p> : null}
+                  {saveError?.source === selectedDeck.source_url + selectedDeck.name ? <p role="alert">{saveError.message}</p> : null}
+                  {!adding && arenaFeedback?.source === selectedDeck.source_url + selectedDeck.name ? <p role={arenaFeedback.error ? 'alert' : 'status'}>{arenaFeedback.message} {arenaFeedback.error ? <a href="#/deck-manager">Open Deck Manager</a> : null}</p> : null}
+                </div>
+                {pickingCollection ? <DeckModal title="Save to collection" busy={false} onClose={() => setPickingCollection(null)} returnFocus={pickingCollection}>
+                  <input type="search" aria-label="Search collections" placeholder="Search collections" autoFocus value={collectionQuery} onChange={(event) => setCollectionQuery(event.target.value)} />
+                  <ul className="deck-collection-picker" aria-label="Collections">
+                    {[{ id: '', name: 'Unsorted' }, ...collections].filter((c) => c.name.toLowerCase().includes(collectionQuery.trim().toLowerCase())).map((c) => (
+                      <li key={c.id || 'unsorted'}><button type="button" onClick={() => saveSelectedDeck(c.id)}><FolderOpen aria-hidden="true" size={16} />{c.name}</button></li>
+                    ))}
+                  </ul>
+                  {collections.length && ![{ name: 'Unsorted' }, ...collections].some((c) => c.name.toLowerCase().includes(collectionQuery.trim().toLowerCase())) ? <p className="deck-manager-description">No collections match “{collectionQuery}”.</p> : null}
+                </DeckModal> : null}
+                {selectedDeck.deck_text ? (
+                  parsedDeck ? <DeckFinderDeckList deck={parsedDeck} /> : (
+                    <pre className="deckfinder-decklist">{formatArenaImportText(selectedDeck.deck_text)}</pre>
+                  )
+                ) : hydrating ? (
+                  <p className="state-panel deckfinder-busy" role="status" aria-busy="true">
+                    <span className="deckfinder-spinner" aria-hidden="true" />
+                    Loading deck list…
+                  </p>
+                ) : (
+                  <p className="empty-state">
+                    No importable deck list for this entry — use the Source link to view it on{' '}
+                    {selectedDeck.source_site}.
+                  </p>
+                )}
+              </aside>
+            ) : (
+              <div className="deckfinder-detail deckfinder-detail-empty">
+                <Search aria-hidden="true" />
+                <h3>Choose a deck</h3>
+                <p>Select a result to see its full list and copy it into Arena.</p>
+              </div>
+            )}
           </div>
-          {adding && arenaFeedback?.source === selectedDeck.source_url + selectedDeck.name ? <DeckTransferProgress detail={arenaFeedback.message} progress={transferProgress} /> : null}
-          {nativeStatus?.available && !adding && addBlockedReason(nativeStatus) ? <p className="deckfinder-arena-blocked">{addBlockedReason(nativeStatus)} {nativeStatus.pending_transfers?.length ? <a href="#/deck-manager">Open Deck Manager</a> : null}</p> : null}
-          {savedDeckId?.source === selectedDeck.source_url + selectedDeck.name ? <p role="status">Deck saved to {collections.find((c) => c.id === savedDeckId.collection)?.name ?? 'Unsorted'}. <a href="#/deck-manager">Open Deck Manager</a></p> : null}
-          {pickingCollection ? <DeckModal title="Save to collection" busy={false} onClose={() => setPickingCollection(null)} returnFocus={pickingCollection}>
-            <input type="search" aria-label="Search collections" placeholder="Search collections" autoFocus value={collectionQuery} onChange={(event) => setCollectionQuery(event.target.value)} />
-            <ul className="deck-collection-picker" aria-label="Collections">
-              {[{ id: '', name: 'Unsorted' }, ...collections].filter((c) => c.name.toLowerCase().includes(collectionQuery.trim().toLowerCase())).map((c) => (
-                <li key={c.id || 'unsorted'}><button type="button" onClick={() => saveSelectedDeck(c.id)}><FolderOpen aria-hidden="true" size={16} />{c.name}</button></li>
-              ))}
-            </ul>
-            {collections.length && ![{ name: 'Unsorted' }, ...collections].some((c) => c.name.toLowerCase().includes(collectionQuery.trim().toLowerCase())) ? <p className="deck-manager-description">No collections match “{collectionQuery}”.</p> : null}
-          </DeckModal> : null}
-          {saveError?.source === selectedDeck.source_url + selectedDeck.name ? <p role="alert">{saveError.message}</p> : null}
-          {!adding && arenaFeedback?.source === selectedDeck.source_url + selectedDeck.name ? <p role={arenaFeedback.error ? 'alert' : 'status'}>{arenaFeedback.message} {arenaFeedback.error ? <a href="#/deck-manager">Open Deck Manager</a> : null}</p> : null}
-          {nativeStatus?.available ? <p className="section-description">To add this deck directly, leave Arena on Decks outside a match with a free deck slot.</p> : null}
-          {selectedDeck.deck_text ? (
-            <pre className="deckfinder-decklist">{formatArenaImportText(selectedDeck.deck_text)}</pre>
-          ) : hydrating ? (
-            <p className="state-panel deckfinder-busy" role="status" aria-busy="true">
-              <span className="deckfinder-spinner" aria-hidden="true" />
-              Loading deck list…
-            </p>
-          ) : (
-            <p className="empty-state">
-              No importable deck list for this entry — use the Source link to view it on{' '}
-              {selectedDeck.source_site}.
-            </p>
-          )}
-        </div>
+        </section>
       ) : null}
-    </Section>
+    </div>
   );
 }

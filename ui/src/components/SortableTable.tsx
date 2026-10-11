@@ -1,7 +1,8 @@
-import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Fragment, useMemo, useState } from 'react';
 import { sortRows, type SortDirection } from '../sort';
+import { TablePagination } from './TablePagination';
 
 interface StoredSort {
   key: string;
@@ -58,6 +59,7 @@ interface SortableTableProps<T extends object> {
   rows: T[];
   initialSort?: InitialSort<T>;
   pageSize?: number;
+  paginationControls?: 'simple' | 'full';
   paginationKey?: string | number;
   /**
    * Rows nested under a parent row (e.g. the games of a Bo3 match). A parent
@@ -89,6 +91,7 @@ export function SortableTable<T extends object>({
   rows,
   initialSort,
   pageSize,
+  paginationControls = 'simple',
   paginationKey = '',
   getSubRows,
   renderDetailRow,
@@ -289,34 +292,15 @@ export function SortableTable<T extends object>({
         </table>
       </div>
       {isPaginated ? (
-        <nav className="table-pagination" aria-label={`${caption} pagination`}>
-          <p>
-            Showing {pageStart + 1}-{Math.min(pageStart + (pageSize ?? 0), sortedRows.length)} of {sortedRows.length}
-          </p>
-          <div className="table-pagination-controls">
-            <button
-              type="button"
-              aria-label="Previous page"
-              title="Previous page"
-              disabled={activePage === 1}
-              onClick={() => changePage(activePage - 1)}
-            >
-              <ChevronLeft aria-hidden="true" />
-            </button>
-            <span>
-              Page {activePage} of {pageCount}
-            </span>
-            <button
-              type="button"
-              aria-label="Next page"
-              title="Next page"
-              disabled={activePage === pageCount}
-              onClick={() => changePage(activePage + 1)}
-            >
-              <ChevronRight aria-hidden="true" />
-            </button>
-          </div>
-        </nav>
+        <TablePagination
+          caption={caption}
+          currentPage={activePage}
+          pageCount={pageCount}
+          pageSize={pageSize ?? sortedRows.length}
+          totalRows={sortedRows.length}
+          fullControls={paginationControls === 'full'}
+          onPageChange={changePage}
+        />
       ) : null}
     </div>
   );

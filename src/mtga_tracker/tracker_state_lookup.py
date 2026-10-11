@@ -5,6 +5,8 @@ from __future__ import annotations
 import sqlite3
 from typing import Any, Dict, List, Optional, Set
 
+from .replay_capture import ReplayFact, replay_safe, stat_value
+
 
 class TrackerStateLookupMixin:
     """Extracted helpers used by CardTracker."""
@@ -23,11 +25,15 @@ class TrackerStateLookupMixin:
 
     @staticmethod
     def _extract_stat_value(value: Any) -> Optional[int]:
-        """Extract integer stat value from MTGA stat objects."""
+        """Extract integer stat value from MTGA stat objects.
+
+        Arena drops zero-valued fields, so a 0-power creature arrives as
+        ``"power": {}``: an empty stat object means 0, not unknown.
+        """
         if isinstance(value, int):
             return value
         if isinstance(value, dict):
-            inner = value.get("value")
+            inner = value.get("value", 0)
             if isinstance(inner, int):
                 return inner
         return None
@@ -36,6 +42,10 @@ class TrackerStateLookupMixin:
         """Persist latest known gameObject fields for later combat/summary lookups."""
         max_snapshots = 4000
         trim_batch = 200
+        # Replay: tap and P/T changes ride the same loop (no second pass).
+        # (getattr: this mixin is also used standalone by lightweight stubs.)
+        replay_capturing = getattr(self, "_replay_capturing", None)
+        capturing = bool(game_objects) and replay_capturing is not None and replay_capturing()
         for obj in game_objects:
             if not isinstance(obj, dict):
                 continue
@@ -47,6 +57,8 @@ class TrackerStateLookupMixin:
             snap.update({k: v for k, v in obj.items() if v is not None})
             self._maybe_log_identity_change(int(instance_id), previous, snap)
             self.game_state.object_snapshots[instance_id] = snap
+            if capturing:
+                self._replay_observe_object(int(instance_id), obj)
         # Keep snapshot map bounded across long sessions.
         if len(self.game_state.object_snapshots) > max_snapshots:
             for old_id in list(self.game_state.object_snapshots.keys())[:trim_batch]:
@@ -87,6 +99,10 @@ class TrackerStateLookupMixin:
         for item in self.game_state.stack_items.values():
             if isinstance(item, dict) and needle in str(item.get("label") or ""):
                 item["label"] = str(item["label"]).replace(needle, replacement)
+        # Rows not yet flushed from the per-message buffer get the same fix.
+        patch_buffered = getattr(self, "_replay_patch_buffered_text", None)
+        if patch_buffered is not None:
+            patch_buffered(needle, replacement)
         try:
             game_id = self._current_game_id() if self.game_state.game_start_time else None
         except Exception:
@@ -266,7 +282,7 @@ class TrackerStateLookupMixin:
             pt_suffix = f" ({self._object_pt(current)})"
         turn_override = self._turn_for_seat(seat_id)
         self._flush_pending_turn_header_for_seat(seat_id)
-        self._print_event(
+        self._print_event_fact(
             self._format_actor_event(
                 "",
                 seat_id,
@@ -274,6 +290,35 @@ class TrackerStateLookupMixin:
                 turn_override=turn_override,
             ),
             "ability",
+            self._replay_identity_fact(instance_id, current, seat_id),
+        )
+
+    @replay_safe()
+    def _replay_identity_fact(
+        self, instance_id: int, current: Dict[str, Any], seat_id: Optional[int]
+    ) -> Optional[ReplayFact]:
+        """``identity`` fact for a printed "[A] became [B]" line."""
+        replay_capturing = getattr(self, "_replay_capturing", None)
+        if replay_capturing is None or not replay_capturing():
+            return None
+        payload: Dict[str, Any] = {"face_down": bool(current.get("isFacedown"))}
+        grp_id = self._replay_card_payload(current, payload)
+        payload.pop("token", None)
+        power = stat_value(current, "power")
+        toughness = stat_value(current, "toughness")
+        if "CardType_Creature" in (current.get("cardTypes") or []) and None not in (
+            power,
+            toughness,
+        ):
+            payload["power"] = power
+            payload["toughness"] = toughness
+        return ReplayFact(
+            "identity",
+            object_id=self._replay_root(instance_id),
+            arena_id=grp_id,
+            seat_id=seat_id,
+            controller_seat=self._normalize_seat_id(current.get("controllerSeatId")) or seat_id,
+            payload=payload,
         )
 
     def _highest_known_creature_snapshot(
@@ -413,6 +458,9 @@ class TrackerStateLookupMixin:
             value = player.get("mulliganCount")
             count = value if isinstance(value, int) and value > 0 else 0
             by_seat[int(seat_id)] = max(by_seat.get(int(seat_id), 0), count)
+            observe_mulligan = getattr(self, "_replay_observe_mulligan", None)
+            if count and observe_mulligan is not None:
+                observe_mulligan(int(seat_id), count)
 
     def _opponent_mulligan_count(self) -> Optional[int]:
         """The opponent's mulligans for this game, or None when Arena never
@@ -525,6 +573,10 @@ class TrackerStateLookupMixin:
             if owner_seat not in (1, 2) or not isinstance(obj_ids, list):
                 continue
             sizes[int(owner_seat)] = len(obj_ids)
+            # Replay: remember which instance ids sit in each hand.
+            record_hand_ids = getattr(self, "_replay_record_hand_ids", None)
+            if record_hand_ids is not None:
+                record_hand_ids(int(owner_seat), obj_ids)
         return sizes
 
     def _resolve_zone_transfer_seat(

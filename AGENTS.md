@@ -92,6 +92,11 @@ Primary code paths:
   over history), `_split_card_index` replaces per-row LIKE lookups, and All Games gathers
   opponent colors in one grouped query. Profile with a copy of a real database before
   adding a correlated subquery that runs once per game.
+  The handler speaks HTTP/1.1 with keep-alive: every response must carry a
+  Content-Length (`_send_bytes`) or be bodiless (304, `send_error`); POSTs close the
+  connection because not every branch drains its body. Built files under `assets/` are
+  served immutable for a year (Vite content-hashes them), `index.html` and icons revalidate
+  by Last-Modified; API responses stay `no-store`.
 - `src/mtga_tracker/live_api.py`: `/api/live` payload — current game, frozen previous-game
   scoreboard, records vs. deck / opponent / opponent commander, local archetype guess.
 - `src/mtga_tracker/draw_quality.py`: CLI/report helpers for land flood/screw and repeated-card draw audits.
@@ -114,6 +119,33 @@ Primary code paths:
   call per completed game, fired from `_start_opponent_archetype_lookup` on a daemon thread —
   it must NEVER block live tracking. Reasoning-class OpenAI models (gpt-5/o-series) get
   `reasoning_effort: low` and a retry on token-starved empty replies.
+- `src/mtga_tracker/replay_capture.py` / `replay_capture_events.py`: live replay capture.
+  Tracker mixins attach a `ReplayFact` to the lines they already print and write silent
+  (`visible = 0`) `game_events` rows for facts the console never prints (taps, counters,
+  tokens, blocks, attachments, hidden-card moves, phases). Rows from one message go in one
+  transaction; silent rows store `game_id` only. `games.replay_version = 1` marks a recorded
+  game. Console text and the printed row set must stay byte-identical
+  (`tests/fixtures/replay_capture_baseline.json` guards this). Every hook called from a
+  mixin is wrapped in `@replay_safe()` (a failure logs one diagnostics line and drops the
+  fact), and a failed batch never loses its printed rows.
+- `src/mtga_tracker/replay_stream.py` / `replay_builder.py` / `replay_reconstruct.py`
+  (row handlers; `_grammar.py` regexes and stack pairing, `_board.py` objects/zones/setup) /
+  `replay_dump.py`: the replay stream served by `GET /api/replay?id=` — built from
+  structured rows for recorded games, reconstructed from the text timeline for older ones
+  (`fidelity: reconstructed`, with a `limitations` list). `docs/REPLAY_FORMAT.md` is the
+  binding contract for rows, stream and UI module APIs; change it first. Fixtures in
+  `tests/fixtures/replay/` are exported read-only and anonymized by
+  `scripts/export_replay_fixture.py`. `python -m mtga_tracker.replay_dump <game_id>` prints a
+  stream.
+- `ui/src/replay/`: the Replay page — pure reducer/layout/playback-clock/image-queue/prefs
+  modules with tests, `export/` (pure video plan, Canvas 2D frame composer, WebCodecs +
+  mp4-muxer encoder for the in-browser MP4 export), and `components/` holding the `@react-three/fiber` scene (lazy-loaded
+  route `#/replay/<id>`, list at `#/replay`). Teal `--replay` is reserved for replay
+  affordances; everything replay-related carries `replay-wide-only` and is hidden below
+  900 px.
+  On Live Scoreboard, the header replay link matches the other pills, the
+  between-game waiting status sits beside the format on the right, and Today's
+  Games uses compact 20 px replay icons to preserve space for deck names.
 - `src/mtga_tracker/settings.py`: shared `settings.json` — top level of the repo next to
   `config.py` for source runs, per-user data dir for frozen builds (legacy `data/settings.json`
   migrates automatically). Startup preferences are stored in its `startup` section.
@@ -136,15 +168,15 @@ Primary code paths:
   selector; changing a filter clears selection. An unconnected roster must show
   Not checked, never infer Collection only from a missing native observation.
   Moving a deck to Trash opens a recoverable-action confirmation; native Restore
-  to Arena (or Copy for Arena for text-only revisions) appears as a yellow button
-  in the deck dialog header beside Close.
+  to Arena (or Add to Arena for text-only revisions) appears as a yellow button
+  in the deck dialog header beside Copy deck list and Close, hidden when Arena has the deck.
   Every saved/trash tile has a top-right 24px checkbox in a separate 44px target;
   selection never opens details. Local bulk removal supports all saved deck types,
   including decks still in Arena. Both bulk Trash and permanent-delete dialogs list
   every selected deck; `/api/deck-manager/remove-selected` validates explicit
   confirmation and applies the entire selection in one transaction. Permanent
   deletion still requires Trash and protects pending transfer backups.
-  Migration 32 creates independent `managed_decks`, `managed_deck_revisions`,
+  Migration 33 creates independent `managed_decks`, `managed_deck_revisions`,
   `managed_deck_cards` and `managed_deck_bindings` tables. Library trash/reset
   never deletes Arena decks; gameplay reset preserves the library. Permanent local
   deletion requires a trashed entry and explicit confirmation, and removes its cards,
@@ -173,7 +205,7 @@ Primary code paths:
   Check the active-game row before attachment and between transfers, and check the
   live Decks controller, same native service and authenticated account for writes.
   Only AccountInformation.AccountID is read/hashed; never read credentials.
-  Migration 34 adds `managed_deck_collections` and nullable `managed_decks.collection_id`.
+  Migration 35 adds `managed_deck_collections` and nullable `managed_decks.collection_id`.
   Saved decks belong to one named collection or Unsorted. Collection removal moves
   all members (including Trash) to Unsorted; it never deletes decks/revisions.
   `deck_collections.py` owns atomic moves and collection merge mapping; backup merge
@@ -181,7 +213,7 @@ Primary code paths:
   Deck Finder passes the saved entry ID to native add so its full native revision
   upgrades the same entry, retaining notes, collection and earlier text revisions.
   Jobs expose verified step counts for progress bars; connecting stays indeterminate.
-  Migration 33 adds `managed_deck_transfers` with one pending intent per account.
+  Migration 34 adds `managed_deck_transfers` with one pending intent per account.
   Commit/read back exact native archives before any removal; write intents commit
   before single native calls. Interrupted outcomes stop; reconciliation is read-only,
   never a create/delete retry. Pending journals protect their local backups from
@@ -241,7 +273,23 @@ Primary code paths:
   import scraper libraries, create HTTP clients, or fetch remote decks. Dynamic
   scraper imports are covered by the packaging spec's package-wide collection.
   The dashboard's provider cards use compact subtitles with full descriptions
-  in tooltips and a responsive grid sized for all seven sites on desktop.
+  in tooltips, bundled site icons on tinted backgrounds, and a responsive grid
+  sized for all seven sites on desktop. Provider cards have subtle site-colored
+  fills, stronger on hover and selection; the picker omits the redundant Site
+  label. Surprise Me sits beside the section collapse control in the Browse
+  Decks heading. AetherHub uses a 228px asset; Magic.gg
+  uses a vector Planeswalker mark. Results use a 40/60 browser/selected-deck
+  layout that stacks on narrow screens. Detail results open the first deck;
+  the main-deck count sits beside the format, and filter pills hover in the
+  provider's selection color. Deck names and titles share that provider hue,
+  with a subtle matching selected-row tint and darker text in the light theme.
+  Source and Export to Arena sit together at the far right of the deck-name
+  row. The heading wraps on narrow screens.
+  Stale hydration responses cannot replace a newer selection or clear its
+  loading state. `ui/src/deckFinderImport.ts` parses import text for display,
+  retaining separate Deck/Sideboard/Commander/Companion sections; clipboard
+  export uses the original text. Unrecognized imports fall back to raw text.
+  The Deck Finder route skips the Overview snapshot request in `ui/src/App.tsx`.
 - `src/mtga_deck_downloader/providers/youtube.py` + `scrapers/youtube.py` /
   `youtube_decklist.py`: YouTube creator decks from the latest 15 Videos-tab
   entries sorted by Latest. Use keyless filtered player metadata, three worker
@@ -425,6 +473,15 @@ Preserve these behaviors unless the user explicitly changes requirements:
 - Best Deck = most total wins among decks with a winning record (>=50% WR, min 8 decided
   games); win rate breaks ties. A small hot sample only surfaces when nothing has more wins.
   Rendered as a full-width bar below the overview metric cards, not a metric card.
+- The Overview Decks table has no total deck cap: return every deck with recorded
+  games matching the current filters, including decks later removed from Arena.
+  Arena's active-deck slot limit never truncates tracker history. The UI pages
+  ten rows at a time and searches/sorts the complete returned set.
+  Decks, All Games and Sessions opt into `SortableTable`'s full pagination controls:
+  numbered pages with ellipses, first/last navigation and a validated page jump.
+  All Games retains 30 rows per page; sorting and filter changes reset the page.
+  Sessions returns every runtime session with games matching the current filters,
+  with no total row cap, newest first and 15 rows per page.
 - Games where the tracker attached mid-game (turn > 1 at first sight) are shown live but never
   persisted (`mid_game_attach` gates `_is_untracked_match`). Midweek Magic and bot matches are
   likewise never persisted.
@@ -451,7 +508,11 @@ Preserve these behaviors unless the user explicitly changes requirements:
   printed costs, lands excluded, X = 0) build on this; the deck payload also ships raw
   per-seat inputs via `played_mana` (play totals + turns from `games.player_turns`/
   `opponent_turns`). `scripts/probe_mtga_card_db.py` verifies the cost column/format against
-  a real Arena install.
+  a real Arena install. Printed power/toughness follow the same pattern
+  (`CardDatabase.stats_index_by_name` → `AnalyticsStore.backfill_card_stats`, both call
+  sites): the console-label parser never sees a 0-power creature (Arena encodes a zero stat
+  as `{}`; `_extract_stat_value`/`stat_value` read that as 0), so never rely on display
+  names for stats, and replay rows for creatures carry `power`/`toughness`.
 - The product's display name is **Tapps Tracker** (`ui/src/branding.ts`, `PRODUCT_NAME`);
   the sidebar brand uses the dashboard heading typography, links to the very top of Overview,
   and displays local vector W/U/B/R/G mana symbols rather than upscaled raster icons. Browser
@@ -462,6 +523,11 @@ Preserve these behaviors unless the user explicitly changes requirements:
   scrying seat from the ability controller or observed card owners. Opponent card names
   stay hidden. Migration 29 backfills historical event counts only. Surveil columns remain
   NULL until a handler exists. The overlay does not condition odds on scry top/bottom order.
+- Replay: readers of printed history (`game_detail` timeline, `live_api` events, backfills,
+  audit) filter `game_events.visible = 1`; silent rows never reach the console or the
+  timeline. Every game with events gets a replay (recorded or reconstructed); mid-game
+  attaches and untracked modes get none. The capture hook adds no parsing pass and no
+  per-row commit, and must never block live tracking.
 - Unhandled annotations go to the text diagnostics log, not SQLite.
 - AI deck identification starts at most ONE identification job per game, only after the game
   completes, only for tracked matches, and always on a background thread. Normally it makes
@@ -514,6 +580,13 @@ Arena logs are not a simple chronological event stream. Be careful with inferred
   and never let deck attributes, `DeckUpsert`, or command-zone inference replace it. Persist
   `matches.queue`/`event_name` only from that authoritative event signal.
 - Winner detection must validate against the local player seat. Concession/disconnect messages are especially easy to invert.
+- Partial `PlayerStatus_InGame` diffs never identify a winner. Read every GRE
+  message in a batch; explicit terminal game results outrank LossOfGame
+  annotations, which outrank terminal PendingLoss status hints. A valid
+  LossOfGame annotation identifies the losing seat and can close a game without
+  the usual final result. Life totals must not reverse an identified winner;
+  unresolved positive-life endings stay Unknown. Apply broad defeat/forfeit
+  text heuristics only to non-JSON entries so card names cannot end a game.
 - Costs can appear before/after the ability text in raw log order. For activated abilities, paid costs such as discard/tap should be associated with the activation.
 - MTGA uses last-in-first-out stack resolution. A card can be cast/activated, then another spell/ability can be added above it and resolve first.
 - State-based actions may appear as zone transfers with categories like zero toughness or zero loyalty. These should be user-visible when they explain a death/removal.
@@ -565,7 +638,12 @@ Important tables:
 - `game_turns`: observed turn start/end timestamps and duration by active seat; `timing_source`
   distinguishes exact `live` rows, exact `recovered_previous_turn_logs` rows restored from
   durable console headers, and `estimated_header_events` historical backfills.
-- `game_events`: structured event history where available.
+- `game_events`: the per-game event log. Printed rows (`visible = 1`) are the console
+  lines; recorded games (`games.replay_version = 1`) also carry structured replay fields
+  (`event_subtype` kind, `object_id`/`target_object_id` root instance ids, `arena_id`,
+  `controller_seat`, zones, `amount`, `payload_json`) and silent replay-only rows
+  (`visible = 0`, `game_id` only). Migration 32 makes the session index partial over
+  printed rows. See `docs/REPLAY_FORMAT.md`.
 - `console_logs`: rendered console log lines for later dashboard/query work. Also feeds the
   dashboard's Live Scoreboard page (`/api/live` in `live_api.py`, `since` = `console_logs.id`).
 - `live_status`: single-row (id=1) "what is happening right now" snapshot the tracker upserts

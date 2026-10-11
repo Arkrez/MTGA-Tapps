@@ -7149,6 +7149,207 @@ def _loss_annotation(seat, reason):
     }
 
 
+def test_in_game_status_diff_cannot_supply_a_winner():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.player_life = 6
+    tracker.game_state.opponent_life = 49
+    tracker._check_game_end(
+        json.dumps(
+            {
+                "gameStateMessage": {
+                    "players": [{"systemSeatNumber": 2, "status": "PlayerStatus_InGame"}],
+                }
+            }
+        )
+    )
+    tracker._check_game_end('{"old":"Playing","new":"MatchCompleted"}')
+    assert tracker.game_state.winner_seat is None
+    assert tracker._resolve_game_outcome()[0] == "unknown"
+
+
+def test_final_result_overrides_weak_hint_and_ends_game():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 2
+    tracker.game_state.opponent_seat_id = 1
+    tracker._set_winner_seat(1, reason="json_winner_hint", priority=2)
+    tracker._check_game_end(
+        json.dumps(
+            {
+                "finalMatchResult": {
+                    "resultList": [
+                        {
+                            "scope": "MatchScope_Game",
+                            "result": "ResultType_WinLoss",
+                            "winningTeamId": 2,
+                            "reason": "ResultReason_Game",
+                        }
+                    ]
+                }
+            }
+        )
+    )
+    assert tracker.game_state.winner_seat == 2
+    assert tracker.game_state.match_complete and tracker._pending_game_summary
+    assert tracker._resolve_game_outcome() == ("win", "Arena reported a win")
+
+
+def test_deckout_in_later_gre_message_ends_and_persists_win(tmp_path):
+    tracker = make_tracker()
+    tracker._console_db_path = tmp_path / "tracker.sqlite3"
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 2
+    tracker.game_state.opponent_seat_id = 1
+    tracker.game_state.player_life = 6
+    tracker.game_state.opponent_life = 49
+    tracker.game_state.turn_number = 19
+    tracker.game_state.turns_taken_by_seat[2] = set(range(1, 20, 2))
+    tracker.game_state.player_deck_name = "Tith"
+    tracker.game_state.game_start_time = datetime(2026, 10, 5, 12, 0, 0)
+    line = json.dumps(
+        {
+            "greToClientEvent": {
+                "greToClientMessages": [
+                    {
+                        "type": "GREMessageType_GameStateMessage",
+                        "gameStateMessage": {
+                            "players": [{"systemSeatNumber": 1, "status": "PlayerStatus_InGame"}],
+                        },
+                    },
+                    {
+                        "type": "GREMessageType_GameStateMessage",
+                        "gameStateMessage": {
+                            "persistentAnnotations": [_loss_annotation(1, "SBA_DrawEmptyLibrary")],
+                        },
+                    },
+                ]
+            }
+        }
+    )
+    tracker._check_game_end(line)
+    assert tracker.game_state.match_complete and tracker._pending_game_summary
+    assert tracker.game_state.winner_seat == 2
+    outcome, reason = tracker._resolve_game_outcome()
+    assert (outcome, reason) == ("win", "Opponent got decked (drew from an empty library)")
+    tracker._persist_game_analytics(outcome, reason)
+    with sqlite3.connect(tracker._console_db_path) as conn:
+        assert conn.execute("SELECT outcome, outcome_reason FROM games").fetchone() == (
+            outcome,
+            reason,
+        )
+        assert conn.execute(
+            "SELECT p.role FROM games g JOIN participants p ON p.id = g.winner_participant_id"
+        ).fetchone() == ("player",)
+
+
+def test_final_winner_in_later_gre_message_beats_first_status_diff():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    final = json.loads(
+        _game_over_line(
+            [
+                {
+                    "scope": "MatchScope_Game",
+                    "result": "ResultType_WinLoss",
+                    "winningTeamId": 1,
+                    "reason": "ResultReason_Game",
+                }
+            ]
+        )
+    )
+    final["greToClientEvent"]["greToClientMessages"].insert(
+        0,
+        {
+            "type": "GREMessageType_GameStateMessage",
+            "gameStateMessage": {
+                "players": [{"systemSeatNumber": 2, "status": "PlayerStatus_InGame"}],
+            },
+        },
+    )
+    tracker._check_game_end(json.dumps(final))
+    assert tracker.game_state.winner_seat == 1
+    assert tracker.game_state.match_complete
+
+
+def test_authoritative_win_survives_nonpositive_player_life():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker.game_state.player_life = -1
+    tracker._check_game_end(
+        _game_over_line(
+            [
+                {
+                    "scope": "MatchScope_Game",
+                    "result": "ResultType_WinLoss",
+                    "winningTeamId": 1,
+                    "reason": "ResultReason_Game",
+                }
+            ]
+        )
+    )
+    assert tracker._resolve_game_outcome() == ("win", "Arena reported a win")
+
+
+def test_loss_annotation_overrides_terminal_status_hint():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    terminal = json.loads(_game_over_line([]))
+    message = terminal["greToClientEvent"]["greToClientMessages"][0]["gameStateMessage"]
+    message["players"] = [{"systemSeatNumber": 1, "status": "PlayerStatus_PendingLoss"}]
+    tracker._check_game_end(json.dumps(terminal))
+    assert tracker.game_state.winner_seat == 2
+    tracker._check_game_end(
+        json.dumps(
+            {"gameStateMessage": {"annotations": [_loss_annotation(2, "SBA_DrawEmptyLibrary")]}}
+        )
+    )
+    assert tracker.game_state.winner_seat == 1
+    assert tracker._resolve_game_outcome() == (
+        "win",
+        "Opponent got decked (drew from an empty library)",
+    )
+
+
+def test_explicit_result_overrides_conflicting_loss_annotation():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker._check_game_end(
+        _game_over_line(
+            [
+                {
+                    "scope": "MatchScope_Game",
+                    "result": "ResultType_WinLoss",
+                    "winningTeamId": 1,
+                    "reason": "ResultReason_Game",
+                }
+            ],
+            persistent_annotations=[_loss_annotation(1, "SBA_DrawEmptyLibrary")],
+        )
+    )
+    assert tracker._resolve_game_outcome() == ("win", "Arena reported a win")
+
+
+def test_card_name_in_json_is_not_a_defeat_notification():
+    tracker = make_tracker()
+    tracker.game_state.in_match = True
+    tracker.game_state.player_seat_id = 1
+    tracker.game_state.opponent_seat_id = 2
+    tracker._check_game_end('{"gameStateMessage":{"gameObjects":[{"name":"Jace\'s Defeat"}]}}')
+    assert tracker.game_state.winner_seat is None
+    assert not tracker.game_state.match_complete
+
+
 def test_outcome_decked_opponent_from_loss_annotation():
     tracker = make_tracker()
     tracker.game_state.in_match = True
@@ -7882,3 +8083,22 @@ def test_draw_of_a_non_card_object_is_counted_but_not_recorded_as_a_card():
     unknown_card = {"grpId": 120001, "instanceId": 701, "ownerSeatId": 1, "type": "GameObjectType_Card", "cardTypes": ["CardType_Creature"]}
     tracker._handle_draw_zone_transfer(unknown_card, {}, {701: unknown_card}, zones, 10, 11)
     assert [event.card_name for event in tracker.game_state.drawn_card_events.get(1, [])] == ["Card #120001"]
+
+
+def test_zero_power_creature_labels_as_zero_not_unknown():
+    """Arena omits zero-valued stat fields: ``"power": {}`` is 0, so a 0/2 prints
+    as "(0/2)" instead of dropping its stats (which also kept the cards table
+    from ever learning them)."""
+    tracker = make_tracker()
+    assert tracker._extract_stat_value({}) == 0
+    assert tracker._extract_stat_value({"value": 3}) == 3
+    assert tracker._extract_stat_value({"value": "x"}) is None
+    assert tracker._extract_stat_value(None) is None
+    creature = {
+        "instanceId": 7,
+        "grpId": 120002,
+        "cardTypes": ["CardType_Creature"],
+        "power": {},
+        "toughness": {"value": 2},
+    }
+    assert tracker._object_display_label(creature, 7).endswith(" (0/2)")

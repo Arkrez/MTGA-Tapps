@@ -1,0 +1,331 @@
+# Replay data contract
+
+This document is the single contract between the three parts of the Replay
+feature. Each part is built independently against it:
+
+1. **Capture** (tracker mixins): writes structured `game_events` rows for new
+   games (`replay_version = 1`).
+2. **Serving** (dashboard): turns rows into the replay stream JSON, or
+   reconstructs a stream from text rows for older games.
+3. **Playback** (`ui/src/replay/`): reduces the stream into board states and
+   renders them.
+
+Plan and rationale: `docs/plans/REPLAY.md`. Change this file first whenever
+any field below changes; bump `replay_version` / `stream.version` when the
+change is not additive.
+
+Terminology: **seat** is Arena's `seatId` (1 or 2, never assume the local
+player is seat 1); **role** is `player` or `opponent`. **Object** is one card
+instance on the table; **card** is its printed identity.
+
+## 1. Capture: `game_events` rows for `replay_version = 1`
+
+Existing columns (unchanged meaning): `id, session_id, match_id, game_id,
+event_time, elapsed_seconds, turn_number, phase, step, participant_id,
+seat_id, actor_role, event_type, event_subtype, text, source_card_id,
+target_card_id, amount, zone_from, zone_to, player_life, opponent_life,
+payload_json`.
+
+Columns added for replay (already in `ensure_schema`): `object_id INTEGER`,
+`target_object_id INTEGER`, `arena_id INTEGER`, `controller_seat INTEGER`,
+`visible INTEGER NOT NULL DEFAULT 1`; and `games.replay_version INTEGER`.
+
+### Row kinds
+
+- **Printed rows** (`visible = 1`): exactly the rows written today by
+  `_record_game_event` from `_print_event`. The console text, the Game Detail
+  timeline and the Live Scoreboard feed must not change. For `replay_version
+  = 1` games these rows additionally carry the structured fields below.
+- **Silent rows** (`visible = 0`): replay-only facts the console never
+  prints. They store `game_id` only: **empty-string `session_id` (the column is
+  NOT NULL), NULL `match_id` and `participant_id`** (purge and merge work by `game_id`; the one
+  session-keyed reader filters `visible = 1`, and migration 32 makes the
+  session index partial over printed rows), plus a short machine text (for
+  example `untap 5`). Untaps are **one row per untap step**, never one per
+  permanent. Measured cost after this change is about 34 KB per game
+  (111 silent rows plus payloads on printed rows).
+- Every reader of printed history (`game_detail` timeline, `live_api`
+  events, `events_backfill`, `db_audit`, the previous-turn recovery) filters
+  `visible = 1` or is verified to be unaffected by silent rows.
+
+### Field semantics (both row kinds)
+
+| Column | Meaning |
+| --- | --- |
+| `event_subtype` | The replay **kind** (table below). Required on every row of a `replay_version = 1` game, printed or silent. Rows the tracker cannot classify get `note`. |
+| `seat_id` | Acting seat: the owner of a moved card, the player gaining or losing life, the attacking seat, the controller of a stack item. Keep the current `_infer_event_actor` fallback for printed rows. |
+| `actor_role` | `player` / `opponent` for `seat_id`. |
+| `object_id` | Arena instance id of the primary object, **after** root resolution through the tracker's `ObjectIdChanged` map (`instance_roots`): the id a card had when it first appeared is the id it keeps for the whole game. Hidden cards (opponent hand, library) have instance ids too; record them. |
+| `target_object_id` | Secondary object: damage target, attach target, blocked attacker, spell target (first target). |
+| `arena_id` | grpId of the primary object; NULL when hidden or unknown. For transformed/copied objects, the **current** face's grpId. |
+| `controller_seat` | Controller of the primary object at event time (differs from `seat_id` for stolen permanents). |
+| `zone_from`, `zone_to` | Normalized zone names: `library`, `hand`, `battlefield`, `graveyard`, `exile`, `stack`, `command`, `limbo` (Arena `Pending`/`Limbo`/`Revealed`/unknown). |
+| `amount` | Damage dealt, life delta (signed), counter delta (signed), cards looked at for scry, hand size for mulligan. |
+| `source_card_id`, `target_card_id` | `cards.id` when cheaply known; optional, the builder prefers `arena_id` and names. |
+| `payload_json` | Kind-specific JSON object (below). NULL when the kind needs nothing extra. |
+| `text` | Printed line, or short machine text for silent rows. |
+
+### Kinds and payloads
+
+| `event_subtype` | Row kind | Fields used | `payload_json` |
+| --- | --- | --- | --- |
+| `turn` | printed (`event_type = turn`) | `turn_number`, `seat_id` = active seat | `{"active_seat": 1}` |
+| `phase` | silent | `phase`, `step`, `turn_number` | — |
+| `life` | printed (`life_gain`/`life_loss`) | `seat_id`, `amount` (signed), `player_life`, `opponent_life` | `{"source_object_id": 123}` when known |
+| `mulligan` | silent | `seat_id`, `amount` = new hand size | `{"from_size": 7, "to_size": 6}` |
+| `move` | printed (`draw`, `land`, `zone`) or silent | `object_id`, `arena_id`, `seat_id` = owner, `controller_seat`, `zone_from`, `zone_to` | `{"reason": "draw" \| "play_land" \| "cast" \| "resolve" \| "destroy" \| "exile" \| "sacrifice" \| "discard" \| "mill" \| "bounce" \| "counter" \| "sba" \| "put" \| "token_create" \| "token_cease" \| "shuffle_in" \| "unknown", "name": "Card Name", "type": "Creature", "token": true, "owner": 2, "with": 318, "power": 0, "toughness": 2}` — `name` and `type` are included whenever known so the builder never needs a lookup; `power`/`toughness` on every row whose object is a creature (its current stats when the row was written, `0` kept: Arena encodes a zero stat as an empty object), so the stream's card entry gets printed stats from the first such row and never depends on the `cards` table (which only learns stats from console labels, and a 0-power creature never earned one); `owner` only on a printed row whose text names another seat (`[X] returned [Y] to opponent's hand`), since printed rows keep the text's seat; `with` only on a move into exile: the root id of the battlefield permanent whose ability (Arena's `affectorId`, an ability object whose `parentId` is its source) or static effect exiled the card, so the viewer can tuck it under that host (Deep-Cavern Bat, Pinnacle Starcage); absent when a spell or a source no longer on the battlefield did it |
+| `tap` / `untap` | silent | `seat_id` = controller | `{"object_ids": [1, 2, 3]}` |
+| `counter` | silent | `object_id`, `amount` (signed) | `{"type": "+1/+1", "total": 3}` |
+| `pt` | silent | `object_id` | `{"power": 3, "toughness": 3}` — current printed-or-modified values |
+| `attach` | silent | `object_id`, `target_object_id` (NULL = unattached) | — |
+| `identity` | printed (`ability` "became") or silent | `object_id`, `arena_id` = new face | `{"name": "New Name", "type": "Creature", "power": 2, "toughness": 2, "face_down": false}` |
+| `stack_push` | printed (`cast`, `stack`, `ability`) | `object_id` = spell/ability source, `arena_id`, `seat_id` = controller, `zone_from` = `hand`/`graveyard`/… for spells | `{"stack_id": "s17", "stack_kind": "spell" \| "trigger" \| "activated", "name": "...", "text": "ability text", "targets": [45, 46], "power": 2, "toughness": 2}` (`power`/`toughness` for a creature spell, as on `move`) |
+| `stack_resolve` / `stack_fizzle` / `stack_countered` | printed (`stack_resolve`, `stack_fail`, `counter`) | — | `{"stack_id": "s17"}` |
+| `attack` | printed (`attack`) | `seat_id` = attacking seat | `{"object_ids": [1, 2], "target_seat": 2}` (or `"target_object_id"` for a planeswalker/battle) |
+| `block` | silent (also printed when the tracker prints blocks) | `seat_id` = blocking seat | `{"pairs": [{"blocker": 9, "attacker": 1}]}` |
+| `damage` | printed (`combat_damage`, `damage`) | `object_id` = source, `target_object_id` or `seat_id` of the damaged player, `amount` | `{"combat": true, "target_seat": 2}` |
+| `reveal` | silent | `object_id`, `arena_id`, `seat_id` = owner | `{"name": "...", "type": "..."}` |
+| `scry` | printed (`scry`) | `seat_id`, `amount` = looked | `{"top": [ids], "bottom": [ids], "top_names": [], "bottom_names": []}` |
+| `shuffle` | silent | `seat_id` | — |
+| `game_end` | silent | `seat_id` = winner or NULL | `{"reason": "..."}` |
+| `note` | printed | — | — |
+
+Stack ids are per-game strings `s<n>` assigned by the capture code when an
+item is pushed, so resolve/fizzle/counter rows can name the item even when
+same-named spells are on the stack.
+
+### Gating and lifecycle
+
+- Rows are written only when the tracker already writes printed rows: known
+  game start, not `_is_untracked_match()`. Mid-game attaches never persist.
+- `games.replay_version = 1` is set when the game's row is persisted at
+  game end. Older games keep NULL.
+- `_purge_ghost_game_breadcrumbs` deletes silent rows with the rest.
+- Every capture hook is exception-safe (`replay_capture.replay_safe`): a
+  failure drops that fact and logs one line per hook to the diagnostics text
+  log; the console line and its printed row are unaffected. If a message's
+  batch insert fails, printed rows are retried on their own (once for a lock
+  or I/O error, row by row for a row-level error), so only the bad rows are
+  lost.
+- Cost: no extra parsing passes over the message; the mixin that already
+  handles an annotation emits the row. Batch per message where natural.
+
+## 2. Serving: `GET /api/replay?id=<game_id>`
+
+Query-style id like `/api/game`. 400 without `id`, 404 for an unknown game,
+404 with `{"error": "replay_unavailable", "reason": "..."}` for a game that
+has no events. Served through `cached_response`.
+
+Source selection: `games.replay_version IS NOT NULL` → **builder** from rows
+(`fidelity: recorded`); otherwise rows exist → **reconstructor** from text
+(`fidelity: reconstructed`, printed rows only). Both return the stream below.
+
+### Availability on game rows
+
+Every endpoint that returns game rows (`/api/game`, All Games, overview
+recent games, deck page history, opponent page history, `/api/live` games)
+adds:
+
+```
+"replay": {"state": "recorded" | "reconstructed" | "unavailable", "reason": null | "no events" | "mid-game attach" | ...}
+```
+
+Computed set-based (one grouped `EXISTS`/`LEFT JOIN`), never per row.
+Game Detail `timeline` rows carry `id` (their `game_events.id`) so a row can
+deep-link to the stream events with that `row_id`.
+
+### Stream JSON
+
+```
+{
+  "version": 1,
+  "fidelity": "recorded" | "reconstructed",
+  "replay_version": 1 | null,
+  "limitations": ["..."],                 // human sentences; empty for recorded
+  "game": {
+    "id": "...", "started_at": "ISO", "ended_at": "ISO|null", "format": "Standard Ranked",
+    "best_of": 1 | 3, "game_number": 1, "outcome": "win"|"loss"|"draw"|"unknown",
+    "outcome_reason": "...|null", "winner_seat": 1 | 2 | null,
+    "total_turns": 12, "duration_seconds": 540
+  },
+  "player_seat": 1,                        // the local player's seat
+  "seats": {
+    "1": {"role": "player", "name": "You", "deck_name": "...", "starting_life": 20,
+           "went_first": true, "commanders": ["Name"], "deck_size": 60, "colors": "WB"},
+    "2": {"role": "opponent", ...}
+  },
+  "cards": {
+    "<card_key>": {"name": "...", "arena_id": 12345 | null, "type_line": "Creature — Vampire" | null,
+                   "primary_type": "Creature" | "Land" | ..., "power": "2" | null, "toughness": "2" | null,
+                   "mana_cost": "{1}{B}" | null, "color_identity": "B" | null, "is_token": false,
+                   "image_url": "https://cards.scryfall.io/normal/front/x/y/<id>.jpg" | null,
+                   "faces": [{"name": "...", "type_line": "..."}]}
+  },
+  "turns": [{"turn": 1, "seat": 1, "first_seq": 0, "last_seq": 41, "started_at": "ISO|null",
+             "duration_seconds": 32.0 | null}],
+  "events": [ { "seq": 0, "t": 0.0, "turn": 1, "phase": "Phase_Main1" | null, "step": "Step_Upkeep" | null,
+                "kind": "...", "log": {"text": "...", "segments": [...]} | null, ...kind fields } ]
+}
+```
+
+- `card_key`: `"a<arena_id>"` when the Arena id is known, else
+  `"n:<name>"`, else `"unknown"`. `image_url` is set only when the server can
+  resolve a direct Scryfall CDN link without a network call (the collection
+  exporter's `data/scryfall_id_cache.json` keyed `set|collector`, via the
+  Arena card DB's set and collector number); otherwise the UI resolves it.
+- Object ids `obj` are strings: the Arena root instance id for recorded
+  games, `"r:<n>"` for reconstructed ones. A hidden object has `card: null`.
+- `t` is elapsed seconds as a float, monotonic non-decreasing.
+- `log.segments` uses the Game Detail timeline shape:
+  `{"text": "..."}` or `{"card_name": "...", "card_type": "..."}`.
+
+### Event kinds (stream)
+
+| kind | fields |
+| --- | --- |
+| `game_start` | `seats_hand_sizes: {"1": 7, "2": 7}`, `library_sizes: {"1": 53, "2": 53}` |
+| `turn` | `turn`, `active_seat` |
+| `phase` | `phase`, `step` |
+| `life` | `seat`, `life` (new total), `delta`, `source_obj: string|null` |
+| `mulligan` | `seat`, `from_size`, `to_size`, `bottomed: [obj]` |
+| `move` | `obj`, `card: card_key|null`, `from`, `to`, `owner`, `controller`, `reason`, `inferred: bool`, `index: int|null`, `with: obj|null` (exile only: the battlefield permanent that exiled it, recorded games) (position within destination zone when known, used for library/stack order) |
+| `tap` / `untap` | `objs: [obj]` |
+| `counter` | `obj`, `type`, `delta`, `total` |
+| `pt` | `obj`, `power`, `toughness` |
+| `attach` | `obj`, `to: obj|null` |
+| `identity` | `obj`, `card: card_key`, `face_down: bool` |
+| `stack_push` | `stack_id`, `obj: obj|null` (source object), `card: card_key|null`, `stack_kind: spell|trigger|activated` (named `stack_kind` because `kind` is the event discriminator), `controller`, `text`, `targets: [obj]` |
+| `stack_resolve` / `stack_fizzle` / `stack_countered` | `stack_id` |
+| `attack` | `seat`, `objs: [obj]`, `target_seat: int|null`, `target_obj: obj|null` |
+| `block` | `seat`, `pairs: [{"blocker": obj, "attacker": obj}]` |
+| `damage` | `source: obj|null`, `target_obj: obj|null`, `target_seat: int|null`, `amount`, `combat: bool` |
+| `reveal` | `obj`, `card` — only for an object already on the board (reveals of Arena's proxy objects nobody placed are dropped) |
+| `scry` | `seat`, `top: [obj]`, `bottom: [obj]`, `looked: int` |
+| `shuffle` | `seat` |
+| `game_end` | `winner_seat: int|null`, `reason` |
+| `note` | (only `log`) |
+| every kind | optional `row_id: int\|null` — the `game_events.id` the event was derived from (several events can share one; `null` for synthesized setup/finish events) |
+
+Rules the producers guarantee so the reducer can stay simple:
+
+1. The first event is `game_start`; `move` events with `from: "library"`,
+   `to: "hand"` and `reason: "draw"` for each opening-hand card follow it
+   (hidden for the opponent). Library sizes already exclude those cards.
+2. A `move` never references an object that does not exist yet unless `from`
+   is `limbo` or `library`/`hand` with `card: null` (hidden objects are
+   created on first reference). A `token_create` move has `from: "limbo"`.
+3. A spell cast is `move hand→stack` **then** `stack_push`; resolution is
+   `stack_resolve` **then** `move stack→battlefield|graveyard`. Countered:
+   `stack_countered` then `move stack→graveyard|exile`. Triggers and
+   activated abilities are `stack_push` with `obj` = source permanent and no
+   move.
+4. Life events carry the new total; the reducer never computes life from
+   damage.
+5. `turns` covers every `turn` event; `first_seq`/`last_seq` are inclusive.
+   The builder places a turn's untap/tap/phase/P/T/counter rows that were
+   captured before its lazily printed header after the `turn` event.
+
+## 3. Playback: `ui/src/replay/` module API
+
+Pure modules first; React and three.js only in `components/`.
+
+| Module | Exports |
+| --- | --- |
+| `types.ts` | `ReplayStream`, `ReplayEvent` (discriminated union on `kind`), `ReplayCard`, `ReplaySeat`, `ReplayTurn`, `ReplayAvailability`, zone and reason string unions. |
+| `reducer.ts` | `BoardState { seats: Record<seat, SeatState>, stack: StackItem[], turn, activeSeat, phase, step, life: Record<seat, number>, attackers: Set<obj>, blocks: Map<obj, obj>, lastEvent: ReplayEvent|null }`; `SeatState { zones: Record<Zone, obj[]> (ordered), handSize, librarySize }`; `ObjectState { obj, card: card_key|null, owner, controller, zone, tapped, counters: Record<string, number>, power, toughness, attachedTo, faceDown, inferred, revealedAt }` kept in `objects: Map<obj, ObjectState>`; `createInitialState(stream)`, `applyEvent(state, event): BoardState` (returns a new top-level object; may share untouched substructures), `buildTimeline(stream): ReplayTimeline` (keyframe at every `turn` event), `stateAt(timeline, seq): BoardState` (nearest keyframe + replay, memoized for the last result). |
+| `layout.ts` | Table units: felt depth `TABLE_DEPTH` (6.4) fixed, rail `RAIL_WIDTH` (0.3) around it, width from `opts.tableWidth` (clamped to 7.2–22; it follows the stage aspect, see `scene/cameraFit.ts`), origin at table center, +y toward the opponent, z up. Per seat, Arena-style: creatures in front with non-creature planeswalkers to their right (after a gap, full size), a clear gap, then a back row of lands followed (after another gap) by other permanents; the hand on an apron just past the near rail (off the felt, overlapping the rail a little, floating above it) at `opts.handScale` (`HAND_SCALE_MIN` 1.0 to `HAND_SCALE_MAX` 1.7, chosen by the stage; `handY(scale)`, `apronDepth(scale)` for the apron the camera frames past each rail), a crowded hand overlapping to `HAND_MIN_VISIBLE` 55% visible, then shrinking to `HAND_SCALE_FLOOR` 0.6, then overlapping further, centered within the table width less 0.5 at each side; library/graveyard/exile (and command in commander formats, `usesCommandZone(stream)`) piles stacked in a lane on the left (opponent top-left, player bottom-left, mirrored opponents' piles turned but kept there). Rows center on the table, use the free span when wider, and overlap only on overflow (lands first). Auras/equipment tuck under their host, and so do cards a permanent exiled (`move.with`) while that host is on the battlefield; those leave the exile pile. The tucked cards fan upward on screen for both seats (toward the opponent's lands on their side), one title strip (`attachStep(count, attachRoom(opponent))`: 0.17 per card; the fan must stay inside the clear gap before the next row, 0.32 toward the opponent's lands or 0.48 toward the center for the player, so the host first slides up to 0.2 away from its fan and then the strips compress) and a 0.05 nudge to the viewer's right per card. The in-scene stack is a small column at the right edge under the DOM stack preview, kept as the motion anchor. `layoutBoard(state, opts: { mirrorOpponent, hindsight, playerSeat, tableWidth?, handScale?, commandZone? }): Layout { cards: CardPlacement[], piles: PilePlacement[], table: TableGeometry }`; `CardPlacement { obj, card, faceUp, x, y, z, rotZ (90° when tapped), rotY (180° mid-flip handled by the renderer), scale, zone, seat, row: 'lands'\|'creatures'\|'planeswalkers'\|'other'\|'hand'\|'stack'\|'pile', highlight: 'attacking'\|'blocking'\|'damaged'\|'targeted'\|null, inferred, counters, power, toughness, under: UnderCard[] }` (`under` is what is tucked under this host, `{ obj, card, zone }` bottom first, empty elsewhere; the hover preview lists it under the card image and pictures each distinct card beside it, `scene/hoverStore.ts` `underPictures`/`previewPosition`); `PilePlacement { seat, zone: 'library'\|'graveyard'\|'exile'\|'command', count, topCard: card_key\|null, x, y, scale, rotZ }`; `TableGeometry { width, depth, rowLeft, rowRight, stackX, handScale }`. Deterministic; same input gives identical output. |
+| `scrub.ts` | `openingEndIndex(events)` / `openingEndSeq(stream)`: the first turn header, where playback begins (the opening deal and mulligans before it are applied, never shown; `PlaybackClock` clamps to it, `firstSeq`/`startSeq`); `initialSeq(stream, at, row)` for deep links; `scrubSegments(stream)`: one segment per turn over that navigable range. |
+| `scene/cameraFit.ts` | Frames the felt, its rails and both hand aprons (`framedHalfDepth(depth, handScale)`), plus `farAllowance(handScale)` beyond the far apron in the table preset for the stretched far hand (`framedExtent(table, u)`). `fitTableForView(view, margins, preset): { width, handScale }`: the widest felt at which the framed depth (smallest hands) still binds at the 30° tilt, so the table fills the stage height and extra width (a collapsed panel) becomes free felt; a stage too narrow for the minimum felt binds on the width, and the hands grow into the spare height (`HAND_SCALE_STEP` 0.05 steps). `tableWidthForView(view, margins, preset, depth?, handScale?)` is the width half of that; `fitPerspective`/`fitOrthographic(view, margins, table)`. |
+| `scene/motion.ts`, `scene/motionRegistry.ts` | Card motion (damped poses, flight arcs, spawn points). `depthStretch(viewer, x, y, z)`: the camera's foreshortening of the table plane at a point (view ray length over its drop; 1 straight down, capped at `MAX_STRETCH` 2.5). `MotionRegistry.setViewer(cameraPosition)` scales every mesh along world y by it (`stretchedScale`, exact at right angles, so a tapped card stretches along its width) so cards project in true proportion from the tilted camera; `stretchOf(obj)` lets stat labels follow the stretched edge. Under the orthographic top-down camera the viewer is null and nothing is stretched. `fixedStep`/`tick()` let a video export drive one fixed step per frame while R3F's own invalidations advance nothing. |
+| `export/videoPlan.ts` | `buildVideoPlan(events, { speed, pacing, fps?, fromIndex?, toIndex?, tailSeconds? }): VideoPlan { fps, frames: Int32Array (event index per frame), seconds, fromIndex, toIndex, truncated }` — each event holds for `player.holdMs` at the chosen speed (the video plays like the viewer), the last frame for `EXPORT_TAIL_SECONDS`, capped at `MAX_EXPORT_FRAMES` (20 min at 30 fps); `exportFileName(stream)`. Pure. |
+| `export/frameComposer.ts` | `frameLayout(sceneWidth, sceneHeight, targetWidth)`: video size (even, at most 3× the stage) with a HUD band above and a caption band below the table; `composeFrame(ctx, layout, input)` paints the rendered table plus the overlays redrawn in Canvas 2D (pile/stat/loyalty/counters badges, the stack column with card art via `stackRects`, arrows via `arrows.arrowShape`, the ending screen) and, with `frameLayout(..., log = true)`, the actions log as a `LOG_PX` (340 CSS px) column at the right in the site's row style (turn headers, actor bars, card names in gold, wrapped text, the current row highlighted at 58% height) in place of the caption band; `FrameInput` carries everything in stage CSS px. Pure drawing. |
+| `export/mp4Encoder.ts` | `supportsVideoExport()` (WebCodecs present); `createMp4Encoder({ width, height, fps, quality? })` picks H.264 (High/Main/Baseline) or VP9 via `VideoEncoder.isConfigSupported`, hardware encoder first, at `bitrateFor(width, height, fps, quality)` (`small` 0.02 / `balanced` 0.04 / `best` 0.09 bits per pixel per frame, capped at 2.5 / 5 / 12 Mbps; `estimateBytes` for the dialog), muxes with mp4-muxer (fast start, in memory), `addFrame(canvas, index)` with bounded queue, `finish(): Blob`, `cancel()`. |
+| `components/ExportDriver.tsx`, `components/VideoExport.tsx` | Inside the R3F canvas, `ExportDriver` runs a job: waits for card art (`TextureStore.request`, 30 s cap), then per frame steps the clock with `flushSync` (one event at a time, so cards animate), `registry.tick()` + R3F `advance()` with a priority-1 `useFrame` that renders and composes, encodes, reports progress, and restores the clock. A hold frame with nothing in motion (same event, registry idle) re-encodes the last composed canvas without rendering. `useVideoExport(stream, clock, index)` is the state machine (idle/dialog/running/done/error) and `VideoExportPanel` the dialog, progress and download UI. |
+| `scene/arrows.ts`, `scene/stackView.ts` | `sceneArrows(state, layout)`: stack item → each target (a permanent, or a spell on the stack for counterspells), the last non-combat damage, attackers → defending player, blockers → attacker; colored by the acting seat's sleeve (`neonColors(SLEEVE_COLORS[id].accent)`); quadratic Bézier helpers (`arrowControlPoint`, `arrowShape`). `stackView(state)`: stack items top first for the DOM preview; `stackExit` tells resolved/countered/fizzled apart. `scene/labels.ts`: `sceneLabels(layout, cards)` builds the DOM labels: pile counts, and for every face-up battlefield card a `stat` badge across its lower edge (current power/toughness, `emphasis` when it differs from the printed card) or a `loyalty` badge (the `loyalty` counter total; recorded games only, a planeswalker without one gets no badge), plus a `counters` chip across its upper edge for the other counters. |
+| `player.ts` | `class PlaybackClock { constructor(timeline, opts: { now?: () => number, schedule?: (cb, ms) => cancel }) ; subscribe(fn); get seq; play(); pause(); toggle(); setSpeed(0.5\|1\|2\|4\|8); setPacing('paced'\|'realtime'); step(+1\|-1); seek(seq); seekTurn(turn); nextTurn(); prevTurn(); dispose() }`. Paced mode: hold = max(600 ms, min(2500 ms, gap × 250 ms)) / speed. Real time: gap × 1000 / speed. |
+| `images.ts` | `cardImageCandidates(card: ReplayCard, size: 'normal'\|'large'): string[]`; `ImageQueue` with `load(url, priority): Promise<string>`, max 6 in flight, token bucket 8/s (burst 1, so no one-second window exceeds 8) for `api.scryfall.com`, one bucket shared by every page's queue; hover previews resolve through the same queue, no limit for `cards.scryfall.io`; `resolvedImageCache` in localStorage key `mtga-replay-images-v1` mapping card key → final URL; `tokenSearchCandidates(card, size)` for tokens (`is_token`): two `api.scryfall.com/cards/search` URLs (`t:token !"Name" pow= tou= c=` then the name alone, `-is:dfc`, newest printing first; the size rides in the URL fragment) whose JSON names the CDN image, so Arena tokens get their printed token art while the procedural face stands in; `ImageLookupError.permanent` — the queue caches only 404/400/422 failures, a 429/5xx/network error is retried on the next request; `generatedTokenFace(card)` for cards without any image. |
+| `prefs.ts` | `FELT_COLORS` (`green` default, `blue`, `burgundy`, `charcoal`, `camel`, `purple`), `SLEEVE_COLORS` (`navy` default for the player, `crimson` default for the opponent, plus `forest`, `charcoal`, `violet`, `gold`), `ReplayPrefs { felt, playerSleeve, opponentSleeve, camera: 'table'\|'topdown', mirrorOpponent, hindsight, pacing, speed, logCollapsed }`, `loadPrefs()`, `savePrefs(p)`, `subscribePrefs(fn)`; localStorage key `mtga-replay-prefs`, every access in try/catch. |
+| `materials.ts` | `createFeltCanvas(color)`, `createSleeveCanvas(color)`, `createTokenFaceCanvas(card)` returning `HTMLCanvasElement` (procedural, no bundled images); guarded so importing under jsdom does not throw. |
+| `routes.ts` (app) | `parseReplayRoute(hash)`: `#/replay` → `{ gameId: null }`, `#/replay/<id>?at=<seq>&row=<game_events.id>&return=<hash>` → `{ gameId, at, row, returnHash }`; `replayRouteHash(gameId?, { at?, row?, returnHash? })`. `row` (Game Detail timeline deep links) opens at the first event whose `row_id` matches; `at` wins when both are present; an unknown row opens at the start. |
+| `api.ts` (app) | `fetchReplay(gameId): Promise<ReplayStream>`; `ReplayAvailability` on game row types. |
+
+### Rendering and performance requirements
+
+- `@react-three/fiber` `Canvas` with `frameloop="demand"`; `invalidate()` on
+  state change and during animations only. Default camera preset is
+  `table` (30° tilt, 24° field of view); the stage is measured with a
+  `ResizeObserver` and the felt's width follows its aspect, so the table
+  fills the stage height. At 1440×900 a creature in your front row is about
+  80 px wide with the Actions panel open and about 91 px with it (or the
+  sidebar) collapsed. `topdown` is orthographic.
+- DOM overlays over the canvas, positioned without React on rendered
+  frames: pile and stat labels, an SVG layer of targeting arrows (curved,
+  glowing in the acting seat's sleeve color, animated dash flow while the
+  item is on the stack; combat arrows dimmer), and the stack preview — large
+  card images in a column at the right edge, top of the stack first, the
+  newest sliding in and leaving items stamped Resolved/Countered/Fizzled.
+  Only the preview's cards take pointer events. The Actions panel collapses
+  to a slim rail (the sidebar's « » control; `logCollapsed` pref).
+- One mesh per visible object keyed by `obj`; textures from a shared cache
+  (`THREE.TextureLoader`, `colorSpace = SRGBColorSpace`, anisotropy from the
+  renderer's max), disposed on page unmount. Hidden objects share one sleeve
+  texture per seat.
+- Movement animates by lerping toward the layout target in `useFrame`;
+  React state never updates per frame. Target 60 fps with 60 cards on an
+  integrated GPU; seek under 16 ms for a 2,000-event game (measured in the
+  built page, 500 random scrub seeks on a 439-event game: about 1.5–2 ms
+  average, p95 about 4 ms).
+- The action log renders memoized rows; only the active row re-renders on
+  tick; auto-scroll uses `scrollIntoView({ block: 'nearest' })`.
+- Minimum width 900 px: entry points carry the `replay-wide-only` class
+  (hidden below 900 px) and the replay page shows a notice instead of the
+  canvas below that width.
+- Teal token `--replay` (dark `#2bb3a3`, light `#0f8f82`) is used only for
+  replay affordances.
+
+## 4. Reconstruction from text (older games)
+
+Input: the game's `game_events` rows ordered by `event_time, id`,
+`game_opening_hand_cards`, `game_mulligan_hands`, `game_drawn_cards`,
+`game_deck_cards`, `game_turns`, `participants`, `participant_commanders`,
+`cards`. Output: the same stream with `fidelity: reconstructed`, synthetic
+`r:<n>` object ids, and `limitations` listing at least: blocks, taps,
+counters, tokens entering, opponent hand contents, instants and sorceries
+reaching the graveyard are inferred, same-named copies indistinguishable.
+
+Grammar (regular because the tracker generated the text; `[Name (Type P/T)]`
+brackets are the anchor):
+
+| `event_type` | Text shape | Stream events |
+| --- | --- | --- |
+| `turn` | `Turn N - YOUR TURN` / `OPPONENT'S TURN` | `turn` |
+| `land` | `You: played [X (Land)]` | `move hand→battlefield play_land` |
+| `cast` | `You: cast [X (Type)]` (optional `-> [Target]`, `(on stack)`) | `move hand→stack cast`, `stack_push spell` |
+| `draw` | `drew [X]` / `drew a card` | `move library→hand draw` (hidden when unnamed) |
+| `stack_resolve` | `Stack: [X ...] [resolved]` | `stack_resolve`, then `move stack→battlefield` for permanents or `stack→graveyard` for instants/sorceries (type from the bracket suffix, else `cards.primary_type`); triggers/abilities resolve with no move |
+| `stack_fail` | `[left stack without resolving - inferred]` | `stack_fizzle`, `move stack→graveyard` for spells |
+| `counter` | `[X] was countered` | `stack_countered`, `move stack→graveyard` |
+| `ability` / `stack` | `[X] - text` / `(triggered, on stack)` | `stack_push trigger` (resolved by the next matching `stack_resolve`); `[A] became [B]` → `identity` |
+| `zone` | `was destroyed/exiled/sacrificed/discarded`, `was put into graveyard (lethal damage)`, `milled [X]`, `returned [X] to hand`, `put [X] onto battlefield`, `put [X] into … hand`, `sacrificed as cost` | `move` with the matching reason; source zone from current tracking (battlefield first, then stack, hand, graveyard) |
+| `attack` | `You attacking [opponent] with [X (P/T)]` | `attack` (+ `pt` from the bracket) |
+| `combat_damage` / `damage` | `dealt N damage to [Y]`, `[X] (your) took N damage` | `damage` |
+| `life_gain` / `life_loss` | any | `life` from the row's life columns |
+| `scry` | `scried N — …` | `scry` (names resolved to objects when in the player's library) |
+| other | — | `note` |
+
+Seeding: player's library = submitted maindeck (`game_deck_cards`,
+`deck_zone = 'deck'`) minus the kept hand, else `deck_size − 7` hidden
+objects; opening hand from `game_opening_hand_cards`; mulligans from
+`game_mulligan_hands`; opponent: 7 hidden hand objects, `deck_size` (or 60 /
+100 for Brawl) hidden library objects. Opponent hand size never goes below 0.
+Tokens: on first mention, `move limbo→battlefield token_create` with
+`inferred: true` immediately before the referencing event. `Card #N` →
+hidden object named "Unknown card".
+
+## 5. Where replay links appear
+
+Sidebar tile above Deck Finder (`#/replay`), the Replay list page, Game
+Detail header button, row icons on Recent Games / All Games / deck and
+opponent histories / Live "Today's Games", the Live previous-game chip and
+ended-game banner, the console `Replay: <url>` line after persistence, and
+menu-bar items. All hidden below 900 px.

@@ -1188,7 +1188,33 @@ class TrackerZoneTransferMixin:
                 target_objs.append(target_obj)
         return target_objs
 
-    def _process_zone_transfer_annotation(
+    def _process_zone_transfer_annotation(self, **kwargs: Any) -> bool:
+        """Process zone-transfer annotations and return True when handled.
+
+        Replay: the move fact (root id, zones, reason) is built once here and
+        attached to the line the category handler prints, or written as a
+        silent row when the console shows nothing (resolutions, deferred
+        casts, hidden or suppressed moves). Cast moves are absorbed by the
+        spell's ``stack_push`` fact instead."""
+        fact = self._replay_move_fact(
+            kwargs.get("category"),
+            kwargs["instance_id"],
+            kwargs.get("card_obj"),
+            kwargs.get("annotation") or {},
+            kwargs.get("game_objects_by_id") or {},
+            kwargs.get("zones_by_id"),
+            kwargs.get("zone_src"),
+            kwargs.get("zone_dest"),
+        )
+        start = self._replay_begin()
+        self._replay_state().ambient = fact
+        try:
+            return self._dispatch_zone_transfer_annotation(**kwargs)
+        finally:
+            self._replay_settle_move(fact, start)
+            self._replay_end()
+
+    def _dispatch_zone_transfer_annotation(
         self,
         *,
         category: Optional[str],
@@ -1206,7 +1232,7 @@ class TrackerZoneTransferMixin:
         target_objs: List[Dict[str, Any]],
         deferred_spell_instance_ids: Optional[Set[int]] = None,
     ) -> bool:
-        """Process zone-transfer annotations and return True when handled."""
+        """Route one zone transfer to its category handler."""
         canonical_instance_id = self._canonical_instance_id(instance_id) or int(instance_id)
         self._observe_library_zone_transfer(card_obj, annotation, zones_by_id, zone_src, zone_dest)
 

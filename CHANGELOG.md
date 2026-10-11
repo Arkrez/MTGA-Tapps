@@ -6,7 +6,7 @@
 
 - Deck Manager supports named collapsible collections, renaming, bulk membership
   moves and destination selection in imports/Deck Finder. Removing a collection
-  asks for confirmation and retains its decks in Unsorted. Migration 34 preserves
+  asks for confirmation and retains its decks in Unsorted. Migration 35 preserves
   collection membership through full backups, merge and gameplay reset.
 - Deck transfers show progress from preparation through verified completion.
   “Full backup” describes saved native data separately from “In Arena” location.
@@ -16,7 +16,7 @@
   status selector. Arena artwork reuses library images or the roster's printing ID.
 - Deck Finder adds a direct **Add to Arena** action through native text preparation
   and journaled restore, with full-slot/game/pending guards and rejection of changed
-  card quantities. **Copy for Arena** names the existing clipboard action clearly.
+  card quantities. Add to Arena and Save to collection sit under the deck's title.
   Added decks receive the Arena format from the Deck Finder label and a deck tile
   (the most-played creature) instead of an empty format and no art. Verification no
   longer rejects a deck Arena created because the server added its usual
@@ -84,7 +84,7 @@
 - Deck Manager now has direct native backup, move and restore jobs on the
   `deck-manager` branch, including an Arena deck grid, bulk selection, confirmation
   before moving decks out of Arena, and a yellow Restore to Arena action for native
-  revisions. Migration 33 journals every transfer before a native write and supports
+  revisions. Migration 34 journals every transfer before a native write and supports
   read-only reconciliation without repeating uncertain requests. Active tracked games
   block attachment; account changes, full slots and changed decks block writes.
   The initial adapter targets Apple Silicon macOS Unity `6000.3.14f1`. Integrated
@@ -116,6 +116,104 @@
 - Tracker backups carry the independent deck library. Merging retains revisions;
   restore previews require confirmation for deck/revision loss, including old
   backups that predate Deck Manager. Gameplay reset preserves saved decks.
+- Deck Finder provider boxes have subtle backgrounds in each site's color,
+  with stronger hover and selection tints. Removed the redundant Site label
+  and moved Surprise Me beside the Browse Decks collapse control. Each deck's
+  Source link now sits beside Export to Arena in the deck title row.
+
+- **Replay.** A new teal Replay tile above Deck Finder opens a list of recent
+  games; each one plays back on a three.js table with real card images, both
+  players' hands, libraries, graveyards and exile piles, the stack, life
+  totals, and an action log beside a video-player style scrub bar segmented by
+  turn (play, step, skip turn, go to turn, speed, keyboard shortcuts). "Watch
+  replay" also appears on Game Detail, Recent Games, All Games, deck and
+  opponent histories and the Live Scoreboard, and the console prints a replay
+  link after each saved game. Each Game Detail timeline row's time opens the
+  replay at that moment, and the Replay list shows the opponent's name. The table felt and each player's sleeves are
+  selectable colors. Every game already in the database replays as
+  "Reconstructed" from its event log (approximate: blocks, taps, counters and
+  tokens entering are inferred); games tracked from this release on are
+  recorded with instance-level detail (taps, counters, tokens, blocks,
+  attachments, hidden-card counts) and replay as "Recorded". Replay links are
+  hidden below tablet width. Data contract: `docs/REPLAY_FORMAT.md`.
+  The table fills the stage with cards about twice as large, piles stand on
+  the left, the stack shows as large cards on the right with glowing
+  targeting arrows, the Actions panel collapses, and sidebar links leave the
+  replay instantly.
+  When the last event plays, an ending screen over the table announces
+  Victory, Defeat or Draw with the reason, final life totals and the
+  game's length, with Watch again, Show table and Back; the HUD chip takes
+  the same color. Tokens show their printed token art (looked up in
+  Scryfall's token sets by name, power/toughness and color), with the
+  procedural face standing in until it arrives, and the stack's compact rows
+  no longer show clipped text while a card image loads.
+  Planeswalkers stand in the front row to the right of the creatures, and
+  while paused a resolved, countered or fizzled stack item stays on screen
+  with its stamp until the next step. Game Detail's Watch replay button sits
+  right-aligned above the game metric cards. Both hands sit off the felt, on
+  aprons just past the near and far rails, so the whole table belongs to the
+  battlefield and the piles; the camera frames the aprons with the table.
+  Hand cards are at least full size and grow into whatever height the stage
+  has to spare (up to 1.7 times a battlefield card on a tall stage), fanning
+  across the table's width; a crowded hand overlaps, then shrinks, to fit.
+  The camera sits a little flatter and every card is stretched along the
+  table's depth by exactly the camera's foreshortening at its spot, so the
+  opponent's hand and battlefield show cards in true proportion instead of
+  squashed. The stack preview is
+  centered on the stage and its top card keeps one size however deep the
+  stack gets; the compact rows below it are as many as fit. Every creature
+  on the table wears a readable power/toughness badge across its lower edge
+  (gold when it differs from the printed card) and every planeswalker in a
+  recorded game shows its current loyalty there; other counters sit in a
+  small chip across the card's upper edge. **Export video** on the transport
+  bar renders the replay to an MP4 in the browser (H.264 where available,
+  else VP9; nothing is uploaded): the table as it plays at the chosen speed
+  and pacing, from the start or the current moment, with the HUD, stat
+  badges, stack, targeting arrows, each action as a caption and the ending
+  screen, at up to Full HD; it runs faster than real time with a progress
+  bar and cancel, then saves the file. The video can carry the actions log
+  beside the table in the site's style (on by default; off gives a caption
+  band instead), has a quality setting (Smaller file / Balanced / Best, with
+  a size estimate in the dialog; Balanced is roughly a third of the earlier
+  rate), prefers the machine's hardware encoder, and skips re-rendering
+  frames where nothing moves. Export video sits beside Replay Options in
+  the teal replay color. Cards a permanent exiles (Deep-Cavern Bat, Pinnacle
+  Starcage) now show tucked under that permanent instead of in the exile
+  pile, for as long as it stays on the battlefield (recorded games), and
+  hovering the permanent lists everything tucked under it (thumbnail and
+  name per card, exiled ones tagged) below its preview and pictures each
+  distinct tucked card full size beside it, with a copy count; on the table
+  the host slides a little away from its fan and the strips compress so no
+  tucked card hides under the lands. The
+  felt is sharper (a finer, denser weave with anisotropic filtering), a
+  browser without WebGL gets a notice instead of a blank table, a resolved
+  stack item held while paused stands beside the stack rather than over its
+  top card, the transport buttons' symbols sit level with their labels, and a
+  cast card flies from the hand straight to the spot where the stack preview
+  shows it rather than across the table. Playback starts at turn 1 with both opening hands already dealt: the
+  scrub bar, the event counter, Home, Watch again and a whole-game video
+  export all begin there, and the card-by-card opening deal is no longer
+  shown. Equipment, auras and exiled-under cards fan tightly upward
+  behind their host, each showing its title strip (hover one for the full
+  card), so a creature wearing four pieces of equipment no longer sprawls
+  across its neighbour; on the opponent's side the fan rises toward their
+  lands.
+
+- Decks, All Games and Sessions now have numbered page buttons, first/last-page controls,
+  and a Go to page field for jumping through long histories. The current page
+  is highlighted, and page numbers stay compact with ellipses.
+  Sessions also includes all matching recorded sessions, removing the previous
+  30-session query cap, with 15 sessions per page.
+
+- Deck Finder now has colored provider icons and selection highlights using
+  the existing dashboard theme. Deck names, titles and the selected row use
+  the provider's color. AetherHub has a sharper icon and Magic.gg uses
+  a vector mark. Results sit beside a larger selected-deck panel, which shows
+  the full list and separate sideboard/commander/companion sections.
+  Source and Export to Arena sit at the far right of the selected deck's name. The first
+  detail result opens automatically; stale deck loads cannot replace a newer
+  selection. All seven sites fit on one desktop row, with a stacked layout on
+  narrow screens.
 
 - Deck Finder now includes **youtube.com → Creators**, with Hello Good Game
   (HGG) and Sloth available by default. It checks the latest 15 video descriptions
@@ -133,9 +231,39 @@
   transfers. Uncertain dispatched requests still require read-only reconciliation.
 - Deck Finder's Save to collection followed by Add to Arena upgrades the same saved
   entry, retaining notes, collection and text revision instead of creating a duplicate.
+- The dashboard serves its built files with cache headers (hashed assets
+  are immutable, the page revalidates) over keep-alive HTTP/1.1 connections,
+  so a page load no longer re-downloads the whole app or opens a connection
+  per request. The mana-symbol font ships only as woff2 (187 KB instead of a
+  408 KB woff, and 3.5 MB of unused formats are gone from the build).
+
+- Creatures with 0 power (Exhibition Tidecaller, a 0/2) now show their
+  stat badge on the replay table and print as "(0/2)" in the console: Arena
+  encodes a zero stat as an empty object, which the tracker read as unknown.
+  Printed power and toughness are also backfilled into the cards table from
+  Arena's local card database at startup and after each game, so older
+  recorded games get the badge too.
+
+- Live Scoreboard puts the waiting status beside the format at the right of
+  the header. Watch replay uses the same pill shape and size as the other
+  header chips, and Today's Games has smaller replay icons to leave more room
+  for deck names.
+
+- The Overview's Decks table now includes every recorded deck matching the
+  current filters, removing the 100-deck query cap. Decks removed from Arena
+  remain in tracker history; search, sorting and pagination cover the full list.
+
+- Match results no longer infer a winner from a partial in-game player-status
+  update. Explicit Arena results override weaker hints and stale life totals.
+  Empty-library loss annotations now identify the losing seat and close the
+  game even when the usual final result is absent, including annotations later
+  in a GRE message batch. Unresolved outcomes remain Unknown instead of being
+  guessed from positive life totals; ordinary wins are no longer mislabeled
+  as concessions.
 
 - Deck Finder's site picker loads metadata without importing scraper libraries
   or initializing HTTP clients. Scrapers load when a site is first used.
+  Opening Deck Finder also skips the Overview analytics request.
   Compact provider cards use short subtitles and less spacing so all seven
   sites fit on one row at common desktop widths.
 

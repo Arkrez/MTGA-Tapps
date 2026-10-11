@@ -11,6 +11,7 @@ export function Section({
   id,
   title,
   description,
+  headingAction,
   children,
   collapsible = true,
 }: {
@@ -18,6 +19,8 @@ export function Section({
   /** Omit when the page heading already names this content (e.g. All Games). */
   title?: string;
   description?: string;
+  /** Optional action aligned beside the collapse control. */
+  headingAction?: ReactNode;
   children: ReactNode;
   collapsible?: boolean;
 }) {
@@ -32,6 +35,7 @@ export function Section({
             {title ? <h3>{title}</h3> : null}
             {description ? <p className="section-description">{description}</p> : null}
           </div>
+          {headingAction}
         </div>
         {children}
       </section>
@@ -45,17 +49,20 @@ export function Section({
     >
       <div className="section-heading">
         {title ? <h3>{title}</h3> : <span aria-hidden="true" />}
-        <button
-          type="button"
-          className="section-collapse-button"
-          aria-controls={contentId}
-          aria-expanded={!collapsed}
-          aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${title ?? 'section'}`}
-          title={`${collapsed ? 'Expand' : 'Collapse'} ${title ?? 'section'}`}
-          onClick={() => setCollapsed((current) => !current)}
-        >
-          {collapsed ? <ChevronDown aria-hidden="true" /> : <ChevronUp aria-hidden="true" />}
-        </button>
+        <div className="section-heading-actions">
+          {headingAction}
+          <button
+            type="button"
+            className="section-collapse-button"
+            aria-controls={contentId}
+            aria-expanded={!collapsed}
+            aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${title ?? 'section'}`}
+            title={`${collapsed ? 'Expand' : 'Collapse'} ${title ?? 'section'}`}
+            onClick={() => setCollapsed((current) => !current)}
+          >
+            {collapsed ? <ChevronDown aria-hidden="true" /> : <ChevronUp aria-hidden="true" />}
+          </button>
+        </div>
       </div>
       <div className="section-content" id={contentId} hidden={collapsed}>
         {description ? <p className="section-description">{description}</p> : null}

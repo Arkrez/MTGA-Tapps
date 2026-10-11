@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchLiveStatus, type LiveEventRow, type LiveGameRow, type LiveNow, type LivePayload } from '../api';
+import {
+  fetchLiveStatus,
+  type LiveEventRow,
+  type LiveGameRow,
+  type LiveNow,
+  type LivePayload,
+} from '../api';
 import { formatDuration, outcomeLabel, outcomeTone, shortFormatLabel } from '../format';
 import { Badge } from './Badge';
 import { CardLink } from './CardLink';
 import { ColorPips } from './ColorPips';
 import { DeckLink } from './DeckLink';
+import { ReplayLink } from './ReplayLink';
 import { TimelineList } from './TimelineList';
 import { gameRouteHash } from '../routes';
 
@@ -135,6 +142,7 @@ function Scoreboard({
   waiting,
   previousOutcome = null,
   previousReason = null,
+  previousGame = null,
 }: {
   now: LiveNow;
   clockMs: number;
@@ -144,6 +152,8 @@ function Scoreboard({
   previousOutcome?: string | null;
   /** How that game ended (e.g. "Opponent conceded"). */
   previousReason?: string | null;
+  /** The finished game's persisted row (absent for untracked games), for its replay link. */
+  previousGame?: LiveGameRow | null;
 }) {
   const isBrawl = now.player_commanders.length > 0 || now.opponent_commanders.length > 0;
   const clock = waiting ? null : gameClock(now.game_started_at, clockMs);
@@ -176,9 +186,14 @@ function Scoreboard({
               Previous Game{previousOutcome ? ` — ${outcomeLabel(previousOutcome)}` : ''}
               {previousReason ? ` · ${previousReason}` : ''}
             </span>
-            <span className="live-chip live-chip-turn">
-              <span aria-hidden="true" className="live-pulse-dot" /> Waiting for next match…
-            </span>
+            {previousGame ? (
+              <ReplayLink
+                availability={previousGame.replay}
+                gameId={previousGame.id}
+                returnHash="#/live"
+                variant="button"
+              />
+            ) : null}
           </>
         ) : (
           <span
@@ -192,6 +207,11 @@ function Scoreboard({
         <span className="live-chips-right">
           {now.rank ? <span className="live-chip live-chip-rank">{rankText(now.rank)}</span> : null}
           {now.format ? <span className="live-chip">{shortFormatLabel(now.format)}</span> : null}
+          {waiting ? (
+            <span className="live-chip live-chip-turn">
+              <span aria-hidden="true" className="live-pulse-dot" /> Waiting for next match…
+            </span>
+          ) : null}
         </span>
       </div>
 
@@ -316,7 +336,7 @@ function GamesList({ games }: { games: LiveGameRow[] }) {
   return (
     <ol className="live-games">
       {games.map((game) => (
-        <li key={game.id}>
+        <li key={game.id} className="live-game-item">
           <a className="live-game-row" href={gameRouteHash(game.id, '#/live')}>
             <Badge tone={outcomeTone(game.outcome)}>{outcomeLabel(game.outcome)}</Badge>
             <span className="live-game-main">
@@ -337,6 +357,7 @@ function GamesList({ games }: { games: LiveGameRow[] }) {
                 : ''}
             </span>
           </a>
+          <ReplayLink availability={game.replay} gameId={game.id} returnHash="#/live" variant="icon" />
         </li>
       ))}
     </ol>
@@ -509,6 +530,7 @@ export function LiveLogPage() {
                 payload?.games.find((game) => game.id === lastGameNow.game_id)?.outcome_reason ??
                 null
               }
+              previousGame={payload?.games.find((game) => game.id === lastGameNow.game_id) ?? null}
             />
           ) : (
             <div className="live-waiting">
@@ -579,6 +601,12 @@ export function LiveLogPage() {
                       {endedGame.duration_seconds ? `${formatDuration(endedGame.duration_seconds)} · ` : ''}
                       {endedGame.total_turns ?? '?'} turns
                     </span>
+                    <ReplayLink
+                      availability={endedGame.replay}
+                      gameId={endedGame.id}
+                      returnHash="#/live"
+                      variant="button"
+                    />
                   </div>
                 ) : null}
               </div>
