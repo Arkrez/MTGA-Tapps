@@ -52,6 +52,8 @@ interface AppShellProps {
   onToggleTheme: () => void;
   navItems?: AppNavItem[];
   heading: string;
+  /** Small label shown after the heading, such as a Beta pill. */
+  headingBadge?: ReactNode;
   /** Extra class for the main content area (e.g. the Live Log's
       viewport-filling layout wants less bottom padding). */
   mainClassName?: string;
@@ -136,6 +138,7 @@ export function AppShell({
   onToggleTheme,
   navItems = dashboardNavItems,
   heading,
+  headingBadge,
   mainClassName,
   children,
 }: AppShellProps) {
@@ -409,7 +412,7 @@ export function AppShell({
           >
             <Search aria-hidden="true" />
           </a>
-          <a aria-label="Deck Manager" className="sidebar-deck-finder sidebar-deck-manager sidebar-deck-finder-mini" href="#/deck-manager" title="Deck Manager">
+          <a aria-label="Deck Manager (Beta)" className="sidebar-deck-finder sidebar-deck-manager sidebar-deck-finder-mini" href="#/deck-manager" title="Deck Manager (Beta)">
             <Layers aria-hidden="true" />
           </a>
           </>
@@ -432,7 +435,7 @@ export function AppShell({
             </a>
             <a className="sidebar-deck-finder sidebar-deck-manager" href="#/deck-manager" title="Back up and restore your decks">
               <Layers aria-hidden="true" />
-              <span className="sidebar-nav-label">Deck Manager</span>
+              <span className="sidebar-nav-label">Deck Manager <span className="sidebar-beta">Beta</span></span>
             </a>
             {version ? (
               <span aria-label={`Tracker version ${version}`} className="sidebar-version">
@@ -447,7 +450,7 @@ export function AppShell({
         id="main-content"
       >
         <header className="topbar">
-          <h2>{heading}</h2>
+          <h2>{heading}{headingBadge ? <> {headingBadge}</> : null}</h2>
           <div className="topbar-actions">
             <CardSearch />
             <button

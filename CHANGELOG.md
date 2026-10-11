@@ -17,8 +17,64 @@
 - Deck Finder adds a direct **Add to Arena** action through native text preparation
   and journaled restore, with full-slot/game/pending guards and rejection of changed
   card quantities. **Copy for Arena** names the existing clipboard action clearly.
-  Live native parsing passed without saving/removing a deck; full direct-add creation
-  remains available for user-selected integration testing on the separate dashboard.
+  Added decks receive the Arena format from the Deck Finder label and a deck tile
+  (the most-played creature) instead of an empty format and no art. Verification no
+  longer rejects a deck Arena created because the server added its usual
+  bookkeeping, and Arena's stored copy becomes the backup's newest revision.
+  Reconcile completes an interrupted add or restore that is present in Arena, even
+  if it was edited there, saving Arena's copy and keeping the original revision.
+- Saved text and captured decks have an **Add to Arena** action in Deck Manager,
+  through Arena's importer. A deck whose only native data is an unfinished import
+  draft uses the same path instead of restoring an empty-format draft.
+- Deck Finder names added and saved decks from the export's `Name` line, such as
+  "Rakdos Lizards (Ash)".
+- Backups and bulk moves/restores can be stopped from the top right after a
+  warning. The deck in progress finishes and is verified; completed backups are kept.
+- Native transfers and backups no longer re-read every cached Arena deck for each
+  deck, which made bulk backups grow quadratically slower.
+- The status filter says **Not in Arena** and **Arena not checked**, grouped under
+  Location and Backup.
+- Deck Manager carries a **Beta** pill beside its page heading. Its top right holds only
+  Refresh Arena and Back up all Arena decks; Add deck, New collection and the
+  selection actions share one bar above the decks, with Select all on the right. A
+  collapsible "How Deck Manager works" panel explains keeping Arena on Decks,
+  refreshing after Arena changes, backing up first and reconciling. Selects draw
+  their own arrow with proper spacing.
+- Saved and Arena decks can be sorted by name (A–Z, Z–A); saved decks also by
+  update time (newest or oldest first). The choice is remembered.
+- Each collection is one framed panel around its decks. When a search or status
+  filter hides everything, one message with **Clear filters** replaces the per-
+  collection and page-level duplicates, and an empty Unsorted group is hidden.
+- The saved-deck dialog is redesigned: a one-line summary with status pills, one
+  bar for collection, revision and secondary actions, the main deck in compact
+  columns with sideboard/commander/companion beside it, and notes and tags in a
+  collapsible section that saves only after a change. **Copy deck list** copies MTG
+  Arena import text; full backups include set and collector numbers from Arena's
+  card database so the exact printing is imported. Restore/Add to Arena is hidden
+  when Arena already has the deck.
+- Failed Arena connections show the adapter's actual reason (for example, Arena
+  not on the Decks screen) instead of a generic transfer message.
+- Deck Finder's collection dropdown is replaced by a searchable collection picker
+  that opens from **Save to collection**. A disabled **Add to Arena** explains why
+  (game in progress, transfer awaiting reconciliation, another job, full slots).
+- Deck Manager tiles (under the artwork) and the deck dialog show each deck's colors as mana pips,
+  scored from the main deck and commander with the same lands-first rule as the
+  Overview. Colors come from Arena's local card database (one cached read of every
+  card) and add no Arena calls.
+- Arena reads are faster. A backup reads five decks per Arena frame instead of
+  spending about four frames on each deck, a request Arena answers at once no
+  longer waits a polling cycle, discovery looks up the classes it needs by name
+  instead of scanning every class in Arena, and repeated metadata lookups are
+  cached. Each Arena job logs its phase timings (durations only) to the console.
+- Deck Manager has one status panel above the search instead of separate lines for
+  results, errors, progress, games in progress, interrupted transfers and the last
+  Arena read. It always says what Deck Manager last learned from Arena and what to
+  do next; during a game it says Arena is left alone and when the shown list was
+  read. **Connect to Arena** is now **Load Arena decks** (then **Refresh Arena
+  decks**), since Deck Manager only reads Arena when asked and never stays
+  connected; the help panel says so. Messages can be dismissed.
+- The page no longer shifts sideways when a Deck Manager or Deck Finder dialog
+  opens: the browser scrollbar's space stays reserved while the page is locked.
 - Deck Manager selection moves to the top right with a larger click target.
   Bulk-action buttons match the existing page styles. All saved decks can be
   selected for an atomic move to Trash; trashed decks can be permanently deleted

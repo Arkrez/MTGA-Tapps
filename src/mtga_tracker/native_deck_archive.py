@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import uuid
 
@@ -108,6 +109,132 @@ def equivalent(left, right, *, restored_id=None):
         if value["summary"].get("Description") is None:
             value["summary"]["Description"] = ""
     return left == right
+
+
+def attribute(snapshot, key):
+    return next(
+        (a["value"] for a in snapshot["summary"].get("Attributes", []) if a.get("key") == key),
+        None,
+    )
+
+
+# Arena's deck Format attribute values. Bo3 labels use the Traditional variant,
+# matching how Arena labels Bo3-constructed decks.
+_ARENA_FORMATS = {
+    "standard": "Standard",
+    "historic": "Historic",
+    "explorer": "Explorer",
+    "pioneer": "Explorer",
+    "timeless": "Timeless",
+    "alchemy": "Alchemy",
+}
+_TRADITIONAL = {"Standard", "Historic", "Explorer", "Alchemy"}
+
+
+def arena_format(label):
+    """Map a Deck Finder format label ("Standard / Bo3") to Arena's Format attribute.
+
+    Arena stores a deck created without a Format as format "", so an
+    unrecognized label falls back to Standard rather than leaving it empty.
+    """
+    lowered = " ".join((label or "").casefold().replace("_", " ").split())
+    compact = lowered.replace(" ", "")
+    if "brawl" in compact:
+        return "HistoricBrawl" if "historic" in compact else "Brawl"
+    base = next((v for k, v in _ARENA_FORMATS.items() if k in compact), "Standard")
+    if base in _TRADITIONAL and ("traditional" in compact or "bo3" in compact):
+        return "Traditional" + base
+    return base
+
+
+def tile_card(snapshot, card_type=None):
+    """Pick a deck tile the way a player usually would: the most-played creature,
+    else the most-played nonland card, else the first card."""
+    entries = [c for p in snapshot.get("piles", []) if p["pile"] == 1 for c in p["entries"]]
+    if not entries:
+        return 0
+    kinds = {c["id"]: (card_type(c["id"]) if card_type else None) for c in entries}
+    for wanted in ("Creature", None):
+        pool = [
+            c
+            for c in entries
+            if (kinds[c["id"]] == wanted if wanted else kinds[c["id"]] not in (None, "Land"))
+        ]
+        if pool:
+            return max(pool, key=lambda c: c["quantity"])["id"]
+    return entries[0]["id"]
+
+
+def with_import_summary(archive, format_name, tile_id):
+    """Give an import draft the Format and tile a saved Arena deck carries.
+
+    Arena's parser leaves both empty, and Arena then stores the deck with format
+    "" and no tile art. The serialized summary and the snapshot are edited
+    together, so preparation rebuilds exactly this summary (the same path a
+    restore uses) and its snapshot check still holds.
+    """
+    archive = copy.deepcopy(validate_archive(archive))
+    summary = json.loads(archive["summary_json"])
+    snapshot = archive["source_snapshot"]["summary"]
+    if (
+        not isinstance(summary.get("Attributes"), dict)
+        or not isinstance(snapshot.get("Attributes"), list)
+        or type(summary.get("DeckTileId")) is not int
+        or type(snapshot.get("DeckTileId")) is not int
+    ):
+        raise dm.DeckManagerError("Unsupported Arena deck summary. No deck was created.")
+    # A Dictionary keeps insertion order, matching the appended snapshot pair.
+    summary["Attributes"]["Format"] = format_name
+    pair = next((a for a in snapshot["Attributes"] if a.get("key") == "Format"), None)
+    if pair:
+        pair["value"] = format_name
+    else:
+        snapshot["Attributes"].append({"key": "Format", "value": format_name})
+    if tile_id:
+        summary["DeckTileId"] = snapshot["DeckTileId"] = tile_id
+    archive["summary_json"] = json.dumps(summary, ensure_ascii=False)
+    return validate_archive(archive)
+
+
+def import_draft(deck):
+    """True for a text import's revision before Arena's server-loaded copy replaced it.
+
+    Arena's parser builds a client-side draft: its summary lacks the bookkeeping
+    attributes (Version, TileID, LastPlayed, IsFavorite) and cosmetic defaults
+    that CreateDeck and every server-loaded deck carry, so it can never equal the
+    created deck exactly.
+    """
+    metadata = deck.get("metadata", {})
+    archive = metadata.get("native_archive")
+    return (
+        "native_import_request" in metadata
+        and isinstance(archive, dict)
+        and attribute(archive["source_snapshot"], "Version") is None
+    )
+
+
+def same_contents(actual, draft, *, restored_id):
+    """Compare a created deck with its import draft: identity, name, format, piles, skins."""
+
+    def contents(value):
+        return {
+            "arena_id": value["arena_id"],
+            "deck_id": value["summary"].get("DeckId"),
+            "name": value["name"],
+            "summary_name": value["summary"].get("Name"),
+            "format": attribute(value, "Format") or "",
+            "net": value.get("is_net_deck"),
+            "loaded": value.get("contents_loaded"),
+            "piles": sorted(
+                (p["pile"], sorted((c["id"], c["quantity"]) for c in p["entries"]))
+                for p in value.get("piles", [])
+            ),
+            "skins": sorted(json.dumps(s, sort_keys=True) for s in value.get("skins", [])),
+        }
+
+    expected = contents(draft)
+    expected["arena_id"] = expected["deck_id"] = restored_id
+    return contents(actual) == expected
 
 
 def revision_archive(deck):

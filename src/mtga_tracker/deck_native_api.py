@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import sqlite3
+import sys
 import threading
 import time
 import uuid
@@ -11,8 +12,11 @@ import uuid
 from . import deck_manager as dm
 from . import deck_transfers as dt
 from . import native_deck_bridge as nb
+from .deck_colors import deck_colors
 
 _LOCK = threading.Lock()
+# Decks archived per Arena frame during a backup; also the cancel granularity.
+BACKUP_BATCH = 5
 _JOBS = {}
 _STATUS = {}
 _ACTIVE = None
@@ -77,8 +81,22 @@ def status(db_path):
     }
 
 
+def _roster_colors(deck, pile_names):
+    sections = {"Main": "Deck", "CommandZone": "Commander", "Companions": "Companion"}
+    return deck_colors(
+        {
+            "section": sections.get(pile_names.get(str(p["pile"]))),
+            "quantity": c["quantity"],
+            "arena_id": c["id"],
+        }
+        for p in deck.get("piles", [])
+        for c in p["entries"]
+    )
+
+
 def _public_roster(report):
     dt.roster_ids(report)
+    pile_names = {str(k): v for k, v in (report.get("pile_names") or {}).items()}
     return {
         "connected": True,
         "decks": [
@@ -94,6 +112,7 @@ def _public_roster(report):
                     ),
                     "",
                 ),
+                "colors": _roster_colors(d, pile_names),
                 "main_count": sum(
                     c["quantity"]
                     for p in d.get("piles", [])
@@ -107,7 +126,7 @@ def _public_roster(report):
         "limit_reached": report["limit_reached"],
         "deck_screen_open": report["deck_screen_open"],
         "refreshed_at": dm.now(),
-        "message": "Arena roster refreshed. Transfers require the Decks screen outside a match.",
+        "message": "Arena decks loaded. Transfers require the Decks screen outside a match.",
     }
 
 
@@ -124,6 +143,15 @@ def _roster_art_id(deck):
     return None
 
 
+def _card_types():
+    from .card_database import CardDatabase
+
+    try:
+        return CardDatabase().get_card_type_category
+    except Exception:
+        return None
+
+
 def _resolve_names():
     from .card_database import CardDatabase
 
@@ -133,11 +161,22 @@ def _resolve_names():
         return None
 
 
-def execute(db_path, action, selections, request_id, progress):
-    """Every job uses a fresh native/account connection and this selected DB."""
+def execute(db_path, action, selections, request_id, progress, cancelled=lambda: False):
+    """Every job uses a fresh native/account connection and this selected DB.
+
+    Cancellation is checked only between decks: an Arena request already sent
+    is always allowed to finish and be verified.
+    """
+    stopped = False
+    started = time.monotonic()
+    timings = []
+
+    def mark(label):
+        timings.append(f"{label} {time.monotonic() - started:.2f}s")
+
     if game_in_progress(db_path):
         raise dm.DeckManagerError(
-            "Finish your current game before connecting Deck Manager to Arena."
+            "Finish your game first. Deck Manager can work with Arena again when it ends."
         )
     conn = dm.library_connection(db_path)
     try:
@@ -146,11 +185,13 @@ def execute(db_path, action, selections, request_id, progress):
 
             validate_destination(conn, selections[0].get("collection_id"))
         with nb.attach() as bridge:
+            mark("attached")
             progress("Reading Arena’s current decks…")
             report = bridge.roster()
             dt.roster_ids(report)
+            mark(f"roster of {len(report['decks'])}")
             if action == "reconcile":
-                report = dt.reconcile(conn, bridge, report)
+                report = dt.reconcile(conn, bridge, report, _resolve_names())
             elif action == "add":
                 progress(
                     {
@@ -170,6 +211,7 @@ def execute(db_path, action, selections, request_id, progress):
                     lambda step, detail: progress(
                         {"detail": detail, "completed": step, "total": 3}
                     ),
+                    _card_types(),
                 )
             elif action == "backup":
                 if report.get("deck_screen_open") is not True:
@@ -186,18 +228,25 @@ def execute(db_path, action, selections, request_id, progress):
                     {"detail": "Reading full deck backups…", "completed": 0, "total": len(ids) * 2}
                 )
                 archives = []
-                for i, identity in enumerate(ids):
-                    chunk = bridge.archive([identity])
-                    if len(chunk) != 1 or chunk[0]["source_snapshot"]["arena_id"] != identity:
+                for i in range(0, len(ids), BACKUP_BATCH):
+                    if cancelled():
+                        # Keep the decks already read; they are verified and saved below.
+                        stopped, ids = True, ids[:i]
+                        break
+                    batch = ids[i : i + BACKUP_BATCH]
+                    chunk = bridge.archive(batch)
+                    if [a["source_snapshot"]["arena_id"] for a in chunk] != batch:
                         raise dm.DeckManagerError("Arena returned a different backup identity.")
                     archives.extend(chunk)
+                    read = i + len(batch)
                     progress(
                         {
-                            "detail": f"Read {i + 1} of {len(ids)} decks…",
-                            "completed": i + 1,
+                            "detail": f"Read {read} of {len(ids)} decks…",
+                            "completed": read,
                             "total": len(ids) * 2,
                         }
                     )
+                mark(f"read {len(archives)} backups")
                 if (
                     len(archives) != len(ids)
                     or [a["source_snapshot"]["arena_id"] for a in archives] != ids
@@ -228,6 +277,9 @@ def execute(db_path, action, selections, request_id, progress):
             elif action in ("store", "restore"):
                 resolver = _resolve_names()
                 for i, selection in enumerate(selections):
+                    if i and cancelled():
+                        stopped, selections = True, selections[:i]
+                        break
                     if game_in_progress(db_path):
                         raise dm.DeckManagerError(
                             "Arena entered a game. Remaining decks were not transferred."
@@ -275,6 +327,7 @@ def execute(db_path, action, selections, request_id, progress):
                         }
             elif action != "connect":
                 raise dm.DeckManagerError("Unknown native deck action.")
+            mark(action)
             current = _public_roster(report)
             current["_account_key"] = bridge.account_key
             current["pending_transfers"] = [
@@ -283,10 +336,38 @@ def execute(db_path, action, selections, request_id, progress):
             ]
             with _LOCK:
                 _STATUS[_key(db_path)] = current
-            count = len(selections) or (len(report["decks"]) if action == "backup" else 0)
-            return {"count": count, "action": action}
+            if action == "backup":
+                count = len(ids)
+            else:
+                count = len(selections)
+            return {"count": count, "action": action, "cancelled": stopped}
     finally:
         conn.close()
+        # Durations only; never deck names or account details.
+        mark("total")
+        print(f"Deck Manager {action} timings (cumulative): " + ", ".join(timings), file=sys.stderr)
+
+
+def _failure_message(exc, action):
+    """The user-facing reason a job failed.
+
+    The adapter's own errors (Frida RPC errors) carry messages written in
+    arena_decks.js, such as "Open Arena's Decks screen…"; they contain no deck
+    data or credentials, so they are shown as-is.
+    """
+    if isinstance(exc, (dm.DeckManagerError, ValueError, KeyError)):
+        return str(exc).strip("'\"")
+    if type(exc).__name__ == "RPCException" and str(exc):
+        return str(exc)
+    if action in ("store", "restore", "add"):
+        return (
+            "Arena could not complete this operation. "
+            "Refresh and reconcile before repeating a transfer."
+        )
+    return (
+        "Tapps Tracker lost its connection to Arena. Open Arena on the Decks screen "
+        "outside a match, then click Refresh Arena."
+    )
 
 
 def start(db_path, payload):
@@ -371,7 +452,7 @@ def start(db_path, payload):
             "action": action,
             "selections": clean,
             "state": "running",
-            "detail": "Connecting to Arena…",
+            "detail": "Contacting Arena…",
             "progress": {"completed": 0, "total": None},
             "created": time.monotonic(),
         }
@@ -389,7 +470,14 @@ def start(db_path, payload):
     def run():
         global _ACTIVE
         try:
-            result = execute(db_path, action, clean, request_id, progress)
+            result = execute(
+                db_path,
+                action,
+                clean,
+                request_id,
+                progress,
+                lambda: _JOBS[request_id].get("cancel", False),
+            )
             with _LOCK:
                 total = _JOBS[request_id]["progress"]["total"] or 1
                 _JOBS[request_id].update(
@@ -399,13 +487,8 @@ def start(db_path, payload):
                     progress={"completed": total, "total": total},
                 )
         except Exception as exc:
-            # Native exception messages contain no deck data or credentials.
-            message = (
-                str(exc)
-                if isinstance(exc, (dm.DeckManagerError, ValueError, KeyError))
-                else "Arena could not complete this operation. "
-                "Refresh and reconcile before repeating a transfer."
-            )
+            message = _failure_message(exc, action)
+            print(f"Deck Manager {action} failed: {type(exc).__name__}: {exc}", file=sys.stderr)
             with _LOCK:
                 _JOBS[request_id].update(state="error", detail=message)
         finally:
@@ -432,7 +515,26 @@ def handle_get(path, query, db_path):
     return None
 
 
+def cancel(db_path, job_id):
+    """Ask a running backup or bulk transfer to stop after its current deck."""
+    with _LOCK:
+        job = _JOBS.get(job_id)
+        if not job or job["db"] != _key(db_path):
+            raise dm.DeckManagerError("Deck operation not found.")
+        if job["state"] == "running" and job["action"] in ("backup", "store", "restore"):
+            job["cancel"] = True
+            job["detail"] = "Stopping after the current deck…"
+        return {"state": job["state"], "cancel": bool(job.get("cancel"))}
+
+
 def handle_post(path, payload, db_path):
+    if path == "/api/deck-manager/native/cancel":
+        try:
+            if not isinstance(payload, dict) or not isinstance(payload.get("job_id"), str):
+                raise dm.DeckManagerError("A deck operation is required.")
+            return 200, cancel(db_path, payload["job_id"])
+        except dm.DeckManagerError as exc:
+            return 404, {"error": str(exc)}
     if path != "/api/deck-manager/native/run":
         return None
     try:

@@ -8,6 +8,8 @@ from pathlib import Path
 
 from . import deck_manager as dm
 from . import deck_collections as dc
+from .deck_colors import COLOR_SECTIONS, deck_colors
+from . import native_deck_archive
 
 
 def _read_connection(path):
@@ -20,6 +22,34 @@ def _read_connection(path):
         conn.close()
         return None
     return conn
+
+
+_PRINTINGS = None
+
+
+def _with_printings(deck):
+    """Add set/collector numbers from Arena's card DB to a full backup's list.
+
+    Native backups store printing IDs, not set codes; without them Arena's
+    importer picks a printing itself. Unknown IDs keep the name-only line.
+    """
+    global _PRINTINGS
+    if deck.get("import_text"):
+        return deck
+    if _PRINTINGS is None:
+        try:
+            from .card_database import CardDatabase
+
+            _PRINTINGS = CardDatabase().export_index_by_arena_id()
+        except Exception:
+            _PRINTINGS = {}
+    cards = []
+    for card in deck["cards"]:
+        printing = _PRINTINGS.get(card.get("arena_id") or 0)
+        if printing and printing[1] and printing[2] and not card.get("set_code"):
+            card = {**card, "set_code": printing[1], "collector_number": printing[2]}
+        cards.append(card)
+    return {**deck, "cards": cards}
 
 
 def handle_get(path, query, db_path):
@@ -38,10 +68,15 @@ def handle_get(path, query, db_path):
             for deck in decks:
                 deck["tags"] = json.loads(deck.pop("tags_json"))
             if conn:
+                # An import draft (no Version attribute) is added from its text instead:
+                # restoring it would recreate Arena's empty format and missing art.
                 restorable = {
                     r[0]
                     for r in conn.execute(
                         "SELECT id FROM managed_deck_revisions WHERE json_extract(payload_json,'$.metadata.native_archive.archive_kind')='arena_typed_model_poc'"
+                        " AND (json_extract(payload_json,'$.metadata.native_import_request') IS NULL"
+                        " OR EXISTS (SELECT 1 FROM json_each(payload_json,'$.metadata.native_archive.source_snapshot.summary.Attributes')"
+                        " WHERE json_extract(value,'$.key')='Version'))"
                     )
                 }
                 for deck in decks:
@@ -53,6 +88,23 @@ def handle_get(path, query, db_path):
                     bindings.setdefault(deck_id, []).append(arena_id)
                 for deck in decks:
                     deck["native_arena_ids"] = bindings.get(deck["id"], [])
+                cards = {}
+                for deck_id, section, quantity, name, arena_id in conn.execute(
+                    "SELECT d.id,c.section,c.quantity,c.name,c.arena_id FROM managed_decks d"
+                    " JOIN managed_deck_cards c ON c.revision_id=d.current_revision_id"
+                    f" WHERE c.section IN ({','.join('?' * len(COLOR_SECTIONS))})",
+                    COLOR_SECTIONS,
+                ):
+                    cards.setdefault(deck_id, []).append(
+                        {
+                            "section": section,
+                            "quantity": quantity,
+                            "name": name,
+                            "arena_id": arena_id,
+                        }
+                    )
+                for deck in decks:
+                    deck["colors"] = deck_colors(cards.get(deck["id"], []))
             available, message = deck_native_api.nb.availability()
             return 200, {
                 "decks": decks,
@@ -68,7 +120,10 @@ def handle_get(path, query, db_path):
             raise KeyError("Saved deck not found.")
         detail = dm.deck_detail(conn, query.get("id", [""])[0], query.get("revision", [None])[0])
         detail["tags"] = json.loads(detail.pop("tags_json"))
-        detail["native_restorable"] = bool(detail["deck"].get("metadata", {}).get("native_archive"))
+        detail["native_restorable"] = bool(
+            detail["deck"].get("metadata", {}).get("native_archive")
+        ) and not native_deck_archive.import_draft(detail["deck"])
+        detail["colors"] = deck_colors(detail["deck"]["cards"])
         detail["native_arena_ids"] = [
             r[0]
             for r in conn.execute(
@@ -83,12 +138,12 @@ def handle_get(path, query, db_path):
                 "text": (
                     dm.export_document(detail)
                     if fmt == "backup"
-                    else dm.portable_text(detail["deck"])
+                    else dm.portable_text(_with_printings(detail["deck"]))
                 ),
                 "name": detail["name"],
                 "extension": ".tappsdeck" if fmt == "backup" else ".txt",
                 "note": (
-                    "This text export uses card names. Arena chooses printings and cosmetics; captured IDs and metadata remain in the full backup."
+                    "Card styles and deck art are kept only in the full backup."
                     if fmt == "arena" and not detail["deck"].get("import_text")
                     else ""
                 ),

@@ -13,7 +13,9 @@ from . import native_deck_archive as na
 TERMINAL = ("complete", "cancelled")
 
 
-def add_import(conn, bridge, selection, request_id, report, resolve_name, progress=None):
+def add_import(
+    conn, bridge, selection, request_id, report, resolve_name, progress=None, card_type=None
+):
     """Prepare text with Arena's parser, reject dropped cards, then use journaled restore."""
     source_id = str(uuid.uuid5(uuid.UUID(request_id), "text-import-source"))
     bindings = conn.execute(
@@ -39,6 +41,11 @@ def add_import(conn, bridge, selection, request_id, report, resolve_name, progre
         )
     archive = na.validate_archive(
         bridge.prepare_import(selection["text"], expected["name"], source_id)
+    )
+    archive = na.with_import_summary(
+        archive,
+        na.arena_format(selection["format_name"]),
+        na.tile_card(archive["source_snapshot"], card_type),
     )
     actual = na.document(archive, resolve_name)
     if actual["name"] != expected["name"] or archive["source_snapshot"]["arena_id"] != source_id:
@@ -149,6 +156,32 @@ def persist_archive(
     if dm.content_hash(restored["deck"]) != dm.content_hash(deck):
         raise dm.DeckManagerError("The saved backup did not pass read-back verification.")
     return restored
+
+
+def created_matches(saved, actual, archive, arena_id):
+    if na.import_draft(saved["deck"]):
+        return na.same_contents(actual, archive["source_snapshot"], restored_id=arena_id)
+    return na.equivalent(actual, archive["source_snapshot"], restored_id=arena_id)
+
+
+def save_arena_copy(conn, bridge, saved, arena_id, resolve_name):
+    """Save Arena's stored copy of a created deck as the backup's newest revision.
+
+    Later moves compare snapshots exactly, so the backup must hold what Arena
+    actually stored. Earlier revisions are kept.
+    """
+    archives = bridge.archive([arena_id])
+    if len(archives) != 1 or archives[0]["source_snapshot"]["arena_id"] != arena_id:
+        raise dm.DeckManagerError("Arena returned a different backup identity.")
+    metadata = saved["deck"].get("metadata", {})
+    persist_archive(
+        conn,
+        na.validate_archive(archives[0]),
+        bridge.account_key,
+        resolve_name,
+        deck_id=saved["id"],
+        metadata={k: metadata[k] for k in ("native_import_request",) if k in metadata},
+    )
 
 
 def set_presence(conn, account, arena_id, deck_id, presence):
@@ -294,7 +327,7 @@ def transfer(conn, bridge, action, selection, request_id, report, resolve_name=N
             bridge.remove(archive["source_snapshot"])
         else:
             actual = bridge.create_prepared(arena_id)
-            if not na.equivalent(actual, archive["source_snapshot"], restored_id=arena_id):
+            if not created_matches(saved, actual, archive, arena_id):
                 raise dm.DeckManagerError(
                     "Arena’s restored deck differs from the backup. It was retained for review."
                 )
@@ -308,13 +341,15 @@ def transfer(conn, bridge, action, selection, request_id, report, resolve_name=N
             check_remaining(baseline, after, arena_id)
             presence = "absent"
         else:
-            if arena_id not in ids or not na.equivalent(
-                bridge.fetch(arena_id), archive["source_snapshot"], restored_id=arena_id
+            if arena_id not in ids or not created_matches(
+                saved, bridge.fetch(arena_id), archive, arena_id
             ):
                 raise dm.DeckManagerError(
                     "The restored deck could not be verified. Reconcile before continuing."
                 )
             check_remaining(baseline, after)
+            if na.import_draft(saved["deck"]):
+                save_arena_copy(conn, bridge, saved, arena_id, resolve_name)
             presence = "present"
         set_presence(conn, account, arena_id, saved["id"], presence)
         journal_phase(conn, transfer_id, "complete")
@@ -334,7 +369,7 @@ def transfer(conn, bridge, action, selection, request_id, report, resolve_name=N
         raise
 
 
-def reconcile(conn, bridge, report):
+def reconcile(conn, bridge, report, resolve_name=None):
     """Never writes to Arena: verify committed outcomes or cancel uncommitted ones."""
     ids = roster_ids(report)
     for row in pending(conn, bridge.account_key):
@@ -358,13 +393,14 @@ def reconcile(conn, bridge, report):
         else:
             check_remaining(baseline, report)
             if arena_id in ids:
-                if not na.equivalent(
-                    bridge.fetch(arena_id), archive["source_snapshot"], restored_id=arena_id
+                # The identity is derived from this transfer, so its presence
+                # proves Arena created it. Edits made in Arena since then (name,
+                # format, art, styles) are the player's: keep the original
+                # revision and save Arena's current copy on top of it.
+                if na.import_draft(saved["deck"]) or not created_matches(
+                    saved, bridge.fetch(arena_id), archive, arena_id
                 ):
-                    raise dm.DeckManagerError(
-                        "An interrupted restore differs from its backup. "
-                        "No decks were removed; review it in Arena."
-                    )
+                    save_arena_copy(conn, bridge, saved, arena_id, resolve_name)
                 phase, presence = "complete", "present"
             elif row["phase"] == "prepared":
                 # No create intent committed, so a request could not start.

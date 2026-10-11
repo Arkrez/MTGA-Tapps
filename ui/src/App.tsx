@@ -933,7 +933,7 @@ export default function App() {
   }, [auditRoute, cardRoute, deckFinderRoute, deckManagerRoute, deckRoute, gameRoute, gamesRoute, liveRoute, loadState.status, opponentRoute, opponentsRoute, routeHash, settingsRoute]);
 
   useEffect(() => {
-    document.title = deckManagerRoute ? pageTitle('Deck Manager') : deckRoute
+    document.title = deckManagerRoute ? pageTitle('Deck Manager (Beta)') : deckRoute
       ? pageTitle(deckRoute.name)
       : gameRoute
         ? pageTitle('Game')
@@ -1047,6 +1047,7 @@ export default function App() {
                   : undefined
         }
         heading={opponentsRoute ? 'Opponents' : gamesRoute ? 'All Games' : auditRoute ? 'Database Health' : deckManagerRoute ? 'Deck Manager' : deckFinderRoute ? 'Deck Finder' : settingsRoute ? 'Settings' : liveRoute ? 'Live Scoreboard' : cardName ? formatCardName(cardName) : gameRoute ? 'Game Detail' : deckName ? 'Deck Details' : (opponentRoute ? 'Opponent Information' : dashboardTitle)}
+        headingBadge={deckManagerRoute ? <span className="deck-manager-beta deck-manager-heading-beta">Beta</span> : undefined}
         mainClassName={liveRoute ? 'live-page-main' : undefined}
       >
         {opponentsRoute ? (

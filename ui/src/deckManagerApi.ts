@@ -24,6 +24,8 @@ export interface ManagedDeck {
   collection_id?: string | null;
   native_restorable?: boolean;
   native_arena_ids?: string[];
+  /** WUBRG letters scored from the main deck; "C" colorless, "" unknown. */
+  colors?: string;
 }
 
 export interface ManagedDeckDetail extends ManagedDeck {
@@ -70,6 +72,7 @@ export interface ArenaDeck {
   main_count: number;
   art_card?: string | null;
   art_card_id?: number | null;
+  colors?: string;
 }
 export interface NativeDeckStatus {
   available: boolean;
@@ -90,11 +93,14 @@ export interface NativeDeckJob {
   state: 'running' | 'done' | 'error';
   detail: string;
   progress?: { completed: number; total: number | null };
-  result?: { count: number; action: NativeDeckAction };
+  action?: NativeDeckAction;
+  cancel?: boolean;
+  result?: { count: number; action: NativeDeckAction; cancelled?: boolean };
 }
 export const fetchNativeDeckStatus = (signal?: AbortSignal) => request<NativeDeckStatus>('/native', undefined, signal);
 export const startNativeDeckJob = (action: NativeDeckAction, decks: { id: string; revision?: string }[] = []) =>
   request<{ job_id: string }>('/native/run', { action, decks, request_id: crypto.randomUUID(), ...(action === 'store' ? { confirm: 'MOVE' } : {}) });
+export const cancelNativeDeckJob = (job_id: string) => request<{ state: string; cancel: boolean }>('/native/cancel', { job_id });
 export const fetchNativeDeckJob = (id: string, signal?: AbortSignal) => request<NativeDeckJob>(`/native/job?${new URLSearchParams({ id })}`, undefined, signal);
 export const addDeckToArena = (text: string, name: string, format_name: string, saved_deck_id?: string, collection_id?: string) =>
   request<{ job_id: string }>('/native/run', { action: 'add', decks: [], request_id: crypto.randomUUID(), import: { text, name, format_name, ...(saved_deck_id ? { saved_deck_id } : {}), ...(collection_id ? { collection_id } : {}) } });

@@ -1,6 +1,8 @@
 import { DeckTransferProgress } from './DeckTransferProgress';
+import { DeckModal } from './DeckModal';
+import { exportedDeckName } from '../deckFinderName';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Archive, Check, Copy, Dices, ExternalLink, Plus, RefreshCw } from 'lucide-react';
+import { Archive, Check, Copy, Dices, ExternalLink, FolderOpen, Plus, RefreshCw } from 'lucide-react';
 import { fetchDeckLibrary, type DeckCollection, type NativeDeckJob, importManagedDeck, addDeckToArena, fetchNativeDeckStatus, fetchNativeDeckJob, type NativeDeckStatus } from '../deckManagerApi';
 import {
   fetchDeckFinderJob,
@@ -30,6 +32,14 @@ const SITE_SUBTITLES: Record<string, string> = {
   untapped: 'Arena meta',
   youtube: 'Creators',
 };
+
+function addBlockedReason(status: NativeDeckStatus): string | null {
+  if (status.in_game) return 'Add to Arena is paused while you are in a game.';
+  if (status.pending_transfers?.length) return 'Add to Arena is paused until an interrupted transfer is reconciled in Deck Manager.';
+  if (status.busy) return 'Add to Arena is waiting for another Arena deck operation to finish.';
+  if (status.limit_reached === true) return 'Arena’s deck slots are full. Move a deck to your collection first.';
+  return null;
+}
 
 /** Port of the terminal app's Arena import formatting: blank line before
     section headers (Sideboard, Companion, Commander) so Arena accepts it. */
@@ -102,11 +112,12 @@ export function DeckFinderPage() {
   const [selectedDeck, setSelectedDeck] = useState<DeckFinderDeck | null>(null);
   const [hydrating, setHydrating] = useState(false);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
-  const [savedDeckId, setSavedDeckId] = useState<{ id: string; source: string } | null>(null);
+  const [savedDeckId, setSavedDeckId] = useState<{ id: string; source: string; collection: string } | null>(null);
   const [saveError, setSaveError] = useState<{ message: string; source: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [collections, setCollections] = useState<DeckCollection[]>([]);
-  const [collectionId, setCollectionId] = useState('');
+  const [pickingCollection, setPickingCollection] = useState<HTMLElement | null>(null);
+  const [collectionQuery, setCollectionQuery] = useState('');
   const [transferProgress, setTransferProgress] = useState<NativeDeckJob['progress']>();
   useEffect(() => {
     const controller = new AbortController();
@@ -165,14 +176,25 @@ export function DeckFinderPage() {
     const source = selectedDeck.source_url + selectedDeck.name;
     setAdding(true); setArenaFeedback(null);
     try {
-      const args = [formatArenaImportText(selectedDeck.deck_text) || '', selectedDeck.name, selectedDeck.format_label || ''] as const;
-      const savedId = savedDeckId?.source === source ? savedDeckId.id : undefined;
-      const result = collectionId ? await addDeckToArena(...args, savedId, collectionId) : savedId ? await addDeckToArena(...args, savedId) : await addDeckToArena(...args);
+      const args = [formatArenaImportText(selectedDeck.deck_text) || '', exportedDeckName(selectedDeck.deck_text, selectedDeck.name), selectedDeck.format_label || ''] as const;
+      const saved = savedDeckId?.source === source ? savedDeckId : null;
+      // A saved deck keeps its collection; an unsaved one is backed up in Unsorted.
+      const result = saved?.collection ? await addDeckToArena(...args, saved.id, saved.collection) : saved ? await addDeckToArena(...args, saved.id) : await addDeckToArena(...args);
       setArenaJob({ id: result.job_id, source });
     } catch (error: unknown) {
       setAdding(false);
       setArenaFeedback({ source, message: error instanceof Error ? error.message : 'Could not add this deck to Arena.', error: true });
     }
+  }
+
+  function saveSelectedDeck(collection: string) {
+    if (!selectedDeck?.deck_text) return;
+    const source = selectedDeck.source_url + selectedDeck.name;
+    setPickingCollection(null); setSaving(true); setSaveError(null);
+    void importManagedDeck(formatArenaImportText(selectedDeck.deck_text) || '', exportedDeckName(selectedDeck.deck_text, selectedDeck.name), selectedDeck.format_label || '', savedDeckId?.source === source ? savedDeckId.id : undefined, collection || null)
+      .then((saved) => setSavedDeckId({ id: saved.id, source, collection }))
+      .catch((error: unknown) => setSaveError({ message: error instanceof Error ? error.message : 'Could not save this deck.', source }))
+      .finally(() => setSaving(false));
   }
 
   useEffect(() => {
@@ -730,15 +752,10 @@ export function DeckFinderPage() {
             <div className="deckfinder-detail-actions">
               {nativeStatus?.available ? <button className="deck-export-button" type="button"
                 disabled={saving || adding || addedSource === selectedDeck.source_url + selectedDeck.name || nativeStatus.busy || nativeStatus.in_game || nativeStatus.limit_reached === true || Boolean(nativeStatus.pending_transfers?.length) || !selectedDeck.deck_text}
-                title={nativeStatus.in_game ? 'Finish your current game first.' : nativeStatus.limit_reached ? 'Free an Arena deck slot first.' : 'Arena must be open on Decks outside a match.'}
+                title={addBlockedReason(nativeStatus) ?? 'Arena must be open on Decks outside a match.'}
                 onClick={() => void addSelectedDeck()}>{addedSource === selectedDeck.source_url + selectedDeck.name ? <Check aria-hidden="true" /> : <Plus aria-hidden="true" />}{adding ? 'Adding…' : addedSource === selectedDeck.source_url + selectedDeck.name ? 'Added to Arena' : 'Add to Arena'}</button> : null}
-              <select aria-label="Save deck to collection" value={collectionId} disabled={saving || adding} onChange={(event) => setCollectionId(event.target.value)}><option value="">Unsorted</option>{collections.map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select>
-              <button className="deck-neutral-button" disabled={saving || adding || !selectedDeck.deck_text} type="button" onClick={() => {
-                setSaving(true); setSaveError(null);
-                void importManagedDeck(formatArenaImportText(selectedDeck.deck_text) || '', selectedDeck.name, selectedDeck.format_label || '', savedDeckId?.source === selectedDeck.source_url + selectedDeck.name ? savedDeckId.id : undefined, collectionId || null)
-                  .then((saved) => setSavedDeckId({ id: saved.id, source: selectedDeck.source_url + selectedDeck.name }))
-                  .catch((error: unknown) => setSaveError({ message: error instanceof Error ? error.message : 'Could not save this deck.', source: selectedDeck.source_url + selectedDeck.name }))
-                  .finally(() => setSaving(false));
+              <button className="deck-neutral-button" disabled={saving || adding || !selectedDeck.deck_text} type="button" onClick={(event) => {
+                setCollectionQuery(''); setPickingCollection(event.currentTarget);
               }}><Archive aria-hidden="true" />{saving ? 'Saving…' : 'Save to collection'}</button>
               <button
                 className="deck-export-button"
@@ -764,7 +781,17 @@ export function DeckFinderPage() {
             </div>
           </div>
           {adding && arenaFeedback?.source === selectedDeck.source_url + selectedDeck.name ? <DeckTransferProgress detail={arenaFeedback.message} progress={transferProgress} /> : null}
-          {savedDeckId?.source === selectedDeck.source_url + selectedDeck.name ? <p role="status">Deck saved. <a href="#/deck-manager">Open Deck Manager</a></p> : null}
+          {nativeStatus?.available && !adding && addBlockedReason(nativeStatus) ? <p className="deckfinder-arena-blocked">{addBlockedReason(nativeStatus)} {nativeStatus.pending_transfers?.length ? <a href="#/deck-manager">Open Deck Manager</a> : null}</p> : null}
+          {savedDeckId?.source === selectedDeck.source_url + selectedDeck.name ? <p role="status">Deck saved to {collections.find((c) => c.id === savedDeckId.collection)?.name ?? 'Unsorted'}. <a href="#/deck-manager">Open Deck Manager</a></p> : null}
+          {pickingCollection ? <DeckModal title="Save to collection" busy={false} onClose={() => setPickingCollection(null)} returnFocus={pickingCollection}>
+            <input type="search" aria-label="Search collections" placeholder="Search collections" autoFocus value={collectionQuery} onChange={(event) => setCollectionQuery(event.target.value)} />
+            <ul className="deck-collection-picker" aria-label="Collections">
+              {[{ id: '', name: 'Unsorted' }, ...collections].filter((c) => c.name.toLowerCase().includes(collectionQuery.trim().toLowerCase())).map((c) => (
+                <li key={c.id || 'unsorted'}><button type="button" onClick={() => saveSelectedDeck(c.id)}><FolderOpen aria-hidden="true" size={16} />{c.name}</button></li>
+              ))}
+            </ul>
+            {collections.length && ![{ name: 'Unsorted' }, ...collections].some((c) => c.name.toLowerCase().includes(collectionQuery.trim().toLowerCase())) ? <p className="deck-manager-description">No collections match “{collectionQuery}”.</p> : null}
+          </DeckModal> : null}
           {saveError?.source === selectedDeck.source_url + selectedDeck.name ? <p role="alert">{saveError.message}</p> : null}
           {!adding && arenaFeedback?.source === selectedDeck.source_url + selectedDeck.name ? <p role={arenaFeedback.error ? 'alert' : 'status'}>{arenaFeedback.message} {arenaFeedback.error ? <a href="#/deck-manager">Open Deck Manager</a> : null}</p> : null}
           {nativeStatus?.available ? <p className="section-description">To add this deck directly, leave Arena on Decks outside a match with a free deck slot.</p> : null}

@@ -29,7 +29,8 @@ from .draw_quality import (
     hypergeom_tail_at_most,
     is_land_row,
 )
-from .colors import color_combo_label, normalize_colors
+from .colors import _MANA_PIP_RE, color_combo_label, normalize_colors
+from .colors import score_deck_colors as _score_deck_colors
 from .format_normalizer import format_label, normalize_match_format
 from .paths import DATA_DIR
 
@@ -2134,53 +2135,6 @@ def _deck_visuals(conn: sqlite3.Connection) -> Dict[str, Dict[str, Any]]:
             "source": "local_metadata",
         }
     return visuals
-
-
-_MANA_PIP_RE = re.compile(r"\{([^}]+)\}")
-
-
-def _strict_pip_letters(mana_cost: str) -> List[str]:
-    """Colors a cost genuinely REQUIRES: single-color pips (Phyrexian included).
-
-    Hybrid pips ({U/B}) and twobrids ({2/W}) are payable another way, so a
-    mono-black deck's blue-OR-black card never forces blue into its colors.
-    One letter per matching pip, so {R}{W}{W} yields ['R', 'W', 'W'].
-    """
-    letters: List[str] = []
-    for pip in _MANA_PIP_RE.findall(str(mana_cost or "")):
-        parts = pip.split("/")
-        if parts and parts[0] in "WUBRG" and all(p in ("P", parts[0]) for p in parts[1:]):
-            letters.append(parts[0])
-    return letters
-
-
-def _score_deck_colors(card_rows) -> str:
-    """WUBRG colors from (type_category, mana_cost, color_identity, copies) rows.
-
-    The mana base carries the most weight: each land copy contributes 2 to
-    every color its identity can produce; each nonland copy contributes 1 per
-    strictly-required pip color. A color needs a score of 3 to count, so one
-    off-color card (or a single stray dual land) never repaints the deck.
-    """
-    scores: Dict[str, float] = {}
-    known_cards = 0
-    for type_category, mana_cost, identity, copies in card_rows:
-        quantity = max(1, int(copies or 1))
-        if identity is not None or str(mana_cost or "").strip():
-            known_cards += 1
-        if str(type_category or "").lower() == "land":
-            for ch in str(identity or ""):
-                if ch in "WUBRG":
-                    scores[ch] = scores.get(ch, 0) + 2 * quantity
-        else:
-            for ch in set(_strict_pip_letters(mana_cost or "")):
-                scores[ch] = scores.get(ch, 0) + quantity
-    letters = normalize_colors("".join(ch for ch, score in scores.items() if score >= 3))
-    if letters:
-        return letters
-    # No color cleared the bar. If the deck's cards are actually known, it's
-    # a genuinely colorless deck (Eldrazi/artifacts) — not colors-unknown.
-    return "C" if known_cards >= 3 else ""
 
 
 def _deck_color_map(conn: sqlite3.Connection) -> Dict[str, str]:

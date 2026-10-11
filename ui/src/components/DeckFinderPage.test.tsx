@@ -7,6 +7,7 @@ import {
 } from '../api';
 import { fetchDeckLibrary, importManagedDeck, addDeckToArena, fetchNativeDeckStatus, fetchNativeDeckJob } from '../deckManagerApi';
 import { DeckFinderPage } from './DeckFinderPage';
+import { exportedDeckName } from '../deckFinderName';
 
 vi.mock('../deckManagerApi', () => ({ fetchDeckLibrary: vi.fn().mockResolvedValue({ collections: [], decks: [] }), importManagedDeck: vi.fn(), addDeckToArena: vi.fn(), fetchNativeDeckStatus: vi.fn(), fetchNativeDeckJob: vi.fn() }));
 
@@ -43,6 +44,10 @@ const deck: DeckFinderDeck = {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  Object.defineProperties(HTMLDialogElement.prototype, {
+    showModal: { configurable: true, value: function (this: HTMLDialogElement) { this.setAttribute('open', ''); } },
+    close: { configurable: true, value: function (this: HTMLDialogElement) { this.removeAttribute('open'); } },
+  });
   vi.mocked(fetchDeckLibrary).mockResolvedValue({ collections: [], decks: [], capabilities: { arena_transfers: false, native_section: false, capacity: null, message: '' } });
   vi.mocked(fetchDeckFinderProviders).mockResolvedValue([youtube]);
   vi.mocked(fetchDeckFinderSources).mockResolvedValue(sources);
@@ -144,7 +149,10 @@ it('saves a selected Deck Finder list to the general library', async () => {
   await chooseCreator();
   fireEvent.click(await screen.findByRole('button', { name: deck.name }));
   fireEvent.click(screen.getByRole('button', { name: 'Save to collection' }));
-  await waitFor(() => expect(importManagedDeck).toHaveBeenCalledWith(deck.deck_text, deck.name, 'Standard', undefined, null));
+  expect(importManagedDeck).not.toHaveBeenCalled();
+  fireEvent.click(await screen.findByRole('button', { name: 'Unsorted' }));
+  await waitFor(() => expect(importManagedDeck).toHaveBeenCalledWith(deck.deck_text, 'Ramp 5 Lands at Once (HGG)', 'Standard', undefined, null));
+  expect(await screen.findByText(/Deck saved to Unsorted/)).toBeInTheDocument();
   expect(await screen.findByRole('link', { name: 'Open Deck Manager' })).toHaveAttribute('href', '#/deck-manager');
 });
 
@@ -156,7 +164,7 @@ it('adds the chosen list directly to Arena once and monitors the result without 
   await chooseCreator();
   fireEvent.click(await screen.findByRole('button', { name: deck.name }));
   fireEvent.click(await screen.findByRole('button', { name: 'Add to Arena' }));
-  await waitFor(() => expect(addDeckToArena).toHaveBeenCalledExactlyOnceWith(deck.deck_text, deck.name, 'Standard'));
+  await waitFor(() => expect(addDeckToArena).toHaveBeenCalledExactlyOnceWith(deck.deck_text, 'Ramp 5 Lands at Once (HGG)', 'Standard'));
   expect(await screen.findByRole('status')).toHaveTextContent('Deck added to Arena');
   expect(screen.getByRole('button', { name: 'Added to Arena' })).toBeDisabled();
   expect(importManagedDeck).not.toHaveBeenCalled();
@@ -180,11 +188,38 @@ it('adds a previously saved deck using the same library entry and selected colle
   render(<DeckFinderPage />);
   await chooseCreator();
   fireEvent.click(await screen.findByRole('button', { name: deck.name }));
-  fireEvent.change(screen.getByRole('combobox', { name: 'Save deck to collection' }), { target: { value: 'green' } });
+  expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Save to collection' }));
-  await screen.findByText('Deck saved.');
-  expect(importManagedDeck).toHaveBeenCalledWith(deck.deck_text, deck.name, 'Standard', undefined, 'green');
+  fireEvent.click(await screen.findByRole('button', { name: 'Green' }));
+  await screen.findByText(/Deck saved to Green/);
+  expect(importManagedDeck).toHaveBeenCalledWith(deck.deck_text, 'Ramp 5 Lands at Once (HGG)', 'Standard', undefined, 'green');
   fireEvent.click(screen.getByRole('button', { name: 'Add to Arena' }));
-  await waitFor(() => expect(addDeckToArena).toHaveBeenCalledExactlyOnceWith(deck.deck_text, deck.name, 'Standard', 'saved-id', 'green'));
+  await waitFor(() => expect(addDeckToArena).toHaveBeenCalledExactlyOnceWith(deck.deck_text, 'Ramp 5 Lands at Once (HGG)', 'Standard', 'saved-id', 'green'));
   expect(await screen.findByRole('progressbar')).toHaveAttribute('value', '0');
+});
+
+it('searches collections in the save picker', async () => {
+  vi.mocked(fetchDeckLibrary).mockResolvedValue({ collections: [{ id: 'green', name: 'Green' }, { id: 'brawl', name: 'Brawl decks' }], decks: [], capabilities: { arena_transfers: false, native_section: false, capacity: null, message: '' } });
+  render(<DeckFinderPage />);
+  await chooseCreator();
+  fireEvent.click(await screen.findByRole('button', { name: deck.name }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save to collection' }));
+  fireEvent.change(await screen.findByRole('searchbox', { name: 'Search collections' }), { target: { value: 'braw' } });
+  expect(screen.getByRole('button', { name: 'Brawl decks' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Green' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Unsorted' })).not.toBeInTheDocument();
+});
+
+it('explains that a pending transfer pauses direct adds', async () => {
+  vi.mocked(fetchNativeDeckStatus).mockResolvedValue({ available: true, connected: true, busy: false, decks: [], limit: 100, limit_reached: false, deck_screen_open: true, message: '', pending_transfers: [{ id: 't', action: 'restore', phase: 'uncertain', deck_id: 'd' }] });
+  render(<DeckFinderPage />);
+  await chooseCreator();
+  fireEvent.click(await screen.findByRole('button', { name: deck.name }));
+  expect(await screen.findByRole('button', { name: 'Add to Arena' })).toBeDisabled();
+  expect(screen.getByText(/paused until an interrupted transfer is reconciled/)).toBeInTheDocument();
+});
+
+it('reads the exported Arena name, falling back to the listed name', () => {
+  expect(exportedDeckName('About\nName Rakdos Lizards (Ash)\n\nDeck\n4 Forest', 'Rakdos Lizards')).toBe('Rakdos Lizards (Ash)');
+  expect(exportedDeckName('Deck\n4 Forest', 'Rakdos Lizards')).toBe('Rakdos Lizards');
 });

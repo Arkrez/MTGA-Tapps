@@ -22,7 +22,10 @@ def deck():
             "DeckId": identity,
             "Name": "Offline native fixture",
             "Description": "",
-            "Attributes": [{"key": "Format", "value": "Standard"}],
+            "Attributes": [
+                {"key": "Version", "value": "11"},
+                {"key": "Format", "value": "Standard"},
+            ],
         },
         "piles": [
             {"pile": 1, "entries": [{"id": 123, "quantity": 60}]},
@@ -81,6 +84,14 @@ class Arena:
 
     def prepare_create(self, saved, identity):
         self.prepared = (saved, identity)
+        rebuilt = json.loads(saved["summary_json"])
+        snapshot = saved["source_snapshot"]["summary"]
+        # Arena rebuilds the summary from summary_json and checks it against the snapshot.
+        if isinstance(rebuilt["Attributes"], dict):
+            rebuilt["Attributes"] = [
+                {"key": k, "value": v} for k, v in rebuilt["Attributes"].items()
+            ]
+        assert {k: rebuilt[k] for k in snapshot} == snapshot
 
     def create_prepared(self, identity):
         saved, prepared_id = self.prepared
@@ -91,6 +102,15 @@ class Arena:
         self.calls.append("create")
         restored = copy.deepcopy(saved["source_snapshot"])
         restored["arena_id"] = restored["summary"]["DeckId"] = identity
+        if na.attribute(restored, "Version") is None:
+            # CreateDeck adds bookkeeping a parser draft lacks, as Arena does.
+            restored["summary"]["Attributes"] = [
+                {"key": "Version", "value": "11"},
+                {"key": "TileID", "value": "0"},
+                *restored["summary"]["Attributes"],
+                {"key": "IsFavorite", "value": "false"},
+            ]
+            restored["summary"]["CardBack"] = ""
         self.decks[identity] = restored
         if self.after_write:
             self.after_write()
@@ -340,7 +360,8 @@ def test_background_bulk_backup_reads_actual_roster_without_deletes(tmp_path, mo
     path = tmp_path / "library.db"
     result = api.execute(path, "backup", [], str(uuid.uuid4()), lambda _: None)
     assert result["count"] == 2
-    assert arena.calls == ["archive", "archive"]
+    # Both decks are read in one batch (one Arena frame when already loaded).
+    assert arena.calls == ["archive"]
     with dm.library_connection(path) as conn:
         assert len(dm.list_decks(conn)) == 2
         assert conn.execute("SELECT COUNT(*) FROM games").fetchone()[0] == 0
@@ -394,7 +415,7 @@ def test_tracked_game_blocks_attachment_before_any_native_call(tmp_path, monkeyp
         raise AssertionError("Do not attach during a tracked game")
 
     monkeypatch.setattr(api.nb, "attach", forbidden)
-    with pytest.raises(dm.DeckManagerError, match="Finish your current game"):
+    with pytest.raises(dm.DeckManagerError, match="Finish your game first"):
         api.execute(path, "connect", [], str(uuid.uuid4()), lambda _: None)
     assert api.status(path)["in_game"] is True
 
@@ -403,12 +424,19 @@ def imported_arena(quantity=4):
     arena = Arena()
 
     def prepare(text, name, identity):
+        # Arena's parser draft: no Format, no tile, no server bookkeeping.
         arena.calls.append("prepare_import")
         prepared = deck()
         prepared["name"] = prepared["summary"]["Name"] = name
         prepared["arena_id"] = prepared["summary"]["DeckId"] = identity
+        prepared["summary"]["Attributes"] = [{"key": "LastUpdated", "value": '"now"'}]
+        prepared["summary"]["DeckTileId"] = 0
         prepared["piles"][0]["entries"][0]["quantity"] = quantity
-        return archive(prepared)
+        result = archive(prepared)
+        summary = copy.deepcopy(prepared["summary"])
+        summary["Attributes"] = {"LastUpdated": '"now"'}
+        result["summary_json"] = json.dumps(summary)
+        return result
 
     arena.prepare_import = prepare
     return arena
@@ -535,7 +563,7 @@ def test_finder_add_upgrades_saved_entry_and_preserves_collection_notes_and_revi
     upgraded = dm.deck_detail(conn, original["id"])
     assert upgraded["notes"] == "Keep this note"
     assert upgraded["collection_id"] == collection["id"]
-    assert len(upgraded["revisions"]) == 2
+    assert len(upgraded["revisions"]) == 3  # text, import draft, Arena's created copy
     assert na.revision_archive(upgraded["deck"])
 
 
@@ -553,5 +581,296 @@ def test_backup_progress_counts_reads_and_verified_commits(tmp_path, monkeypatch
     progress = []
     api.execute(tmp_path / "progress.db", "backup", [], str(uuid.uuid4()), progress.append)
     steps = [p for p in progress if isinstance(p, dict)]
-    assert [p["completed"] for p in steps] == [0, 1, 2, 3, 4]
+    # Reads advance per batch (both decks at once), commits per deck.
+    assert [p["completed"] for p in steps] == [0, 2, 3, 4]
     assert all(p["total"] == 4 for p in steps)
+
+
+def finder_selection(text="Deck\n4 Forest", format_name="Standard / Bo3"):
+    return {"text": text, "name": "Finder deck", "format_name": format_name}
+
+
+def test_finder_add_sets_arena_format_and_adopts_arenas_created_copy(conn):
+    arena = imported_arena()
+    report = dt.add_import(
+        conn, arena, finder_selection(), str(uuid.uuid4()), arena.roster(), lambda _: "Forest"
+    )
+    created = next(d for d in report["decks"] if d["name"] == "Finder deck")
+    assert na.attribute(created, "Format") == "TraditionalStandard"
+    assert dt.pending(conn) == []
+    backup = saved(conn)
+    assert backup["format_name"] == "TraditionalStandard"
+    assert not na.import_draft(backup["deck"])
+    assert len(backup["revisions"]) == 2
+    # The adopted backup is Arena's stored copy, so a later move verifies exactly.
+    assert na.equivalent(
+        arena.fetch(created["arena_id"]), na.revision_archive(backup["deck"])["source_snapshot"]
+    )
+
+
+def test_finder_add_sets_a_creature_tile_in_both_summary_forms(conn):
+    arena = imported_arena()
+    arena.source["piles"][0]["entries"] = [
+        {"id": 1, "quantity": 20},
+        {"id": 2, "quantity": 2},
+        {"id": 3, "quantity": 4},
+    ]
+    prepare = arena.prepare_import
+
+    def mixed(text, name, identity):
+        result = prepare(text, name, identity)
+        result["source_snapshot"]["piles"][0]["entries"] = copy.deepcopy(
+            arena.source["piles"][0]["entries"]
+        )
+        return result
+
+    arena.prepare_import = mixed
+    kinds = {1: "Land", 2: "Creature", 3: "Instant"}
+    dt.add_import(
+        conn,
+        arena,
+        finder_selection("Deck\n20 Forest\n2 Bear\n4 Shock", "Standard"),
+        str(uuid.uuid4()),
+        arena.roster(),
+        {1: "Forest", 2: "Bear", 3: "Shock"}.get,
+        card_type=kinds.get,
+    )
+    created_archive = arena.prepared[0]
+    assert json.loads(created_archive["summary_json"])["DeckTileId"] == 2
+    assert created_archive["source_snapshot"]["summary"]["DeckTileId"] == 2
+    assert json.loads(created_archive["summary_json"])["Attributes"] == {
+        "LastUpdated": '"now"',
+        "Format": "Standard",
+    }
+
+
+@pytest.mark.parametrize(
+    "kinds, expected",
+    [({1: "Land", 2: "Instant", 3: "Instant"}, 3), ({}, 1), ({1: "Land", 2: "Creature"}, 2)],
+)
+def test_tile_card_prefers_most_played_creature_then_nonland(kinds, expected):
+    snapshot = {
+        "piles": [
+            {
+                "pile": 1,
+                "entries": [
+                    {"id": 1, "quantity": 20},
+                    {"id": 2, "quantity": 2},
+                    {"id": 3, "quantity": 4},
+                ],
+            }
+        ]
+    }
+    assert na.tile_card(snapshot, kinds.get) == expected
+
+
+def test_finder_add_changed_by_arena_is_uncertain_then_reconciles_to_arenas_copy(conn):
+    arena = imported_arena()
+    create = arena.create
+
+    def clamped(saved, identity):
+        result = create(saved, identity)
+        arena.decks[identity]["piles"][0]["entries"][0]["quantity"] = 3
+        result["piles"][0]["entries"][0]["quantity"] = 3
+        return result
+
+    arena.create = clamped
+    with pytest.raises(dm.DeckManagerError, match="differs from the backup"):
+        dt.add_import(
+            conn, arena, finder_selection(), str(uuid.uuid4()), arena.roster(), lambda _: "Forest"
+        )
+    assert dt.pending(conn)[0]["phase"] == "uncertain"
+    dt.reconcile(conn, arena, arena.roster())
+    assert dt.pending(conn) == []
+    assert arena.calls.count("create") == 1
+    backup = saved(conn)
+    assert [c["quantity"] for c in backup["deck"]["cards"]] == [3]
+    assert len(backup["revisions"]) == 2  # Arena's copy sits on top of the import draft
+
+
+def test_restored_deck_edited_in_arena_reconciles_and_keeps_original_revision(conn):
+    arena = Arena()
+    store(conn, arena)
+
+    def disconnect():
+        raise TimeoutError("connection lost")
+
+    arena.after_write = disconnect
+    with pytest.raises(TimeoutError):
+        restore(conn, arena)
+    arena.after_write = None
+    restored_id = dt.pending(conn)[0]["arena_deck_id"]
+    edited = arena.decks[restored_id]
+    edited["name"] = edited["summary"]["Name"] = "Renamed in Arena"
+    edited["summary"]["DeckTileId"] = 123
+    dt.reconcile(conn, arena, arena.roster())
+    assert dt.pending(conn) == []
+    assert arena.calls.count("create") == 1
+    backup = saved(conn)
+    assert backup["name"] == "Renamed in Arena"
+    assert len(backup["revisions"]) == 2
+
+
+def test_uncertain_finder_add_from_a_draft_reconciles_without_another_create(conn):
+    """A created deck left uncertain (e.g. by the old exact draft check) completes on reconcile."""
+    arena = imported_arena()
+
+    def created_then_lost(identity):
+        Arena.create_prepared(arena, identity)
+        raise TimeoutError("connection lost")
+
+    arena.create_prepared = created_then_lost
+    with pytest.raises(TimeoutError):
+        dt.add_import(
+            conn, arena, finder_selection(), str(uuid.uuid4()), arena.roster(), lambda _: "Forest"
+        )
+    assert dt.pending(conn)[0]["phase"] == "uncertain"
+    dt.reconcile(conn, arena, arena.roster(), lambda _: "Forest")
+    assert dt.pending(conn) == []
+    assert arena.calls.count("create") == 1
+    assert not na.import_draft(saved(conn)["deck"])
+
+
+@pytest.mark.parametrize(
+    "label, expected",
+    [
+        ("Standard", "Standard"),
+        ("Standard / Bo1", "Standard"),
+        ("Standard (Bo3)", "TraditionalStandard"),
+        ("Traditional Historic", "TraditionalHistoric"),
+        ("Historic Brawl", "HistoricBrawl"),
+        ("Brawl", "Brawl"),
+        ("Pioneer", "Explorer"),
+        ("Timeless Bo3", "Timeless"),
+        ("", "Standard"),
+    ],
+)
+def test_arena_format_maps_deck_finder_labels(label, expected):
+    assert na.arena_format(label) == expected
+
+
+def native_job(tmp_path, monkeypatch, arena):
+    @contextmanager
+    def attach():
+        yield arena
+
+    monkeypatch.setattr(api.nb, "attach", attach)
+    monkeypatch.setattr(api, "_resolve_names", lambda: lambda _: "Forest")
+    return tmp_path / "jobs.db"
+
+
+def test_cancelled_backup_keeps_decks_already_read_and_reads_no_more(tmp_path, monkeypatch):
+    arena = Arena()
+    for _ in range(3):
+        extra = deck()
+        arena.decks[extra["arena_id"]] = extra
+    db = native_job(tmp_path, monkeypatch, arena)
+    monkeypatch.setattr(api, "BACKUP_BATCH", 2)
+    result = api.execute(
+        db, "backup", [], str(uuid.uuid4()), lambda _: None, lambda: "archive" in arena.calls
+    )
+    # Stopping takes effect between batches: the first batch of two is kept.
+    assert arena.calls.count("archive") == 1
+    assert result == {"count": 2, "action": "backup", "cancelled": True}
+    conn = dm.library_connection(db)
+    try:
+        assert len(dm.list_decks(conn)) == 2
+    finally:
+        conn.close()
+
+
+def test_cancelled_bulk_move_finishes_the_current_deck_only(tmp_path, monkeypatch):
+    arena = Arena()
+    second = deck()
+    arena.decks[second["arena_id"]] = second
+    db = native_job(tmp_path, monkeypatch, arena)
+    selections = [{"id": arena.source["arena_id"]}, {"id": second["arena_id"]}]
+    result = api.execute(
+        db, "store", selections, str(uuid.uuid4()), lambda _: None, lambda: "remove" in arena.calls
+    )
+    assert result == {"count": 1, "action": "store", "cancelled": True}
+    assert arena.calls.count("remove") == 1
+    assert second["arena_id"] in arena.decks
+
+
+def test_cancel_endpoint_only_flags_running_bulk_jobs(tmp_path):
+    db = tmp_path / "cancel.db"
+    job_id = str(uuid.uuid4())
+    api._JOBS[job_id] = {"db": api._key(db), "action": "backup", "state": "running", "detail": ""}
+    try:
+        status, body = api.handle_post("/api/deck-manager/native/cancel", {"job_id": job_id}, db)
+        assert status == 200 and body["cancel"] is True
+        assert api._JOBS[job_id]["detail"].startswith("Stopping")
+        api._JOBS[job_id].update(action="add", cancel=False)
+        assert (
+            api.handle_post("/api/deck-manager/native/cancel", {"job_id": job_id}, db)[1]["cancel"]
+            is False
+        )
+        assert (
+            api.handle_post("/api/deck-manager/native/cancel", {"job_id": "missing"}, db)[0] == 404
+        )
+    finally:
+        api._JOBS.pop(job_id, None)
+
+
+def test_import_drafts_are_added_from_text_not_restored(conn, tmp_path):
+    from mtga_tracker import deck_manager_api
+
+    arena = imported_arena()
+
+    def fail(identity):
+        raise TimeoutError("lost before Arena answered")
+
+    arena.create_prepared = fail
+    with pytest.raises(TimeoutError):
+        dt.add_import(
+            conn, arena, finder_selection(), str(uuid.uuid4()), arena.roster(), lambda _: "Forest"
+        )
+    draft = saved(conn)
+    assert na.import_draft(draft["deck"])
+    db = tmp_path / "tracker.db"
+    listed = deck_manager_api.handle_get("/api/deck-manager", {}, db)[1]["decks"]
+    assert [d["native_restorable"] for d in listed] == [False]
+    detail = deck_manager_api.handle_get("/api/deck-manager/deck", {"id": [draft["id"]]}, db)[1]
+    assert detail["native_restorable"] is False
+    store_conn = dm.library_connection(tmp_path / "other.db")
+    try:
+        store(store_conn, Arena())
+        listed = deck_manager_api.handle_get("/api/deck-manager", {}, tmp_path / "other.db")[1]
+        assert [d["native_restorable"] for d in listed["decks"]] == [True]
+    finally:
+        store_conn.close()
+
+
+def test_job_failures_show_the_adapters_reason_and_fit_the_action():
+    class RPCException(Exception):
+        pass
+
+    reason = "Open Arena’s Decks screen outside a match before connecting Deck Manager."
+    assert api._failure_message(RPCException(reason), "connect") == reason
+    assert "Refresh Arena" in api._failure_message(OSError("gone"), "connect")
+    assert "reconcile" in api._failure_message(OSError("gone"), "store")
+    assert api._failure_message(KeyError("Saved deck not found."), "restore") == (
+        "Saved deck not found."
+    )
+
+
+def test_arena_text_export_adds_printings_from_card_ids(monkeypatch):
+    from mtga_tracker import deck_manager_api
+
+    monkeypatch.setattr(deck_manager_api, "_PRINTINGS", {123: ("Forest", "DMU", "281")})
+    deck = {
+        "name": "Native",
+        "import_text": None,
+        "cards": [
+            {"section": "Deck", "quantity": 4, "name": "Forest", "arena_id": 123},
+            {"section": "Deck", "quantity": 1, "name": "Mystery", "arena_id": 999},
+        ],
+    }
+    text = dm.portable_text(deck_manager_api._with_printings(deck))
+    assert "4 Forest (DMU) 281" in text and "1 Mystery\n" not in text and text.endswith("1 Mystery")
+    # Original import text always wins over a rebuilt list.
+    assert deck_manager_api._with_printings({**deck, "import_text": "Deck\n4 Forest"}) == {
+        **deck,
+        "import_text": "Deck\n4 Forest",
+    }

@@ -602,6 +602,68 @@ class CardDatabase:
             cache[clean] = result
         return result
 
+    def deck_color_index(self) -> Tuple[Dict[int, tuple], Dict[str, tuple]]:
+        """``(by_arena_id, by_name)`` -> ``(type_category, mana_cost, identity)``.
+
+        Built from one query over Arena's card DB (about 10 ms for every card),
+        shaped as score_deck_colors rows without the copy count. Only
+        "Land" matters as a type here, so a multi-type land (Dryad Arbor)
+        still counts as one. Both maps are empty when the DB is unavailable.
+        """
+        by_id: Dict[int, tuple] = {}
+        by_name: Dict[str, tuple] = {}
+        db_path = self._resolve_mtga_db_path()
+        if not db_path:
+            return by_id, by_name
+        from .colors import arena_color_codes_to_letters
+
+        tag_pattern = re.compile(r"<[^>]+>")
+        try:
+            conn = self._connect_mtga_db(db_path)
+            try:
+                cur = conn.cursor()
+                cur.execute('PRAGMA table_info("Cards")')
+                columns = {str(row[1]) for row in cur.fetchall()}
+                color_column = next(
+                    (
+                        c
+                        for c in ("ColorIdentity", "colorIdentity", "Colors", "colors")
+                        if c in columns
+                    ),
+                    None,
+                )
+                cost_column = next(
+                    (c for c in self._MANA_COST_COLUMN_CANDIDATES if c in columns), None
+                )
+                rows = self._title_join_rows(
+                    cur,
+                    'c."GrpId", l."Loc", c."Types", '
+                    + (f'c."{color_column}"' if color_column else "NULL")
+                    + ", "
+                    + (f'c."{cost_column}"' if cost_column else "NULL"),
+                    'c."GrpId" IS NOT NULL',
+                )
+            finally:
+                conn.close()
+        except Exception:
+            return {}, {}
+        for grp_id, name, types, colors, cost in rows:
+            parsed = self.parse_arena_mana_cost(cost) if cost else None
+            land = "5" in str(types or "").replace(" ", "").split(",")
+            row = (
+                "Land" if land else None,
+                parsed[0] if parsed else "",
+                arena_color_codes_to_letters(colors),
+            )
+            try:
+                by_id.setdefault(int(grp_id), row)
+            except (TypeError, ValueError):
+                pass
+            clean = tag_pattern.sub("", str(name or "")).strip()
+            if clean:
+                by_name.setdefault(clean, row)
+        return by_id, by_name
+
     #: Cards-table column names for set code / collector number, newest
     #: client naming first. Schema drifts across Arena versions, so we probe.
     _SET_CODE_COLUMN_CANDIDATES = ("ExpansionCode", "Set", "SetCode", "SetId")

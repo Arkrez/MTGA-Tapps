@@ -18,7 +18,7 @@ def availability():
         import frida  # noqa: F401
     except ImportError:
         return False, "The native deck adapter is missing from this installation."
-    return True, "Open Arena’s Decks screen, then connect to manage its decks."
+    return True, "Open Arena’s Decks screen, then load its decks."
 
 
 def account_key(account_id):

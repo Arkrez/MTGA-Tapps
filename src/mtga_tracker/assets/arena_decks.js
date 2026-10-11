@@ -24,10 +24,10 @@ const threadDetach = api('thread_detach', 'void', ['pointer']);
 const threadCurrent = api('thread_current', 'pointer', []);
 const assembliesGet = api('domain_get_assemblies', 'pointer', ['pointer', 'pointer']);
 const assemblyImage = api('assembly_get_image', 'pointer', ['pointer']);
-const imageName = api('image_get_name', 'pointer', ['pointer']);
 const imageCount = api('image_get_class_count', 'size_t', ['pointer']);
 const imageClass = api('image_get_class', 'pointer', ['pointer', 'size_t']);
 const className = api('class_get_name', 'pointer', ['pointer']);
+const classFromName = api('class_from_name', 'pointer', ['pointer', 'pointer', 'pointer']);
 const classNamespace = api('class_get_namespace', 'pointer', ['pointer']);
 const classMethods = api('class_get_methods', 'pointer', ['pointer', 'pointer']);
 const classFields = api('class_get_fields', 'pointer', ['pointer', 'pointer']);
@@ -37,7 +37,6 @@ const fieldOffset = api('field_get_offset', 'size_t', ['pointer']);
 const methodName = api('method_get_name', 'pointer', ['pointer']);
 const methodCount = api('method_get_param_count', 'uint', ['pointer']);
 const methodParam = api('method_get_param', 'pointer', ['pointer', 'uint']);
-const methodReturn = api('method_get_return_type', 'pointer', ['pointer']);
 const typeName = api('type_get_name', 'pointer', ['pointer']);
 const free = api('free', 'void', ['pointer']);
 const objectClass = api('object_get_class', 'pointer', ['pointer']);
@@ -90,37 +89,46 @@ function attached(run) {
   if (thread.isNull()) throw new Error('Could not attach the probe thread to IL2CPP.');
   try { return run(); } finally { threadDetach(thread); }
 }
-function discover() {
+// Every class key the adapter reads. Discovery looks these up by name; the
+// full class scan (every class in every assembly) is only the fallback.
+const required = [
+  '.DecksManager', '.WrapperController', '.DeckManagerController', '.WrapperDeckUtilities',
+  '.MTGALocalizedString', 'Wizards.Mtga.Decks.DeckViewSelector', 'Wizards.Mtga.Decks.Client_DeckCard',
+  'Wizards.Mtga.Decks.Client_CardSkin', 'Wizards.Mtga.Decks.EDeckPile',
+  'Wizards.Mtga.Decks.DeckServiceWrapperHelpers', 'Wizards.Mtga.Decks.Client_DeckSummary',
+  'Wizards.Mtga.FrontDoorModels.DeckInfo', 'UnityEngine.UnitySynchronizationContext',
+  'UnityEngine.Object', 'UnityEngine.Application', 'System.Guid', 'Newtonsoft.Json.JsonConvert',
+  'Wotc.Mtga.Loc.Languages',
+];
+function images() {
   const count = Memory.alloc(Process.pointerSize);
   const assemblies = assembliesGet(domainGet(), count);
   const length = Process.pointerSize === 8 ? number(count.readU64()) : count.readU32();
   if (length > 1000) throw new Error('Unexpected assembly count.');
-  const found = [];
-  for (let i = 0; i < length; i++) {
-    const image = assemblyImage(assemblies.add(i * Process.pointerSize).readPointer());
+  return Array.from({length}, (_, i) => assemblyImage(assemblies.add(i * Process.pointerSize).readPointer()));
+}
+function discover() {
+  if (required.every(key => classes.has(key))) return;
+  const all = images();
+  // Later images win, matching the scan's order.
+  for (const image of all) {
+    for (const key of required) {
+      const dot = key.lastIndexOf('.');
+      const klass = classFromName(image, Memory.allocUtf8String(key.slice(0, dot)), Memory.allocUtf8String(key.slice(dot + 1)));
+      if (!klass.isNull()) classes.set(key, klass);
+    }
+  }
+  if (required.every(key => classes.has(key))) return;
+  for (const image of all) {
     const classCount = number(imageCount(image));
     if (classCount > 100000) throw new Error('Unexpected class count.');
     for (let j = 0; j < classCount; j++) {
       const klass = imageClass(image, j);
       const name = className(klass).readUtf8String();
       if (!targets.has(name)) continue;
-      const namespace = classNamespace(klass).readUtf8String();
-      const key = `${namespace}.${name}`;
-      classes.set(key, klass);
-      found.push({ name, namespace, image: imageName(image).readUtf8String(),
-        fields: iterate(classFields, klass).map(field => ({
-          name: fieldName(field).readUtf8String(), type: typeLabel(fieldType(field)),
-          offset: number(fieldOffset(field)),
-        })),
-        methods: iterate(classMethods, klass).map(method => ({
-          name: methodName(method).readUtf8String(), returns: typeLabel(methodReturn(method)),
-          parameters: Array.from({length: methodCount(method)}, (_, p) => typeLabel(methodParam(method, p))),
-        })),
-      });
+      classes.set(`${classNamespace(klass).readUtf8String()}.${name}`, klass);
     }
   }
-  return { schema: 1, arch: Process.arch, runtime: 'IL2CPP', classes: found,
-    native_transfers_proven: false, native_folder_proven: false };
 }
 function fields(klass) {
   const key=klass.toString();
@@ -135,11 +143,23 @@ function fields(klass) {
   fieldCache.set(key,found);
   return found;
 }
+// Field metadata never changes while Arena runs; reading it once per field
+// instead of once per deck keeps roster and backup snapshots cheap.
+const metaCache = new Map();
+function meta(field) {
+  const key=field.toString();
+  let value=metaCache.get(key);
+  if (!value) {
+    value={offset:number(fieldOffset(field)), flags:fieldFlags(field), type:typeLabel(fieldType(field))};
+    metaCache.set(key,value);
+  }
+  return value;
+}
 function fieldAt(object, name) {
   if (object.isNull()) throw new Error(`Null object for ${name}.`);
   const field = fields(objectClass(object)).get(name);
-  if (!field || (fieldFlags(field) & 0x10)) throw new Error(`Missing instance field ${name}.`);
-  return object.add(number(fieldOffset(field)));
+  if (!field || (meta(field).flags & 0x10)) throw new Error(`Missing instance field ${name}.`);
+  return object.add(meta(field).offset);
 }
 function ref(object, name) { return fieldAt(object, name).readPointer(); }
 function text(object) {
@@ -165,19 +185,20 @@ function dictionary(object) {
   if (count < 0 || count > entries.length) throw new Error('Invalid dictionary count.');
   if (!count) return [];
   const entryFields = fields(elementClass(entries.klass));
-  if (typeLabel(fieldType(entryFields.get('hashCode'))) !== 'System.Int32') throw new Error('Unsupported dictionary entry layout.');
+  if (meta(entryFields.get('hashCode')).type !== 'System.Int32') throw new Error('Unsupported dictionary entry layout.');
   const offset = name => {
     const field = entryFields.get(name);
     if (!field) throw new Error(`Missing dictionary entry ${name}.`);
-    const value = number(fieldOffset(field)) - 2 * Process.pointerSize;
+    const value = meta(field).offset - 2 * Process.pointerSize;
     if (value < 0 || value >= entries.stride) throw new Error('Invalid dictionary entry offset.');
     return value;
   };
+  const hash = offset('hashCode'), key = offset('key'), value = offset('value');
   const items = [];
   for (let i = 0; i < count; i++) {
     const base = entries.data.add(i * entries.stride);
-    if (base.add(offset('hashCode')).readS32() < 0) continue;
-    items.push({key: base.add(offset('key')), value: base.add(offset('value'))});
+    if (base.add(hash).readS32() < 0) continue;
+    items.push({key: base.add(key), value: base.add(value)});
   }
   return items;
 }
@@ -201,7 +222,9 @@ function root() {
   if (manager.isNull()) throw new Error('Deck service is not loaded.');
   return manager;
 }
-function snapshot() {
+// Layout checks, pile names and service calls are cheap; walking every cached
+// deck is not (Arena caches its own decks too), so only the roster does that.
+function checkCardLayouts() {
   for (const [key,expected] of [
     ['Wizards.Mtga.Decks.Client_DeckCard',{Id:['System.UInt32',16],Quantity:['System.UInt32',20]}],
     ['Wizards.Mtga.Decks.Client_CardSkin',{GrpId:['System.Int64',16],CCV:['System.String',24],ArtId:['System.Int64',32]}],
@@ -209,30 +232,25 @@ function snapshot() {
     const metadata=fields(classes.get(key));
     for (const [name,[type,offset]] of Object.entries(expected)) {
       const field=metadata.get(name);
-      if (!field || typeLabel(fieldType(field))!==type || number(fieldOffset(field))!==offset) {
+      if (!field || meta(field).type!==type || meta(field).offset!==offset) {
         throw new Error(`Unsupported ${key} layout; no partial capture returned.`);
       }
     }
   }
-  const manager = root();
-  const provider = ref(manager, '_deckDataProvider');
-  const cached = dictionary(ref(provider, '_allDecks'));
-  const decks = cached.map(entry => deckSnapshot(entry.value.readPointer()));
+}
+function pileNames() {
+  checkCardLayouts();
+  const names = {};
+  for (const [name,field] of fields(classes.get('Wizards.Mtga.Decks.EDeckPile'))) {
+    if (!(meta(field).flags & 0x40)) continue;
+    const value=Memory.alloc(4); staticValue(field,value); names[value.readS32()]=name;
+  }
+  return names;
+}
+function serviceCalls(manager) {
   const serviceLimit = invoke(findMethod('.DecksManager','GetDeckLimit',[]), manager);
   const serviceReached = invoke(findMethod('.DecksManager','get_DeckLimitReached',[]), manager);
-  const selectors = selectorObjects();
-  const pileNames = {};
-  for (const [name,field] of fields(classes.get('Wizards.Mtga.Decks.EDeckPile'))) {
-    if (!(fieldFlags(field) & 0x40)) continue;
-    const value=Memory.alloc(4); staticValue(field,value); pileNames[value.readS32()]=name;
-  }
-  return {schema:1, arch:Process.arch, runtime:'IL2CPP', unity_thread_observed:true,
-    catalog_scope:'loaded cache; not an authoritative freshness or capacity claim',
-    deck_limit_field:fieldAt(manager,'_deckLimit').readS32(), decks, pile_names:pileNames,
-    service_calls:{get_deck_limit:objectUnbox(serviceLimit).readS32(), limit_reached:Boolean(objectUnbox(serviceReached).readU8())},
-    live_deck_selectors:selectors.length,
-    provider_fields:[...fields(objectClass(provider))].map(([name,f])=>({name,type:typeLabel(fieldType(f))})),
-    native_transfers_proven:false, native_folder_proven:false};
+  return {get_deck_limit:objectUnbox(serviceLimit).readS32(), limit_reached:Boolean(objectUnbox(serviceReached).readU8())};
 }
 function deckSnapshot(deck) {
     const summary = ref(deck, '_summary');
@@ -241,10 +259,11 @@ function deckSnapshot(deck) {
       summary:summarySnapshot(summary), is_net_deck: Boolean(fieldAt(summary, 'IsNetDeck').readU8()),
       contents_loaded: !contents.isNull()};
     if (!contents.isNull()) {
-      result.contents_fields = [...fields(objectClass(contents))].map(([name,f]) => ({name,type:typeLabel(fieldType(f))}));
-      const pileField = [...fields(objectClass(contents))].find(([name]) => name.includes('Piles'));
+      const contentFields = [...fields(objectClass(contents))];
+      result.contents_fields = contentFields.map(([name,f]) => ({name,type:meta(f).type}));
+      const pileField = contentFields.find(([name]) => name.includes('Piles'));
       if (pileField) {
-        result.piles = dictionary(contents.add(number(fieldOffset(pileField[1]))).readPointer()).map(pile => ({
+        result.piles = dictionary(contents.add(meta(pileField[1]).offset).readPointer()).map(pile => ({
           pile: pile.key.readS32(), entries: list(pile.value.readPointer(),8).map(card => ({
             id: card.readU32(), quantity: card.add(4).readU32(),
           })),
@@ -263,9 +282,9 @@ function guidText(address) {
 function summarySnapshot(summary) {
   const result = {};
   for (const [name,field] of fields(objectClass(summary))) {
-    if (fieldFlags(field) & 0x10) continue;
-    const type = typeLabel(fieldType(field));
-    const address = summary.add(number(fieldOffset(field)));
+    const {flags, type, offset} = meta(field);
+    if (flags & 0x10) continue;
+    const address = summary.add(offset);
     if (type === 'System.String') result[name] = text(address.readPointer());
     else if (type === 'System.UInt32') result[name] = address.readU32();
     else if (type === 'System.Boolean') result[name] = Boolean(address.readU8());
@@ -280,17 +299,18 @@ function summarySnapshot(summary) {
   return result;
 }
 
-function hierarchyMethods(klass) {
-  const methods = [];
-  for (let k=klass;!k.isNull();k=classParent(k)) methods.push(...iterate(classMethods,k));
-  return methods;
-}
+// Method lookups walk every method of a class (Guid and JsonConvert have
+// hundreds); each checked signature is resolved once per attachment.
+const methodCache = new Map();
 function findMethod(key, name, parameters) {
+  const cacheKey = `${key}|${name}|${parameters.join(',')}`;
+  if (methodCache.has(cacheKey)) return methodCache.get(cacheKey);
   const klass = classes.get(key);
   const found = klass && iterate(classMethods, klass).filter(m =>
     methodName(m).readUtf8String() === name && methodCount(m) === parameters.length
     && parameters.every((p,i) => typeLabel(methodParam(m,i)) === p));
   if (!found || found.length !== 1) throw new Error(`Expected one ${key}.${name} with the checked signature.`);
+  methodCache.set(cacheKey, found[0]);
   return found[0];
 }
 function invoke(method, object = NULL, arguments_ = []) {
@@ -310,12 +330,14 @@ function selectorObjects() {
   return Array.from({length:result.length}, (_,i) => result.data.add(i * result.stride).readPointer());
 }
 function objectMethod(object, name, parameters) {
+  const cacheKey = `${objectClass(object)}|${name}|${parameters.join(',')}`;
+  if (methodCache.has(cacheKey)) return methodCache.get(cacheKey);
   for (let klass=objectClass(object);!klass.isNull();klass=classParent(klass)) {
     const key = `${classNamespace(klass).readUtf8String()}.${className(klass).readUtf8String()}`;
     classes.set(key,klass);
     const matches = iterate(classMethods,klass).filter(m=>methodName(m).readUtf8String()===name
       && methodCount(m)===parameters.length && parameters.every((p,i)=>typeLabel(methodParam(m,i))===p));
-    if (matches.length===1) return matches[0];
+    if (matches.length===1) {methodCache.set(cacheKey,matches[0]); return matches[0];}
     if (matches.length>1) throw new Error(`Ambiguous ${key}.${name}.`);
   }
   throw new Error(`Missing checked method ${name}.`);
@@ -378,12 +400,21 @@ function sameSourceSnapshot(left,right) {
   return normalized(left)===normalized(right);
 }
 
-function onUnityThread(run) {
+let execAddress = null;
+function unityExec() {
+  if (execAddress) return execAddress;
   const klass = classes.get('UnityEngine.UnitySynchronizationContext');
   const exec = klass && iterate(classMethods, klass).find(m => methodName(m).readUtf8String() === 'Exec' && methodCount(m) === 0);
   if (!exec) throw new Error('Unity main-thread dispatcher is unavailable.');
   const address = exec.readPointer();
   if (!Process.findRangeByAddress(address)?.protection.includes('x')) throw new Error('Invalid Unity method address.');
+  execAddress = address;
+  return address;
+}
+// Each call waits for Arena's next frame, which can be 30-100 ms while Arena is
+// in the background, so callers do as much as they can per frame.
+function onUnityThread(run) {
+  const address = unityExec();
   return new Promise((resolve, reject) => {
     let complete = false;
     const timer = setTimeout(() => {
@@ -411,7 +442,7 @@ function accountId() {
   const info=invoke(objectMethod(client,'get_AccountInformation',[]),client);
   if (info.isNull()) throw new Error('Arena is not signed in.');
   const field=fields(objectClass(info)).get('AccountID');
-  if (!field || typeLabel(fieldType(field))!=='System.String') throw new Error('Unsupported account identity layout.');
+  if (!field || meta(field).type!=='System.String') throw new Error('Unsupported account identity layout.');
   // Read only the stable account ID. Never read tokens, email or credentials.
   const id=text(ref(info,'AccountID'));
   if (!id || id.length>256) throw new Error('Arena account identity is unavailable.');
@@ -451,77 +482,143 @@ async function openConnection() {
     return {account_id:account,unity_version:version,deck_screen_open:deckScreenOpen()};
   });
 }
+// Polls a pending Arena request between frames; each poll is itself a frame.
+const POLL_MS = 40;
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+// Unity thread only: a finished request's {value}, or null while it runs.
+function settled(promise, extract) {
+  if (!objectUnbox(invoke(objectMethod(promise,'get_IsDone',[]),promise)).readU8()) return null;
+  if (!objectUnbox(invoke(objectMethod(promise,'get_Successful',[]),promise)).readU8()) throw new Error('Arena request did not succeed. Refresh to reconcile its outcome.');
+  return {value:extract(invoke(objectMethod(promise,'get_Result',[]),promise))};
+}
 async function promiseCall(account, start, extract, write=false) {
   if (pending) throw new Error('A native request is already pending.');
-  let handle;
+  let handle=null;
   try {
-    handle=await onUnityThread(()=>{
+    // Arena answers cached reads at once, so check in the same frame that
+    // started the request before holding it across frames.
+    const first=await onUnityThread(()=>{
       guard(account,write);
       const promise=start();
       if (promise.isNull()) throw new Error('Arena returned no request. Outcome must be reconciled.');
-      pending=handleNew(promise,0); return pending;
+      const done=settled(promise,extract);
+      if (!done) handle=pending=handleNew(promise,0);
+      return done;
     });
+    if (first) return first.value;
     const deadline=Date.now()+45000;
     while (Date.now()<deadline) {
+      await sleep(POLL_MS);
       const result=await onUnityThread(()=>{
         guard(account);
-        const promise=handleTarget(handle);
-        if (!objectUnbox(invoke(objectMethod(promise,'get_IsDone',[]),promise)).readU8()) return null;
-        if (!objectUnbox(invoke(objectMethod(promise,'get_Successful',[]),promise)).readU8()) throw new Error('Arena request did not succeed. Refresh to reconcile its outcome.');
-        return {value:extract(invoke(objectMethod(promise,'get_Result',[]),promise))};
+        const done=settled(handleTarget(handle),extract);
+        if (done) {handleFree(handle);handle=pending=null;}
+        return done;
       });
       if (result) return result.value;
-      await new Promise(resolve=>setTimeout(resolve,150));
     }
     throw new Error('Arena request timed out. Refresh to reconcile its outcome.');
   } finally {
     if (handle) await onUnityThread(()=>{handleFree(handle);pending=null;});
   }
 }
-async function roster(account) {
+async function refreshCache(account) {
   await promiseCall(account,()=>invoke(findMethod('.DecksManager','ForceRefreshCachedDecks',[]),root()),()=>true);
+}
+async function roster(account) {
+  await refreshCache(account);
   return promiseCall(account,()=>invoke(findMethod('.DecksManager','GetAllDecks',[]),root()),result=>{
     if (result.isNull()) throw new Error('Arena returned no roster. No transfer can proceed.');
-    const report=snapshot();
+    const names=pileNames(),service=serviceCalls(root());
     const decks=list(result).map(p=>deckSnapshot(p.readPointer()));
     const ids=decks.filter(d=>!d.is_net_deck).map(d=>d.arena_id);
     if (new Set(ids).size!==ids.length) throw new Error('Arena returned duplicate deck identities.');
-    return {account_id:account,deck_screen_open:deckScreenOpen(),limit:report.service_calls.get_deck_limit,
-      limit_reached:report.service_calls.limit_reached,pile_names:report.pile_names,
+    return {account_id:account,deck_screen_open:deckScreenOpen(),limit:service.get_deck_limit,
+      limit_reached:service.limit_reached,pile_names:names,
       decks:decks.filter(d=>!d.is_net_deck),roster_refreshed:true};
   });
 }
+function requestFullDeck(id) {
+  const guid=parseGuid(id),handle=handleNew(guid,0);
+  try { return invoke(findMethod('.DecksManager','GetFullDeck',['System.Guid']),root(),[objectUnbox(guid)]); }
+  finally { handleFree(handle); }
+}
+function checkFullDeck(result,id) {
+  if (guidText(fieldAt(ref(result,'_summary'),'DeckId'))!==id || fieldAt(ref(result,'_summary'),'IsNetDeck').readU8()) {
+    throw new Error('Arena returned a different deck identity.');
+  }
+}
 async function fullDeck(account,id) {
-  return promiseCall(account,()=>{
-    const guid=parseGuid(id),handle=handleNew(guid,0);
-    try { return invoke(findMethod('.DecksManager','GetFullDeck',['System.Guid']),root(),[objectUnbox(guid)]); }
-    finally { handleFree(handle); }
-  },result=>{
+  return promiseCall(account,()=>requestFullDeck(id),result=>{
     const actual=deckSnapshot(result);
     if (actual.arena_id!==id || actual.is_net_deck) throw new Error('Arena returned a different deck identity.');
     return actual;
   });
 }
+// Unity thread only. Null until Arena has stored the loaded deck, unless strict.
+function cachedArchive(id,names,strict) {
+  const deck=cachedDecks(root()).find(d=>guidText(fieldAt(ref(d,'_summary'),'DeckId'))===id);
+  if (!deck) throw new Error('Deck is no longer present in Arena.');
+  const source=deckSnapshot(deck);
+  if (source.is_net_deck || !source.contents_loaded || source.piles.length!==4) {
+    if (!strict) return null;
+    throw new Error('Arena has not loaded all deck piles.');
+  }
+  const model=invoke(findMethod('Wizards.Mtga.Decks.DeckServiceWrapperHelpers','ToAzureModel',['Wizards.Mtga.Decks.Client_Deck']),NULL,[deck]);
+  const handle=handleNew(model,0);
+  try { return {schema:1,archive_kind:'arena_typed_model_poc',model_json:serializeModel(model),
+    summary_json:physicalSummaryJson(serializeModel(ref(deck,'_summary')),source.summary),source_snapshot:source,
+    pile_names:names,runtime:'IL2CPP',unity_thread_observed:true,unity_version:'6000.3.14f1'}; }
+  finally { handleFree(handle); }
+}
 async function archiveDecks(account,ids) {
   if (!Array.isArray(ids) || ids.length>2000 || new Set(ids).size!==ids.length) throw new Error('Invalid deck selection.');
-  for (const id of ids) await fullDeck(account,id);
-  return onUnityThread(()=>{
-    guard(account);
-    const report=snapshot();
-    const archives=ids.map(id=>{
-      const deck=cachedDecks(root()).find(d=>guidText(fieldAt(ref(d,'_summary'),'DeckId'))===id);
-      if (!deck) throw new Error('Deck is no longer present in Arena.');
-      const source=deckSnapshot(deck);
-      if (source.is_net_deck || !source.contents_loaded || source.piles.length!==4) throw new Error('Arena has not loaded all deck piles.');
-      const model=invoke(findMethod('Wizards.Mtga.Decks.DeckServiceWrapperHelpers','ToAzureModel',['Wizards.Mtga.Decks.Client_Deck']),NULL,[deck]);
-      const handle=handleNew(model,0);
-      try { return {schema:1,archive_kind:'arena_typed_model_poc',model_json:serializeModel(model),
-        summary_json:physicalSummaryJson(serializeModel(ref(deck,'_summary')),source.summary),source_snapshot:source,
-        pile_names:report.pile_names,runtime:'IL2CPP',unity_thread_observed:true,unity_version:'6000.3.14f1'}; }
-      finally { handleFree(handle); }
+  if (pending) throw new Error('A native request is already pending.');
+  // Request every deck in one frame and archive those Arena already has
+  // loaded in that same frame; only the rest are held and polled.
+  const archives=new Map(),waiting=new Map();
+  const collect=(id,promise,names)=>{
+    const done=settled(promise,result=>{checkFullDeck(result,id);return cachedArchive(id,names,false);});
+    if (done && done.value) archives.set(id,done.value);
+    return Boolean(done);
+  };
+  try {
+    await onUnityThread(()=>{
+      guard(account);
+      const names=pileNames();
+      for (const id of ids) {
+        const promise=requestFullDeck(id);
+        if (promise.isNull()) throw new Error('Arena returned no request. Outcome must be reconciled.');
+        if (!collect(id,promise,names)) waiting.set(id,handleNew(promise,0));
+      }
+      if (waiting.size) pending=true;
     });
-    return archives;
-  });
+    const deadline=Date.now()+45000;
+    while (waiting.size) {
+      if (Date.now()>=deadline) throw new Error('Arena request timed out. Refresh to reconcile its outcome.');
+      await sleep(POLL_MS);
+      await onUnityThread(()=>{
+        guard(account);
+        const names=pileNames();
+        for (const [id,handle] of [...waiting]) {
+          if (collect(id,handleTarget(handle),names)) {handleFree(handle);waiting.delete(id);}
+        }
+      });
+    }
+    pending=null;
+    // A request can finish a frame before Arena stores the loaded deck.
+    if (archives.size<ids.length) {
+      await onUnityThread(()=>{
+        guard(account);
+        const names=pileNames();
+        for (const id of ids) if (!archives.has(id)) archives.set(id,cachedArchive(id,names,true));
+      });
+    }
+    return ids.map(id=>archives.get(id));
+  } finally {
+    if (waiting.size) await onUnityThread(()=>{for (const handle of waiting.values()) handleFree(handle);waiting.clear();});
+    pending=null;
+  }
 }
 async function prepareImport(account,deckText,name,id) {
   if (typeof deckText!=='string' || !deckText.length || deckText.length>20000
@@ -543,7 +640,7 @@ async function prepareImport(account,deckText,name,id) {
     if (cardDb.isNull() || setMeta.isNull() || inventory.isNull()) throw new Error('Arena import providers are unavailable.');
     const cards=invoke(objectMethod(inventory,'get_Cards',[]),inventory);
     const locField=fields(classes.get('Wotc.Mtga.Loc.Languages')).get('ActiveLocProvider');
-    if (!locField || !(fieldFlags(locField)&0x10) || typeLabel(fieldType(locField))!=='Wotc.Mtga.Loc.IClientLocProvider') {
+    if (!locField || !(meta(locField).flags&0x10) || meta(locField).type!=='Wotc.Mtga.Loc.IClientLocProvider') {
       throw new Error('Unsupported Arena localization provider.');
     }
     const locValue=Memory.alloc(Process.pointerSize);locValue.writePointer(NULL);staticValue(locField,locValue);
@@ -578,7 +675,7 @@ async function prepareImport(account,deckText,name,id) {
       const heldModel=handleNew(model,0);
       const source=deckSnapshot(draft);
       try {return {schema:1,archive_kind:'arena_typed_model_poc',model_json:serializeModel(model),
-        summary_json:physicalSummaryJson(serializeModel(summary),source.summary),source_snapshot:source,pile_names:snapshot().pile_names};}
+        summary_json:physicalSummaryJson(serializeModel(summary),source.summary),source_snapshot:source,pile_names:pileNames()};}
       finally {handleFree(heldModel);}
     } finally {if(heldDeck)handleFree(heldDeck);handleFree(heldInput);}
   });
@@ -621,7 +718,13 @@ async function createPrepared(account,id) {
     },summary=>guidText(fieldAt(summary,'DeckId')),true);
     // A client returning a different identity is an unknown result, never retried.
     if (createdId!==id) throw new Error('Arena returned an unexpected restore identity. Refresh to reconcile.');
-    await roster(account);
+    // Refresh Arena's cache before reading the new deck back. The roster's
+    // snapshot of every deck is not needed here; the caller verifies it.
+    await refreshCache(account);
+    await promiseCall(account,()=>invoke(findMethod('.DecksManager','GetAllDecks',[]),root()),result=>{
+      if (result.isNull()) throw new Error('Arena returned no roster. No transfer can proceed.');
+      return true;
+    });
     return fullDeck(account,id);
   } finally {if(draftHandle) await onUnityThread(()=>handleFree(draftHandle));}
 }
