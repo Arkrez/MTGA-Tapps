@@ -101,7 +101,8 @@ export function DeckManagerPage() {
   const [stopRequested, setStopRequested] = useState(false);
   const [nativeProgress, setNativeProgress] = useState('');
   const [transferProgress, setTransferProgress] = useState<NativeDeckJob['progress']>();
-  const [collapsed, setCollapsed] = useState<string[]>([]);
+  // Open collections ('' = Unsorted). Named collections start collapsed.
+  const [expanded, setExpanded] = useState<string[]>(['']);
   const [destination, setDestination] = useState('');
   // Move out of Arena: chosen collection ('' = Unsorted, NEW_COLLECTION = create one).
   const [storeTarget, setStoreTarget] = useState('');
@@ -247,6 +248,10 @@ export function DeckManagerPage() {
     setNativeJob(job.job_id); setNativeJobAction(kind); setNativeProgress('Contacting Arena…'); setTransferProgress(undefined);
   }
 
+  function expand(id: string) { setExpanded((value) => value.includes(id) ? value : [...value, id]); }
+  // Searching or filtering opens every collection so matches are visible.
+  function expandAll() { setExpanded(collectionGroups.map((group) => group.id)); }
+
   async function storeSelected() {
     let target = storeTarget || null;
     let name = library?.collections?.find((c) => c.id === target)?.name ?? 'Unsorted';
@@ -257,6 +262,7 @@ export function DeckManagerPage() {
       setStoreTarget(created.id); setStoreNewName('');
     }
     storedTo.current = name;
+    expand(target ?? '');
     await nativeAction('store', checked, target);
   }
 
@@ -278,7 +284,7 @@ export function DeckManagerPage() {
 
   function changeView(next: 'saved' | 'trash' | 'arena') { setView(next); setChecked([]); setStatusFilter('all'); setError(''); setNotice(''); }
 
-  function filterByStatus(status: DeckStatus | 'all') { setStatusFilter(status); setChecked([]); setCollapsed([]); }
+  function filterByStatus(status: DeckStatus | 'all') { setStatusFilter(status); setChecked([]); expandAll(); }
 
   function statusPills(statuses: DeckStatus[]) {
     return <div className="deck-manager-status-pills">{statuses.map((status) =>
@@ -403,7 +409,7 @@ export function DeckManagerPage() {
         error={error} notice={notice} showMessages={!modal} busy={busy}
         onReconcile={() => void action(() => nativeAction('reconcile', []))} onDismiss={() => { setError(''); setNotice(''); }} />
       <div className="deck-manager-filters">
-        <input type="search" className="deck-manager-search" aria-label="Search saved decks" placeholder="Search names, formats or tags" value={query} disabled={busy} onChange={(e) => { setQuery(e.target.value); setChecked([]); setCollapsed([]); }} />
+        <input type="search" className="deck-manager-search" aria-label="Search saved decks" placeholder="Search names, formats or tags" value={query} disabled={busy} onChange={(e) => { setQuery(e.target.value); setChecked([]); expandAll(); }} />
         <select className="deck-manager-status-filter" aria-label="Filter decks by status" value={statusFilter} disabled={busy} onChange={(e) => filterByStatus(e.target.value as DeckStatus | 'all')}>
           <option value="all">All statuses</option>
           {[{ label: 'Location', statuses: ['arena', 'collection', 'unknown', 'trash'] }, { label: 'Backup', statuses: ['native', 'text', 'partial', 'backed', 'unbacked'] }].map((group) => {
@@ -426,7 +432,7 @@ export function DeckManagerPage() {
           <select aria-label="Move selected decks to collection" value={destination} disabled={busy || !checkedDecks.length} onChange={(event) => setDestination(event.target.value)}>{collectionOptions()}</select>
           <button disabled={busy || !checkedDecks.length} onClick={() => void action(async () => {
             const result = await moveDecksToCollection(checkedDecks.map((deck) => deck.id), destination || null);
-            setChecked([]); setRefresh((value) => value + 1); setCollapsed((value) => value.filter((id) => id !== destination));
+            setChecked([]); setRefresh((value) => value + 1); expand(destination);
             setNotice(`Moved ${result.count} deck${result.count === 1 ? '' : 's'} to ${collectionGroups.find((group) => group.id === destination)?.name ?? 'Unsorted'}.`);
           })}><FolderOpen size={16} /> Move decks</button>
           {native?.available ? <button className="deck-manager-copy" aria-label="Restore selected to Arena" title={!canRestoreSelection && checked.length ? 'Select native backups that are not already in Arena to restore.' : undefined} disabled={busy || !canRestoreSelection || !native.connected || !native.deck_screen_open || native.limit_reached !== false || Boolean(native.pending_transfers?.length)} onClick={() => void action(() => nativeAction('restore'))}><ArrowUpFromLine size={16} /> Restore to Arena</button> : null}
@@ -450,12 +456,12 @@ export function DeckManagerPage() {
           {statusPills(arenaStatuses(deck.id))}
         </div>) : (view === 'trash' ? visible.map(savedTile) : collectionGroups.map((group) => {
           const decks = visible.filter((deck) => (deck.collection_id ?? '') === group.id);
-          const closed = collapsed.includes(group.id);
+          const closed = !expanded.includes(group.id);
           // One page-level message covers "nothing matches"; empty Unsorted adds nothing.
           if (!decks.length && (filtering || !group.id)) return null;
           return <section className="deck-manager-group" key={group.id} aria-label={`${group.name} collection`}>
             <div className="deck-manager-group-heading deck-manager-toolbar">
-              <button className="deck-manager-group-toggle" aria-label={`${group.name} (${decks.length})`} aria-expanded={!closed} aria-controls={`collection-${group.id || 'unsorted'}`} onClick={() => setCollapsed((value) => closed ? value.filter((id) => id !== group.id) : [...value, group.id])}>
+              <button className="deck-manager-group-toggle" aria-label={`${group.name} (${decks.length})`} aria-expanded={!closed} aria-controls={`collection-${group.id || 'unsorted'}`} onClick={() => setExpanded((value) => closed ? [...value, group.id] : value.filter((id) => id !== group.id))}>
                 <ChevronDown size={18} className={closed ? 'is-collapsed' : ''} /><strong>{group.name}</strong><span>({decks.length})</span>
               </button>
               {group.id ? <><button aria-label={`Rename ${group.name}`} disabled={busy} onClick={() => openCollection(group)}><Pencil size={16} /></button>
@@ -488,7 +494,7 @@ export function DeckManagerPage() {
               : 'The deck being transferred now finishes and is verified first. The remaining selected decks stay where they are, and you can transfer them later.'}</p>
             <div className="deck-manager-toolbar"><button onClick={() => setModal(null)}>Keep going</button><button className="deck-manager-delete" disabled={stopRequested || !nativeJob} onClick={() => void action(stopJob)}><Square size={16} /> Stop after this deck</button></div>
           </div> : modal === 'collection' ? <form className="deck-manager-import" onSubmit={(event) => { event.preventDefault(); void action(async () => {
-            await saveDeckCollection(collectionName, editingCollection?.id); setRefresh((value) => value + 1); closeModal(); setNotice(editingCollection ? 'Collection renamed.' : 'Collection created.');
+            const result = await saveDeckCollection(collectionName, editingCollection?.id); expand(result.id); setRefresh((value) => value + 1); closeModal(); setNotice(editingCollection ? 'Collection renamed.' : 'Collection created.');
           }); }}>
             <label>Collection name<input autoFocus value={collectionName} maxLength={80} required onChange={(event) => setCollectionName(event.target.value)} placeholder="For example, Brawl or Blue decks" /></label>
             <div className="deck-manager-toolbar"><button type="button" disabled={busy} onClick={closeModal}>Cancel</button><button className="deck-manager-add" disabled={busy || !collectionName.trim()} type="submit">{editingCollection ? 'Save name' : 'Create collection'}</button></div>

@@ -284,7 +284,7 @@ then **Export to Arena** copies it in Arena's import format (or **Source**
 opens the original page). The selected deck appears beside the results with
 its main deck and any sideboard, commander or companion section. The
 **Deck Manager** actions below its title can save it to a named collection or
-add it directly to Arena on a supported Mac when Arena is ready on Decks.
+add it directly to Arena on a supported client when Arena is ready on Decks.
 "Surprise Me" pulls a random importable deck. Your
 own featured creators for AetherHub, Moxfield, TCGplayer, and YouTube are managed on the
 **Settings** page (or in `deckfinder_config.json` at the top level of the
@@ -322,9 +322,9 @@ Arena's current roster, back up selected or all decks, move a deck into the
 local collection, restore a full backup, and add an importable list. The
 dashboard shows transfer progress and asks for confirmation before removing
 a deck from Arena; interrupted transfers have a reconciliation step. This
-direct Arena integration is beta: it is tested on Apple Silicon Macs, Windows
-support is new and still being validated, and other Arena client builds are
-refused until they are checked.
+direct Arena integration is beta: it is tested on Apple Silicon Macs and
+64-bit Windows, and other Arena client builds are refused until they are
+checked.
 
 ![Deck Manager Arena tab with the current roster and backup controls](docs/images/deck-manager-arena.png)
 

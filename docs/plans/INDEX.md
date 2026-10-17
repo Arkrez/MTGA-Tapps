@@ -18,8 +18,8 @@ implementation walkthroughs have been removed.
   and the [data contract](../REPLAY_FORMAT.md) are documented separately.
 - **Deck Manager:** Validate native backup, move, restore, direct add and
   reconciliation in an installed Apple Silicon Mac build before claiming that
-  support. Windows (x64) is enabled in code; run its checklist in
-  [validation notes](deck-manager/VALIDATION.md) before claiming it. A persistent collection inside
+  support. Windows (x64) passed its live checklist from a source run; the
+  installed build's checks remain (see [validation notes](deck-manager/VALIDATION.md)). A persistent collection inside
   Arena, a guarded full-slot swap and automatic backups remain future work.
   Native removal must follow a verified local archive; interrupted operations
   must reconcile without repeating a write. Keep the [native proof of concept](deck-manager/NATIVE_POC.md)

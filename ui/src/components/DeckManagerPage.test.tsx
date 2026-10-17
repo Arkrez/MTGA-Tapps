@@ -515,10 +515,11 @@ it('creates collections, collapses their decks and moves a selection to another 
   render(<DeckManagerPage />);
   const group = await screen.findByRole('region', { name: 'Control collection' });
   const toggle = within(group).getByRole('button', { name: 'Control (1)' });
-  fireEvent.click(toggle);
+  // Named collections start collapsed; Unsorted starts open.
   expect(toggle).toHaveAttribute('aria-expanded', 'false');
   expect(screen.queryByRole('checkbox', { name: `Select ${saved.name}` })).not.toBeInTheDocument();
   fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute('aria-expanded', 'true');
   fireEvent.click(screen.getByRole('checkbox', { name: `Select ${saved.name}` }));
   fireEvent.click(screen.getByRole('button', { name: 'Move decks' }));
   await waitFor(() => expect(moveDecksToCollection).toHaveBeenCalledExactlyOnceWith([saved.id], null));
@@ -526,6 +527,19 @@ it('creates collections, collapses their decks and moves a selection to another 
   fireEvent.change(screen.getByLabelText('Collection name'), { target: { value: 'Brawl' } });
   fireEvent.click(screen.getByRole('button', { name: 'Create collection' }));
   await waitFor(() => expect(saveDeckCollection).toHaveBeenCalledExactlyOnceWith('Brawl', undefined));
+});
+
+it('opens Unsorted and expands every collection while searching', async () => {
+  const collection = { id: 'group-a', name: 'Control' };
+  const second = { ...saved, id: 'second', name: 'Unsorted deck' };
+  vi.mocked(fetchDeckLibrary).mockResolvedValue({ decks: [{ ...saved, collection_id: collection.id }, second], collections: [collection], capabilities });
+  render(<DeckManagerPage />);
+  const unsorted = await screen.findByRole('region', { name: 'Unsorted collection' });
+  expect(within(unsorted).getByRole('button', { name: 'Unsorted (1)' })).toHaveAttribute('aria-expanded', 'true');
+  expect(screen.getByRole('checkbox', { name: `Select ${second.name}` })).toBeInTheDocument();
+  expect(screen.queryByRole('checkbox', { name: `Select ${saved.name}` })).not.toBeInTheDocument();
+  fireEvent.change(screen.getByRole('searchbox', { name: 'Search saved decks' }), { target: { value: saved.name } });
+  expect(screen.getByRole('checkbox', { name: `Select ${saved.name}` })).toBeInTheDocument();
 });
 
 it('requires confirmation to remove a collection and explains that decks are retained', async () => {

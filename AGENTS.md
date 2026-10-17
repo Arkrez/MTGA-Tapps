@@ -202,7 +202,7 @@ Primary code paths:
   being out of a match on Decks before any live validation; app restarts still
   require explicit approval.
   Runtime support is Unity `6000.3.14f1` on Apple Silicon macOS (IL2CPP, validated)
-  and x64 Windows (Mono, enabled, awaiting live validation; checklist in
+  and x64 Windows (Mono, live-validated from source; installed-build check pending, see
   `docs/plans/deck-manager/VALIDATION.md`), gated by `paths.native_deck_platform_supported`
   and the adapter's `ARENA_ARCH` build check. Windows Arena ships no `GameAssembly.dll`;
   it embeds `mono-2.0-bdwgc.dll`. `arena_decks.js` picks `il2cppRuntime()` or
@@ -218,6 +218,8 @@ Primary code paths:
   live Decks controller, same native service and authenticated account for writes.
   Only AccountInformation.AccountID is read/hashed; never read credentials.
   Migration 35 adds `managed_deck_collections` and nullable `managed_decks.collection_id`.
+  Named collections render collapsed and Unsorted open; search/status filters expand
+  all, and creating or moving decks into a collection expands it.
   Saved decks belong to one named collection or Unsorted. Store jobs take one optional
   top-level `collection_id` (null = Unsorted) that also reassigns an earlier backup. Collection removal moves
   all members (including Trash) to Unsorted; it never deletes decks/revisions.
@@ -262,6 +264,10 @@ Primary code paths:
 - `src/mtga_tracker/deck_capture.py`: the existing log-entry pipeline archives available
   `DeckUpsertDeckV3` / `EventSetDeckV3` outgoing lists for any format before game-exclusion
   gates. They are unconfirmed observations, not a complete roster or successful save.
+  A capture for an Arena deck tied to an entry by a binding or transfer row (the row
+  commits before Arena logs its create) goes to that entry, and adds nothing when any of
+  its revisions has the same name and list; a native backup adopts the log-captured
+  `captured_deck_id` entry unless it is trashed. One Arena deck keeps one saved entry.
   Replay must not move the current revision backward; unresolved IDs remain intact in
   full backups. Do not infer slot usage/account/presence or enable native writes from logs.
   See the README's Deck Manager section, `docs/plans/INDEX.md`, `tests/test_deck_manager.py`

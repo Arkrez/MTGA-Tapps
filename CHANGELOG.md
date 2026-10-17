@@ -8,14 +8,19 @@
   moves and destination selection in imports/Deck Finder. Removing a collection
   asks for confirmation and retains its decks in Unsorted. Migration 35 preserves
   collection membership through full backups, merge and gameplay reset.
+  Named collections start collapsed with Unsorted open; searching or filtering
+  opens them all, and a collection opens when decks are moved into it.
 - Direct Arena deck transfers (load, back up, move, restore and Add to Arena) are
   enabled on 64-bit Windows as well as Apple Silicon Macs. Windows Arena runs on Mono
   rather than the Mac build's IL2CPP, so the adapter now supports both runtimes.
-  Windows support is new and still being validated; other Arena builds are refused
-  with the build they report.
+  Windows support is new; other Arena builds are refused with the build they report.
 - Arena's Decks screen now redraws by itself after Deck Manager or Deck Finder adds,
   restores or removes decks, so changes appear without leaving and reopening Decks.
   A newly added or restored deck is selected and scrolled into view.
+- A deck added or restored through Deck Manager no longer appears twice in the library.
+  Arena's own logged save of that deck is filed under the existing entry, adding nothing
+  when the list is already saved there, and backing up an Arena deck the tracker had
+  already captured from the log upgrades that entry instead of creating another.
 - When Arena isn't on its Decks screen, Add to Arena shows a plain message without
   script details, and Deck Finder's Deck Manager box notes that Arena must be on Decks.
 - Deck transfers show progress from preparation through verified completion.
