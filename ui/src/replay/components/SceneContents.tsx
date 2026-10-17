@@ -21,6 +21,7 @@ import { positionArrows, positionLabels } from '../scene/projection';
 import type { ScreenPoint } from '../scene/projection';
 import type { TextureStore } from '../scene/textureStore';
 import type { CardKey, ReplayCard } from '../types';
+import type { ViewZoom } from '../scene/viewZoom';
 import { CameraRig } from './CameraRig';
 import { CardMesh } from './CardMesh';
 import type { CardHandlers } from './CardMesh';
@@ -45,6 +46,8 @@ export interface SceneContentsProps {
   stackNodes: ReadonlyMap<string, HTMLElement>;
   handlers: CardHandlers;
   snap: boolean;
+  /** Wheel zoom and drag pan of the fitted view. */
+  zoom: ViewZoom;
 }
 
 /** Felt, wooden base and rails, scaled to the stage-dependent felt size. */
@@ -242,7 +245,7 @@ export function SceneContents(props: SceneContentsProps) {
       <SnapMode registry={registry} snap={snap} />
       <ambientLight intensity={1.1} />
       <directionalLight position={[-5, -7, 14]} intensity={2.2} />
-      <CameraRig preset={prefs.camera} table={layout.table} />
+      <CameraRig preset={prefs.camera} table={layout.table} zoom={props.zoom} />
       <Anisotropy store={store} />
       <Table store={store} felt={prefs.felt} kit={kit} table={layout.table} />
       {layout.piles.map((pile) => (

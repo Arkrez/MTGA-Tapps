@@ -242,6 +242,19 @@
   emoji and trailing set/platform text; `Decklist` headings become Arena's `Deck`
   heading. Results reuse the existing 10-minute memory cache, with a simple
   loading message and Refresh for fresh lists.
+- Replay table zoom: scroll the wheel over the table to zoom toward the pointer (up to 4x),
+  drag to pan while zoomed, `+`/`-` to zoom and `0` (or the Reset zoom pill) to show the
+  whole table again. Zoomed cards render at full resolution, so card names are readable on
+  1080p/1440p monitors. Video exports always show the whole table.
+- Replay's table is about a fifth larger by default, framed like Arena: your hand rises onto the
+  empty strip of felt below your lands, whole cards still showing, and the opponent's hand sits
+  just above their land names, drawn a little smaller than yours.
+- Replay marks damage on the table: every permanent a spell or combat hits gets a red badge
+  ("−6") and the red damage glow, summed per permanent and held until the next action, so a
+  sweeper like Desolation of Smaug shows what it hit while the creatures die.
+- Replay shows cards their owner may cast from outside the hand beside that hand, as Arena
+  does: flashback, escape, disturb and harmonize cards in the graveyard (dashed outline) and
+  plotted cards in exile (gold glow), each labelled.
 
 ### Fixes
 
@@ -330,6 +343,21 @@
   the old "50% guide" label.
   Axis dates include the year, and canceled filter requests no longer print
   broken-pipe tracebacks.
+- Replay cards are sharper on 1x screens: the table renders at 2x and lets the browser scale
+  it down (within a 5K-sized pixel budget), and card faces sample a sharper mipmap level.
+- Replay's attack, block, target and damage highlights are a smooth glow of light on the felt
+  instead of a thick painted band.
+- The tracker logged a card returned from the graveyard to the battlefield (Yuna, Hope of
+  Spira returning an enchantment) as "returned … to hand"; it now says "to battlefield".
+- Reconstructed replays use Arena's card database for opponent cards seen only by name, so a
+  card such as Summon: Knights of Round is a real Enchantment Creature 3/3 instead of a blank
+  token. Abilities that "Create three 2/2 white Knight creature tokens" put those tokens on the
+  table when they resolve, damage dealt to several same-named tokens at once spreads across
+  them, and the old "returned … to hand" text for a return to the battlefield is read correctly.
+- Reconstructed replays (games recorded before structured replay capture) cast flashback
+  spells from the graveyard instead of the opponent's hidden hand, and a transforming card
+  that returns as its back face (Esper Origins → Summon: Esper Maduin) is the same card
+  rather than an inferred blank token. Back faces load their back-face image.
 
 ## 0.6.5.3
 

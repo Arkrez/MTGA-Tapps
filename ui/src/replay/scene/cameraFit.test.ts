@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { OrthographicCamera, PerspectiveCamera, Vector3 } from 'three';
-import { CARD_WIDTH, DEFAULT_TABLE_WIDTH, HAND_SCALE_MAX, HAND_SCALE_MIN, MAX_TABLE_WIDTH, MIN_TABLE_WIDTH, ROW_Y, TABLE_DEPTH } from '../layout';
+import {
+  CARD_WIDTH,
+  DEFAULT_TABLE_WIDTH,
+  HAND_SCALE_MAX,
+  HAND_SCALE_MIN,
+  MAX_TABLE_WIDTH,
+  MIN_TABLE_WIDTH,
+  FAR_ROW_STRETCH,
+  OPPONENT_HAND_SCALE,
+  OPPONENT_HAND_STRETCH,
+  ROW_Y,
+  TABLE_DEPTH,
+} from '../layout';
 import {
   DEFAULT_MARGINS,
   HAND_SCALE_STEP,
@@ -16,8 +28,9 @@ import {
   fitOrthographic,
   fitPerspective,
   fitTableForView,
-  farAllowance,
+  FAR_STRETCH,
   framedExtent,
+  framedFarDepth,
   framedHalfDepth,
   tableWidthForView,
 } from './cameraFit';
@@ -26,9 +39,9 @@ import type { TableSize } from './cameraFit';
 const margins = { top: 14, right: 14, bottom: 14, left: 14 };
 const TABLE: TableSize = { width: DEFAULT_TABLE_WIDTH, depth: TABLE_DEPTH };
 
-/** Corners of the framed region: rails, the hand aprons and (in the table preset) the far stretch allowance. */
-function corners(table: TableSize, u = 0) {
-  const { halfWidth: w, near, far } = framedExtent(table, u);
+/** Corners of the framed region: rails and the hand aprons. */
+function corners(table: TableSize) {
+  const { halfWidth: w, near, far } = framedExtent(table);
   expect(near).toBeCloseTo(framedHalfDepth(table.depth, table.handScale), 9);
   return [
     [-w, -near, 0],
@@ -38,10 +51,10 @@ function corners(table: TableSize, u = 0) {
   ] as const;
 }
 
-function ndcExtent(camera: PerspectiveCamera | OrthographicCamera, table: TableSize, u = 0) {
+function ndcExtent(camera: PerspectiveCamera | OrthographicCamera, table: TableSize) {
   const ys: number[] = [];
   const xs: number[] = [];
-  for (const [x, y, z] of corners(table, u)) {
+  for (const [x, y, z] of corners(table)) {
     const p = new Vector3(x, y, z).project(camera);
     xs.push(p.x);
     ys.push(p.y);
@@ -140,13 +153,14 @@ describe('camera fit', () => {
     const collapsed = stageCamera(1132, 659);
     const you = (s: ReturnType<typeof stageCamera>) => cardPixels(s.camera, s.view.width, ROW_Y.creatures);
     const opp = (s: ReturnType<typeof stageCamera>) => cardPixels(s.camera, s.view.width, -ROW_Y.creatures);
-    // The framed depth (felt, rails and both hand aprons) binds on all three
-    // stages, so the cards are the same size and the extra width is felt.
-    expect(you(open)).toBeGreaterThan(66);
-    expect(opp(open)).toBeGreaterThan(61);
-    expect(you(sidebar)).toBeCloseTo(you(open), 6);
-    expect(you(collapsed)).toBeCloseTo(you(open), 6);
-    expect(opp(collapsed)).toBeCloseTo(opp(open), 6);
+    // Arena-style framing (both hands reach onto their felt strips) makes them
+    // about a fifth larger than when the hands sat wholly past the rails
+    // (66 px). The depth binds on all three stages, so the extra width is felt.
+    expect(you(open)).toBeGreaterThan(78);
+    expect(opp(open)).toBeGreaterThan(73);
+    expect(you(sidebar)).toBeCloseTo(you(open), 0);
+    expect(you(collapsed)).toBeCloseTo(you(sidebar), 6);
+    expect(opp(collapsed)).toBeCloseTo(opp(sidebar), 6);
     // A collapsed panel turns into more felt once the depth binds.
     expect(collapsed.table.width).toBeGreaterThan(sidebar.table.width);
   });
@@ -191,14 +205,20 @@ describe('camera fit', () => {
     expect(fitTableForView({ width: 1620, height: 840 }, DEFAULT_MARGINS, 'topdown').handScale).toBe(HAND_SCALE_MIN);
   });
 
-  it('frames extra far depth for the stretched far hand in the table preset only', () => {
-    expect(farAllowance(1)).toBeGreaterThan(0.2);
-    expect(farAllowance(1.7)).toBeCloseTo(farAllowance(1) * 1.7, 9);
+  it('frames the far side the same in both presets, sized for the stretched opponent hand', () => {
+    // The far framing already sizes the opponent's hand for the tilt's stretch, in both presets.
     const table = { width: DEFAULT_TABLE_WIDTH, depth: TABLE_DEPTH, handScale: 1 };
-    const tilted = framedExtent(table, 0);
-    expect(tilted.far - tilted.near).toBeCloseTo(farAllowance(1), 9);
-    const flat = framedExtent(table, 1);
-    expect(flat.far).toBeCloseTo(flat.near, 9);
+    const tilted = framedExtent(table);
+    const flat = framedExtent(table);
+    expect(tilted.far).toBeCloseTo(framedFarDepth(TABLE_DEPTH), 9);
+    expect(flat.far).toBeCloseTo(framedFarDepth(TABLE_DEPTH), 9);
+    expect(flat.near).toBeCloseTo(framedHalfDepth(TABLE_DEPTH, 1), 9);
+    // Their hand clears the land names: the layout's estimate of the back row's stretch is
+    // close to what the camera puts there (between none and the far edge's).
+    expect(FAR_ROW_STRETCH).toBeGreaterThan(1);
+    expect(FAR_ROW_STRETCH).toBeLessThan(FAR_STRETCH);
+    expect(OPPONENT_HAND_STRETCH).toBeGreaterThanOrEqual(FAR_STRETCH);
+    expect(OPPONENT_HAND_SCALE).toBeLessThan(1);
     // The framed region (far allowance included) is what the fit centers and keeps inside the margins.
     const view = { width: 1200, height: 700 };
     const camera = new PerspectiveCamera();
@@ -221,7 +241,7 @@ describe('camera fit', () => {
     for (const view of [{ width: 900, height: 500 }, { width: 500, height: 900 }]) {
       const camera = new OrthographicCamera();
       applyOrthographic(camera, fitOrthographic(view, margins, TABLE));
-      const e = ndcExtent(camera, TABLE, 1);
+      const e = ndcExtent(camera, TABLE);
       expect(e.maxX).toBeLessThanOrEqual(1 - 28 / view.width + 1e-6);
       expect(e.maxY).toBeLessThanOrEqual(1 - 28 / view.height + 1e-6);
       expect(Math.min(1 - 28 / view.width - e.maxX, 1 - 28 / view.height - e.maxY)).toBeLessThan(1e-6);
@@ -230,7 +250,7 @@ describe('camera fit', () => {
     const table = { width: tableWidthForView(view, margins, 'topdown'), depth: TABLE_DEPTH };
     const camera = new OrthographicCamera();
     applyOrthographic(camera, fitOrthographic(view, margins, table));
-    const e = ndcExtent(camera, table, 1);
+    const e = ndcExtent(camera, table);
     expect(1 - 28 / view.height - e.maxY).toBeLessThan(1e-6);
     expect(1 - 28 / view.width - e.maxX).toBeLessThan(0.02);
   });

@@ -272,6 +272,12 @@ function drawLabels(ctx: CanvasRenderingContext2D, layout: FrameLayout, labels: 
       drawPill(ctx, cx, cy, label.text, 10.5 * s, 600, 'rgba(8,12,16,0.62)', 'rgba(255,255,255,0.1)', COLORS.pileText, 999);
     } else if (label.tone === 'counters') {
       drawPill(ctx, cx, cy, label.text, 10 * s, 600, 'rgba(8,12,16,0.84)', 'rgba(240,198,108,0.4)', COLORS.gold, 999);
+    } else if (label.tone === 'damage') {
+      drawPill(ctx, cx, cy, label.text, 17 * s, 800, 'rgba(176,24,20,0.96)', 'rgba(255,168,158,0.75)', '#ffffff', 999);
+    } else if (label.tone === 'castable') {
+      const plot = label.emphasis === true;
+      const text = label.text.toUpperCase();
+      drawPill(ctx, cx, cy, text, 9.5 * s, 600, 'rgba(8,12,16,0.86)', plot ? COLORS.goldBorder : 'rgba(159,208,255,0.55)', plot ? COLORS.gold : '#d8ecff', 999);
     } else if (label.tone === 'loyalty') {
       drawPill(ctx, cx, cy, label.text, 14.5 * s, 700, COLORS.pill, COLORS.violetBorder, COLORS.violet, 7 * s);
     } else {

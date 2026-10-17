@@ -2,10 +2,13 @@
  * Owns the perspective (`table`) and orthographic (`topdown`) cameras, fits
  * them to the canvas on resize, and eases between presets: the tilt flattens
  * while the field of view narrows, then the orthographic camera takes over.
+ * A zoomed view (ViewZoom) renders a window of the fitted view at full
+ * resolution through the camera's view offset.
  */
 import { useFrame, useThree } from '@react-three/fiber';
 import { useLayoutEffect, useMemo, useRef } from 'react';
 import { OrthographicCamera, PerspectiveCamera } from 'three';
+import type { ViewZoom } from '../scene/viewZoom';
 import type { TableGeometry } from '../layout';
 import type { CameraPreset } from '../prefs';
 import {
@@ -29,7 +32,7 @@ function prefersReducedMotion(): boolean {
   }
 }
 
-export function CameraRig({ preset, table }: { preset: CameraPreset; table: TableGeometry }) {
+export function CameraRig({ preset, table, zoom }: { preset: CameraPreset; table: TableGeometry; zoom: ViewZoom }) {
   const set = useThree((s) => s.set);
   const get = useThree((s) => s.get);
   const invalidate = useThree((s) => s.invalidate);
@@ -53,17 +56,30 @@ export function CameraRig({ preset, table }: { preset: CameraPreset; table: Tabl
     frustum: fitOrthographic({ width: 1, height: 1 }, MARGINS, table),
   });
 
+  const zoomRef = useRef(zoom);
   const apply = useRef((u: number) => {
     const { perspective, orthographic } = cameras;
     const { view, table: size, pose, frustum } = scratch.current;
-    if (u >= 1) {
-      applyOrthographic(orthographic, fitOrthographic(view, MARGINS, size, frustum));
-      if (get().camera !== orthographic) set({ camera: orthographic });
-      return;
+    const camera = u >= 1 ? orthographic : perspective;
+    if (u >= 1) applyOrthographic(orthographic, fitOrthographic(view, MARGINS, size, frustum));
+    else applyPerspective(perspective, fitPerspective(u, view, MARGINS, size, pose), view);
+    const z = zoomRef.current;
+    if (z.zoomed) {
+      const win = z.window(view.width, view.height);
+      camera.setViewOffset(view.width, view.height, win.x, win.y, win.width, win.height);
+    } else if (camera.view?.enabled) {
+      camera.clearViewOffset();
     }
-    applyPerspective(perspective, fitPerspective(u, view, MARGINS, size, pose), view);
-    if (get().camera !== perspective) set({ camera: perspective });
+    if (get().camera !== camera) set({ camera });
   });
+
+  useLayoutEffect(() => {
+    zoomRef.current = zoom;
+    return zoom.subscribe(() => {
+      apply.current(anim.current.u);
+      invalidate();
+    });
+  }, [zoom, invalidate]);
 
   useLayoutEffect(() => {
     const a = anim.current;

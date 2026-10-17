@@ -130,3 +130,39 @@ describe('commanders', () => {
     expect(chip.tone).toBe('commander');
   });
 });
+
+describe('side card chips', () => {
+  it('names why a card sits beside the hand, gold when plotted', () => {
+    const b = new StreamBuilder();
+    b.add('game_start', { seats_hand_sizes: { 1: 0, 2: 0 }, library_sizes: { 1: 40, 2: 40 } });
+    b.move('g1', 'looting', 'limbo', 'graveyard', PLAYER, 'put');
+    b.move('p1', 'show', 'limbo', 'hand', PLAYER, 'draw');
+    b.move('p1', 'show', 'hand', 'exile', PLAYER, 'exile');
+    const cards = {
+      looting: card('Faithless Looting', 'Sorcery', { keywords: ['flashback'] }),
+      show: card('Slickshot Show-Off', 'Creature', { keywords: ['plot'] }),
+    };
+    const stream = b.build(cards, { playerSeat: PLAYER });
+    const layout = layoutBoard(buildTimeline(stream).final, { mirrorOpponent: false, hindsight: false, playerSeat: PLAYER });
+    const labels = sceneLabels(layout, cards);
+    const flashback = labels.find((l) => l.id === 'castable:g1');
+    const plotted = labels.find((l) => l.id === 'castable:p1');
+    expect([flashback?.text, flashback?.tone, flashback?.emphasis]).toEqual(['Flashback', 'castable', false]);
+    expect([plotted?.text, plotted?.emphasis]).toEqual(['Plotted', true]);
+    expect(labels.some((l) => l.id === 'stat:p1')).toBe(false);
+  });
+});
+
+describe('damage badges', () => {
+  it('shows a red minus badge on each damaged permanent', () => {
+    const b = new StreamBuilder();
+    b.add('game_start', { seats_hand_sizes: { 1: 0, 2: 0 }, library_sizes: { 1: 40, 2: 40 } });
+    b.move('c1', 'bear', 'limbo', 'battlefield', PLAYER, 'put');
+    b.add('damage', { source: null, target_obj: 'c1', target_seat: null, amount: 6, combat: false });
+    const cards = { bear: card('Bear', 'Creature', { power: '2', toughness: '2' }) };
+    const stream = b.build(cards, { playerSeat: PLAYER });
+    const layout = layoutBoard(buildTimeline(stream).final, { mirrorOpponent: false, hindsight: false, playerSeat: PLAYER });
+    const badge = sceneLabels(layout, cards).find((l) => l.id === 'damage:c1');
+    expect([badge?.text, badge?.tone]).toEqual(['−6', 'damage']);
+  });
+});

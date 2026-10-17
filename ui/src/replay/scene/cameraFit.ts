@@ -5,8 +5,10 @@
  * an eased transition: tilt goes to 0 while the field of view narrows (a
  * dolly zoom), so the final swap to the orthographic camera is seamless.
  *
- * The framed region is the felt plus its rails plus the hand aprons past
- * the near and far rails (layout.apronDepth, sized by the hand scale). The
+ * The framed region is the felt plus its rails plus the visible part of each
+ * hand past them, Arena style: the player's hand partly runs off the bottom
+ * (layout.apronDepth, sized by the hand scale) and the opponent's small hand
+ * half off the top (layout.opponentApronDepth). The
  * felt's depth is fixed (layout.TABLE_DEPTH); `fitTableForView` picks its
  * width and the hand scale for a stage: the widest felt that still lets the
  * framed depth bind (with the smallest hands), so the table fills the stage
@@ -17,22 +19,27 @@
 import { MathUtils, PerspectiveCamera, Vector3 } from 'three';
 import type { OrthographicCamera } from 'three';
 import {
-  CARD_HEIGHT,
   HAND_SCALE_MAX,
   HAND_SCALE_MIN,
   MIN_TABLE_WIDTH,
   RAIL_WIDTH,
   TABLE_DEPTH,
   apronDepth,
+  opponentApronDepth,
   clampHandScale,
   clampTableWidth,
 } from '../layout';
 
 export { RAIL_WIDTH };
 
-/** Half depth of the framed region: felt, rail and hand apron on each side. */
+/** Near (player) half depth of the framed region: felt, rail and the visible part of the hand. */
 export function framedHalfDepth(depth: number, handScale: number = HAND_SCALE_MIN): number {
   return depth / 2 + RAIL_WIDTH + apronDepth(handScale);
+}
+
+/** Far (opponent) half depth of the framed region, before the tilt's stretch allowance. */
+export function framedFarDepth(depth: number): number {
+  return depth / 2 + RAIL_WIDTH + opponentApronDepth();
 }
 /*
  * A steeper tilt foreshortens the depth, so more of the table fits the
@@ -50,15 +57,11 @@ export const TOPDOWN_FOV_DEG = 6;
 /**
  * Foreshortening at the far edge of a table that fills the frame at the table
  * tilt (the view ray there is tilt + half the field of view from vertical).
- * The meshes stretch along the depth by the local amount (motion.depthStretch),
- * so the far framing allows for the far hand growing by up to this much.
+ * The meshes stretch along the depth by the local amount (motion.depthStretch);
+ * the far framing (layout `opponentApronDepth`) sizes the opponent's hand for
+ * up to this much (layout `OPPONENT_HAND_STRETCH`).
  */
 export const FAR_STRETCH = 1 / Math.cos(MathUtils.degToRad(TABLE_TILT_DEG + TABLE_FOV_DEG / 2));
-
-/** Extra far depth framed for the stretched far hand at `handScale`, in the table preset. */
-export function farAllowance(handScale: number = HAND_SCALE_MIN): number {
-  return ((FAR_STRETCH - 1) * CARD_HEIGHT * handScale) / 2;
-}
 
 export interface TableSize {
   /** Felt width and depth (the rail is added around them, and the hand aprons past the near and far rails). */
@@ -105,21 +108,20 @@ export interface OrthoFrustum {
 }
 
 /**
- * Extents of the framed region: rail on every side, hand aprons along y, and
- * on the far side the stretch allowance, which fades out with the blend
- * (set per fit; no allocation).
+ * Extents of the framed region: rail on every side, hand aprons along y
+ * (the same for every blend; set per fit, no allocation).
  */
 const half = { w: 1, d: 1, far: 1 };
 
-function setTable(table: TableSize, u = 0): void {
+function setTable(table: TableSize): void {
   half.w = table.width / 2 + RAIL_WIDTH;
   half.d = framedHalfDepth(table.depth, table.handScale);
-  half.far = half.d + farAllowance(table.handScale) * (1 - Math.min(1, Math.max(0, u)));
+  half.far = framedFarDepth(table.depth);
 }
 
-/** The framed region for `table` at blend `u`: half width, near (player) and far (opponent) depth. */
-export function framedExtent(table: TableSize, u = 0): { halfWidth: number; near: number; far: number } {
-  setTable(table, u);
+/** The framed region for `table`: half width, near (player) and far (opponent) depth. */
+export function framedExtent(table: TableSize): { halfWidth: number; near: number; far: number } {
+  setTable(table);
   return { halfWidth: half.w, near: half.d, far: half.far };
 }
 
@@ -219,7 +221,7 @@ export function fitPerspective(
   table: TableSize,
   out: PerspectivePose = { fov: 0, position: [0, 0, 0], target: [0, 0, 0], near: 0, far: 0 },
 ): PerspectivePose {
-  setTable(table, u);
+  setTable(table);
   const { tilt, fov } = blendPose(u);
   const bounds = ndcBounds(view, margins);
   probe.fov = fov;
@@ -266,20 +268,22 @@ export function fitOrthographic(
   table: TableSize,
   out: OrthoFrustum = { left: 0, right: 0, top: 0, bottom: 0 },
 ): OrthoFrustum {
-  setTable(table, 1);
+  setTable(table);
   const bounds = ndcBounds(view, margins);
   const spanX = bounds.maxX - bounds.minX;
   const spanY = bounds.maxY - bounds.minY;
   const aspect = Math.max(1, view.width) / Math.max(1, view.height);
-  // World units per NDC unit along y, chosen so both axes fit.
-  const perNdcY = Math.max((2 * half.d) / spanY, (2 * half.w) / (spanX * aspect));
+  // World units per NDC unit along y, chosen so both axes fit. The framed
+  // region runs from -near to +far, so its middle sits off the table center.
+  const perNdcY = Math.max((half.d + half.far) / spanY, (2 * half.w) / (spanX * aspect));
   const perNdcX = perNdcY * aspect;
   const centerX = (bounds.minX + bounds.maxX) / 2;
   const centerY = (bounds.minY + bounds.maxY) / 2;
+  const middle = (half.far - half.d) / 2;
   out.left = (-1 - centerX) * perNdcX;
   out.right = (1 - centerX) * perNdcX;
-  out.top = (1 - centerY) * perNdcY;
-  out.bottom = (-1 - centerY) * perNdcY;
+  out.top = middle + (1 - centerY) * perNdcY;
+  out.bottom = middle + (-1 - centerY) * perNdcY;
   return out;
 }
 
@@ -306,7 +310,7 @@ export function tableWidthForView(
   if (preset === 'topdown') {
     const b = ndcBounds(view, margins);
     const aspect = Math.max(1, view.width) / Math.max(1, view.height);
-    const perNdcY = (2 * framedHalfDepth(depth, handScale)) / (b.maxY - b.minY);
+    const perNdcY = (framedHalfDepth(depth, handScale) + framedFarDepth(depth)) / (b.maxY - b.minY);
     return snap((b.maxX - b.minX) * aspect * perNdcY - 2 * RAIL_WIDTH);
   }
   widthProbe.depth = depth;
@@ -336,10 +340,10 @@ function widthSlack(view: Viewport, margins: FitMargins, table: TableSize): bool
 /** Does `table` leave slack above and below (the width binds)? */
 function heightSlack(view: Viewport, margins: FitMargins, preset: 'table' | 'topdown', table: TableSize): boolean {
   if (preset === 'topdown') {
-    setTable(table, 1);
+    setTable(table);
     const b = ndcBounds(view, margins);
     const aspect = Math.max(1, view.width) / Math.max(1, view.height);
-    return (2 * half.w) / ((b.maxX - b.minX) * aspect) > (2 * half.d) / (b.maxY - b.minY) + 1e-6;
+    return (2 * half.w) / ((b.maxX - b.minX) * aspect) > (half.d + half.far) / (b.maxY - b.minY) + 1e-6;
   }
   const pose = fitPerspective(0, view, margins, table, widthPose);
   const distance = Math.hypot(pose.position[1] - pose.target[1], pose.position[2]);

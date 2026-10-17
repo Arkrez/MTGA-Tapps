@@ -36,6 +36,8 @@ export interface ObjectState {
   attachedTo: ObjId | null;
   /** In exile: the permanent that exiled it (shown tucked under that host while it is on the battlefield). */
   exiledWith: ObjId | null;
+  /** In exile: it came straight from the hand (a plotted card shows beside the hand). */
+  fromHand: boolean;
   faceDown: boolean;
   inferred: boolean;
   /** seq at which the card identity became known; null while hidden. */
@@ -67,6 +69,11 @@ export interface BoardState {
   step: string | null;
   life: Readonly<Record<number, number>>;
   attackers: ReadonlySet<ObjId>;
+  /**
+   * Damage dealt this moment, per permanent (summed), shown on the table:
+   * everything one spell or combat hits stays marked until the next action.
+   */
+  damage: ReadonlyMap<ObjId, number>;
   /** blocker -> attacker */
   blocks: ReadonlyMap<ObjId, ObjId>;
   lastEvent: ReplayEvent | null;

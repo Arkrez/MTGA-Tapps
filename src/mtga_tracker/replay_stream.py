@@ -118,6 +118,8 @@ class ReplayCard(TypedDict, total=False):
     is_token: bool
     image_url: Optional[str]
     faces: List[Dict[str, Optional[str]]]
+    keywords: List[str]
+    back_face: bool
 
 
 class ReplayTurn(TypedDict):
@@ -209,6 +211,8 @@ class CardRegistry:
                 "is_token": False,
                 "image_url": None,
                 "faces": _faces(display),
+                "keywords": [],
+                "back_face": False,
             }
             self.cards[key] = entry
         elif (

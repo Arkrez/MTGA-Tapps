@@ -15,6 +15,7 @@ import { useReplayKeyboard } from '../hooks/useReplayKeyboard';
 import { useTexturePriorities, useTextureStore } from '../hooks/useTextures';
 import { useNarrowViewport } from '../hooks/useViewport';
 import { HoverStore } from '../scene/hoverStore';
+import { KEY_ZOOM_STEP, ViewZoom } from '../scene/viewZoom';
 import type { CardKey, ReplayStream } from '../types';
 import { CardPreview } from './CardPreview';
 import { ReplayControls } from './ReplayControls';
@@ -61,6 +62,7 @@ export function ReplayViewer({ stream, gameId, at, returnHash }: ReplayViewerPro
   }, [tableNode]);
   useTexturePriorities(store, timeline, layout, snapshot.turn ?? 0);
   const [hover] = useState(() => new HoverStore());
+  const [zoom] = useState(() => new ViewZoom());
   const narrow = useNarrowViewport();
   const [tableOpen, setTableOpen] = useState(false);
   const goToTurnRef = useRef<HTMLInputElement>(null);
@@ -69,6 +71,10 @@ export function ReplayViewer({ stream, gameId, at, returnHash }: ReplayViewerPro
   useReplayKeyboard(clock, {
     focusGoToTurn: () => goToTurnRef.current?.focus(),
     toggleTable: () => setTableOpen((open) => !open),
+    zoom: (direction) => {
+      if (direction === 'reset') zoom.reset();
+      else zoom.zoomBy(direction === 'in' ? KEY_ZOOM_STEP : 1 / KEY_ZOOM_STEP);
+    },
   });
 
   // Shareable position: rewrite `?at=` while paused (never during playback, never a new entry).
@@ -175,6 +181,7 @@ export function ReplayViewer({ stream, gameId, at, returnHash }: ReplayViewerPro
                 cards={stream.cards}
                 store={store}
                 hover={hover}
+                zoom={zoom}
                 snap={jumped}
                 playing={snapshot.playing}
                 onCardClick={onCardClick}

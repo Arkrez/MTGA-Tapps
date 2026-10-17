@@ -20,6 +20,32 @@ try:
 except ImportError:
     ijson = None  # type: ignore
 
+#: Arena ability base ids (Abilities.BaseId) the replay shows beside the hand:
+#: cast from the graveyard (flashback and kin), or from exile once plotted.
+REPLAY_KEYWORD_BASE_IDS = {
+    35: "flashback",
+    199: "escape",
+    215: "disturb",
+    362: "harmonize",
+    328: "plot",
+}
+#: Cards.LinkedFaceType of a back face: a transforming card's back, a modal
+#: double-faced card's back.
+TRANSFORM_BACK_FACE_TYPE = 1
+BACK_FACE_TYPES = (TRANSFORM_BACK_FACE_TYPE, 9)
+#: Arena's CardType enum (Enums table, Type = 'CardType'), in printed order.
+ARENA_CARD_TYPES = {
+    11: "Kindred",
+    1: "Artifact",
+    3: "Enchantment",
+    5: "Land",
+    8: "Planeswalker",
+    14: "Battle",
+    2: "Creature",
+    4: "Instant",
+    10: "Sorcery",
+}
+
 
 class CardDatabase:
     """Resolves MTGA card IDs (grpId) to card names using Scryfall API with fallback.
@@ -633,6 +659,95 @@ class CardDatabase:
         if index:
             self._interchangeable_index = index
         return index
+
+    def replay_card_facts(self) -> Dict[str, Dict[str, Any]]:
+        """Facts the replay needs per casefolded card name, from Arena's card DB.
+
+        ``keywords``: the replay-relevant keywords the card has (see
+        ``REPLAY_KEYWORD_BASE_IDS``: casting from the graveyard, plot).
+        ``back_face``: the name is the back face of a double-faced card (its
+        Scryfall image is the back image). ``front``: for a transforming
+        card's back face, the front face's name, so "put [back] onto
+        battlefield" can be told apart from a new token. Keywords come from
+        Arena's language-independent ability base ids. ``type_line`` ("Enchantment
+        Creature", supertypes and subtypes left out), ``power`` and ``toughness``
+        (printed, as text) fill in cards the game's rows never described, such
+        as an opponent's card the tracker only saw by name. Empty when the DB is
+        unavailable.
+        """
+        if getattr(self, "_replay_card_facts", None) is not None:
+            return self._replay_card_facts
+        facts: Dict[str, Dict[str, Any]] = {}
+        tag_pattern = re.compile(r"<[^>]+>")
+
+        def clean(value) -> str:
+            return tag_pattern.sub("", str(value or "")).strip()
+
+        def ids(raw) -> List[int]:
+            out = []
+            for part in str(raw or "").split(","):
+                head = part.split(":", 1)[0].strip()
+                if head.isdigit():
+                    out.append(int(head))
+            return out
+
+        db_path = self._resolve_mtga_db_path()
+        if db_path:
+            try:
+                conn = self._connect_mtga_db(db_path)
+                cur = conn.cursor()
+                marks = ",".join("?" for _ in REPLAY_KEYWORD_BASE_IDS)
+                keyword_of = {
+                    int(ability_id): REPLAY_KEYWORD_BASE_IDS[int(base_id)]
+                    for ability_id, base_id in cur.execute(
+                        f'SELECT "Id", "BaseId" FROM "Abilities" WHERE "BaseId" IN ({marks})',
+                        tuple(REPLAY_KEYWORD_BASE_IDS),
+                    ).fetchall()
+                }
+                rows = self._title_join_rows(
+                    cur,
+                    'c."GrpId", l."Loc", c."LinkedFaceType", c."LinkedFaceGrpIds", c."AbilityIds",'
+                    ' c."Types", c."Power", c."Toughness"',
+                    'c."IsToken" = 0',
+                )
+                names = {int(row[0]): clean(row[1]) for row in rows if clean(row[1])}
+                for grp_id, title, face_type, linked, abilities, types, power, tough in rows:
+                    name = clean(title)
+                    if not name or " // " in name:
+                        continue
+                    entry = facts.setdefault(
+                        name.casefold(),
+                        {
+                            "keywords": [],
+                            "back_face": False,
+                            "front": None,
+                            "type_line": None,
+                            "power": None,
+                            "toughness": None,
+                        },
+                    )
+                    if entry["type_line"] is None:
+                        type_ids = set(ids(types))
+                        words = [w for i, w in ARENA_CARD_TYPES.items() if i in type_ids]
+                        entry["type_line"] = " ".join(words) or None
+                        if "Creature" in words:
+                            entry["power"] = str(power) if power not in (None, "") else None
+                            entry["toughness"] = str(tough) if tough not in (None, "") else None
+                    for ability_id in ids(abilities):
+                        keyword = keyword_of.get(ability_id)
+                        if keyword and keyword not in entry["keywords"]:
+                            entry["keywords"].append(keyword)
+                    if face_type in BACK_FACE_TYPES:
+                        entry["back_face"] = True
+                    if face_type == TRANSFORM_BACK_FACE_TYPE and entry["front"] is None:
+                        front = next((names.get(i) for i in ids(linked) if names.get(i)), None)
+                        entry["front"] = front
+                conn.close()
+            except Exception:
+                facts = {}
+        if facts:
+            self._replay_card_facts = facts
+        return facts
 
     def color_identity_for_name(self, name: str) -> Optional[str]:
         """WUBRG identity for ONE card name straight from Arena's DB — the

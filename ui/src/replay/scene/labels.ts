@@ -8,10 +8,10 @@
  * state; the projector moves them each rendered frame without React.
  */
 import { CARD_HEIGHT } from '../layout';
-import type { CardPlacement, Layout, PileZone } from '../layout';
+import type { CardPlacement, CastableMark, Layout, PileZone } from '../layout';
 import type { CardKey, ReplayCard } from '../types';
 
-export type LabelTone = 'pile' | 'stat' | 'loyalty' | 'counters' | 'commander';
+export type LabelTone = 'pile' | 'stat' | 'loyalty' | 'counters' | 'commander' | 'castable' | 'damage';
 
 export interface SceneLabel {
   id: string;
@@ -65,6 +65,14 @@ export function statBadge(
 }
 
 /** Counters other than loyalty, as a short chip text ("+1/+1 ×2 · flying"). */
+const CASTABLE_LABELS: Record<CastableMark, string> = {
+  flashback: 'Flashback',
+  escape: 'Escape',
+  disturb: 'Disturb',
+  harmonize: 'Harmonize',
+  plot: 'Plotted',
+};
+
 export function countersText(placement: CardPlacement): string | null {
   const parts: string[] = [];
   for (const [type, count] of Object.entries(placement.counters)) {
@@ -92,7 +100,37 @@ export function sceneLabels(layout: Layout, cards: Readonly<Record<CardKey, Repl
     });
   }
   for (const placement of layout.cards) {
+    if (placement.castable) {
+      // A chip across the upper edge names why the card sits beside the hand.
+      const [dx, dy] = rotate(0, (CARD_HEIGHT / 2 - 0.1) * placement.scale, placement.rotZ);
+      labels.push({
+        id: `castable:${placement.obj}`,
+        text: CASTABLE_LABELS[placement.castable],
+        tone: 'castable',
+        obj: placement.obj,
+        x: dx,
+        y: dy,
+        z: 0.02,
+        align: 'center',
+        emphasis: placement.castable === 'plot',
+      });
+      continue;
+    }
     if (placement.zone !== 'battlefield' || !placement.faceUp) continue;
+    if (placement.damage) {
+      // A red badge over the art for damage this moment ("−6"), above the stat badge.
+      const [dx, dy] = rotate(0, 0.08 * placement.scale, placement.rotZ);
+      labels.push({
+        id: `damage:${placement.obj}`,
+        text: `\u2212${placement.damage}`,
+        tone: 'damage',
+        obj: placement.obj,
+        x: dx,
+        y: dy,
+        z: 0.04,
+        align: 'center',
+      });
+    }
     const card = placement.card ? cards[placement.card] : undefined;
     const badge = statBadge(placement, card);
     if (badge) {

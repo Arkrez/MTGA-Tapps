@@ -96,6 +96,14 @@ function CardMeshImpl({ placement, cardInfo, sleeve, store, kit, registry, spawn
             renderOrder={1}
           />
         ) : null}
+        {placement.castable ? (
+          <mesh
+            geometry={kit.ring}
+            material={placement.castable === 'plot' ? kit.plotMaterial : kit.castableMaterial}
+            position-z={-0.0025}
+            raycast={noRaycast}
+          />
+        ) : null}
         {placement.inferred ? (
           <mesh geometry={kit.inferred} material={kit.inferredMaterial} position-z={-0.002} raycast={noRaycast} />
         ) : null}
@@ -118,6 +126,7 @@ function samePlacement(a: CardPlacement, b: CardPlacement): boolean {
     a.scale === b.scale &&
     a.highlight === b.highlight &&
     a.inferred === b.inferred &&
+    a.castable === b.castable &&
     a.seat === b.seat &&
     sameUnder(a.under, b.under)
   );
