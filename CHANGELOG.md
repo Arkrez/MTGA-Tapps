@@ -9,8 +9,10 @@
   asks for confirmation and retains its decks in Unsorted. Migration 35 preserves
   collection membership through full backups, merge and gameplay reset.
 - Direct Arena deck transfers (load, back up, move, restore and Add to Arena) are
-  enabled on 64-bit Windows as well as Apple Silicon Macs. Windows support is new and
-  still being validated; other Arena builds are refused with the build they report.
+  enabled on 64-bit Windows as well as Apple Silicon Macs. Windows Arena runs on Mono
+  rather than the Mac build's IL2CPP, so the adapter now supports both runtimes.
+  Windows support is new and still being validated; other Arena builds are refused
+  with the build they report.
 - Arena's Decks screen now redraws by itself after Deck Manager or Deck Finder adds,
   restores or removes decks, so changes appear without leaving and reopening Decks.
   A newly added or restored deck is selected and scrolled into view.
@@ -238,6 +240,17 @@
 
 ### Fixes
 
+- Windows: Deck Manager messages no longer show garbled apostrophes ("isnâ€™t"), and
+  Deck Finder runs on Python 3.9 as the project requires (it needed 3.10+).
+- Windows: Deck Finder's Add to Arena no longer fails with "access violation
+  accessing 0x0", and Arena's Decks screen redraws and scrolls to the new deck.
+- When Arena's importer returns a different card list, the message names the cards
+  and quantities that differ.
+- Add to Arena accepts decklists that use a card's other name, such as a Universes
+  Beyond card listed by its Omenpath name ("Kavaero, Mind-Bitten" for "Superior
+  Spider-Man"), instead of reporting the card as missing.
+- Deck Finder loads Moxfield and AetherHub again where Cloudflare refused the
+  Chrome connection profile (seen on Windows); it retries with a Firefox profile.
 - Moving Arena decks to your collection now asks which collection to save them in
   (including a new one), instead of always using Unsorted and needing a second move.
   The dialog says the decks are deleted from Arena and that Arena may show them until

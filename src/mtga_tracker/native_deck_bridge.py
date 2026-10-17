@@ -114,7 +114,7 @@ def attach():
     try:
         timer.start()
         script = session.create_script(
-            (Path(__file__).parent / "assets" / "arena_decks.js").read_text()
+            (Path(__file__).parent / "assets" / "arena_decks.js").read_text(encoding="utf-8")
         )
         script.load()
         bridge = ArenaBridge(script.exports_sync)

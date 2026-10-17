@@ -658,7 +658,7 @@ def _played(tmp_path: Path):
 def test_console_and_printed_rows_match_the_pre_replay_baseline(tmp_path, capsys):
     """Byte-identical console; printed rows identical except seat_id, which a
     fact may fill only where the old text-based inference found no actor."""
-    baseline = json.loads(BASELINE_PATH.read_text())
+    baseline = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
     tracker, db = _played(tmp_path)
     console = capsys.readouterr().out.splitlines()
     # The analytics store's own VACUUM notice goes to stdout, not the tracker.

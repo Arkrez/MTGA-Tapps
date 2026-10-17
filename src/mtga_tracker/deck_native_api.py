@@ -162,6 +162,15 @@ def _resolve_names():
         return None
 
 
+def _interchangeable_names():
+    from .card_database import CardDatabase
+
+    try:
+        return CardDatabase().interchangeable_name_index()
+    except Exception:
+        return {}
+
+
 def execute(db_path, action, selections, request_id, progress, cancelled=lambda: False):
     """Every job uses a fresh native/account connection and this selected DB.
 
@@ -213,6 +222,7 @@ def execute(db_path, action, selections, request_id, progress, cancelled=lambda:
                         {"detail": detail, "completed": step, "total": 3}
                     ),
                     _card_types(),
+                    _interchangeable_names(),
                 )
             elif action == "backup":
                 if report.get("deck_screen_open") is not True:

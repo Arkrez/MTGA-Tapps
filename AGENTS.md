@@ -201,11 +201,18 @@ Primary code paths:
   Do not attach or restart Arena/tracker while the user plays. Wait for the user to explicitly report
   being out of a match on Decks before any live validation; app restarts still
   require explicit approval.
-  Runtime support is IL2CPP Unity `6000.3.14f1` on Apple Silicon macOS (validated)
-  and x64 Windows (enabled, awaiting live validation; checklist in
+  Runtime support is Unity `6000.3.14f1` on Apple Silicon macOS (IL2CPP, validated)
+  and x64 Windows (Mono, enabled, awaiting live validation; checklist in
   `docs/plans/deck-manager/VALIDATION.md`), gated by `paths.native_deck_platform_supported`
-  and the adapter's `ARENA_ARCH` build check. The bridge attaches to `MTGA` or
-  `MTGA.exe`. Frida is pinned for Mac and Windows and lazily imported; the asset and
+  and the adapter's `ARENA_ARCH` build check. Windows Arena ships no `GameAssembly.dll`;
+  it embeds `mono-2.0-bdwgc.dll`. `arena_decks.js` picks `il2cppRuntime()` or
+  `monoRuntime()`, which expose the same helper names; keep deck logic runtime-neutral
+  and put any new runtime call in both. Object/array/string/struct layouts match on
+  64-bit, so the layout checks are shared. Mono pitfalls (both seen live): its JIT
+  uses hardware faults for null checks, so `mono_runtime_invoke` must keep Frida's
+  `exceptions: 'propagate'`; `mono_field_set_value` takes a reference value
+  itself but a value type by pointer; and Mono's invoke takes a `Nullable<T>`
+  argument as a boxed `T` or null, where IL2CPP takes the raw struct. The bridge attaches to `MTGA` or `MTGA.exe`. Frida is pinned for Mac and Windows and lazily imported; the asset and
   extension are included in both platforms' packaging configuration.
   Check the active-game row before attachment and between transfers, and check the
   live Decks controller, same native service and authenticated account for writes.

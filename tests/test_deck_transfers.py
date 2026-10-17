@@ -525,7 +525,10 @@ def test_native_text_import_uses_journaled_creation_and_never_repeats_request(co
 
 def test_native_text_import_rejects_inventory_clamping_without_create_or_backup(conn):
     arena = imported_arena(quantity=3)
-    with pytest.raises(dm.DeckManagerError, match="changed the card list"):
+    with pytest.raises(
+        dm.DeckManagerError,
+        match=r"changed the card list.*Differences: Deck: 4 Forest in the list, 3 from Arena\.$",
+    ):
         dt.add_import(
             conn,
             arena,
@@ -536,6 +539,75 @@ def test_native_text_import_rejects_inventory_clamping_without_create_or_backup(
         )
     assert "create" not in arena.calls
     assert dm.list_decks(conn) == []
+
+
+def test_native_text_import_accepts_a_cards_interchangeable_name(conn):
+    # The list says the Omenpath name; Arena's importer returns the Universes Beyond
+    # printing the player owns, which the card DB names "Superior Spider-Man".
+    selection = {
+        "text": "Deck\n4 Kavaero, Mind-Bitten",
+        "name": "Finder deck",
+        "format_name": "Standard",
+    }
+    arena = imported_arena()
+    with pytest.raises(
+        dm.DeckManagerError,
+        match=r"Deck: 4 Kavaero, Mind-Bitten in the list, 0 from Arena; "
+        r"Deck: 0 Superior Spider-Man in the list, 4 from Arena\.$",
+    ):
+        dt.add_import(
+            conn,
+            arena,
+            selection,
+            str(uuid.uuid4()),
+            arena.roster(),
+            lambda _: "Superior Spider-Man",
+        )
+    assert "create" not in arena.calls
+
+    aliases = {
+        "superior spider-man": "kavaero, mind-bitten",
+        "kavaero, mind-bitten": "kavaero, mind-bitten",
+    }
+    arena = imported_arena()
+    report = dt.add_import(
+        conn,
+        arena,
+        selection,
+        str(uuid.uuid4()),
+        arena.roster(),
+        lambda _: "Superior Spider-Man",
+        aliases=aliases,
+    )
+    assert arena.calls.count("create") == 1
+    assert len(report["decks"]) == 2
+    assert dt.pending(conn) == []
+
+
+def test_interchangeable_names_never_hide_a_quantity_change(conn):
+    aliases = {
+        "superior spider-man": "kavaero, mind-bitten",
+        "kavaero, mind-bitten": "kavaero, mind-bitten",
+    }
+    arena = imported_arena(quantity=3)
+    with pytest.raises(
+        dm.DeckManagerError,
+        match=r"Deck: 4 Kavaero, Mind-Bitten in the list, 3 from Arena\.$",
+    ):
+        dt.add_import(
+            conn,
+            arena,
+            {
+                "text": "Deck\n4 Kavaero, Mind-Bitten",
+                "name": "Finder deck",
+                "format_name": "Standard",
+            },
+            str(uuid.uuid4()),
+            arena.roster(),
+            lambda _: "Superior Spider-Man",
+            aliases=aliases,
+        )
+    assert "create" not in arena.calls
 
 
 def test_native_text_import_rejects_full_slots_before_parser_call(conn):

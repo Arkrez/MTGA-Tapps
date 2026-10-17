@@ -582,6 +582,58 @@ class CardDatabase:
             self._color_index_by_name = index
         return index
 
+    def interchangeable_name_index(self) -> Dict[str, str]:
+        """Map each casefolded card name to one shared key for every name Arena
+        treats as the same card (Cards.InterchangeableTitleId), e.g. Universes
+        Beyond "Superior Spider-Man" and its Omenpath "Kavaero, Mind-Bitten".
+        Arena's importer accepts either name and returns whichever printing the
+        player has. Names without a partner are absent. Empty when unavailable.
+        """
+        if getattr(self, "_interchangeable_index", None) is not None:
+            return self._interchangeable_index
+        index: Dict[str, str] = {}
+        # Some title rows wrap hyphenated words in "<nobr>" markup.
+        tag_pattern = re.compile(r"<[^>]+>")
+
+        def clean(value) -> str:
+            return tag_pattern.sub("", str(value or "")).strip()
+
+        db_path = self._resolve_mtga_db_path()
+        if db_path:
+            try:
+                conn = self._connect_mtga_db(db_path)
+                cur = conn.cursor()
+                cur.execute('PRAGMA table_info("Cards")')
+                if "InterchangeableTitleId" in {str(row[1]) for row in cur.fetchall()}:
+                    titles = {
+                        int(title_id): clean(name)
+                        for title_id, name in self._title_join_rows(
+                            cur, 'c."TitleId", l."Loc"', 'c."TitleId" IS NOT NULL'
+                        )
+                        if clean(name)
+                    }
+                    groups: Dict[str, set] = {}
+                    for name, other_id in self._title_join_rows(
+                        cur,
+                        'l."Loc", c."InterchangeableTitleId"',
+                        'c."InterchangeableTitleId" IS NOT NULL AND c."InterchangeableTitleId" <> 0',
+                    ):
+                        other = titles.get(int(other_id))
+                        if not clean(name) or not other:
+                            continue
+                        group = {clean(name).casefold(), other.casefold()}
+                        for member in list(group):
+                            group |= groups.get(member, set())
+                        for member in group:
+                            groups[member] = group
+                    index = {name: min(group) for name, group in groups.items()}
+                conn.close()
+            except Exception:
+                index = {}
+        if index:
+            self._interchangeable_index = index
+        return index
+
     def color_identity_for_name(self, name: str) -> Optional[str]:
         """WUBRG identity for ONE card name straight from Arena's DB — the
         on-demand path for a card the session index has never seen (a new

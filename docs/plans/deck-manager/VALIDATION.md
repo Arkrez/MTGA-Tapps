@@ -216,3 +216,83 @@ Windows (x64) is enabled in code only. Its code paths share the macOS adapter
 6. **Restore to Arena** from Saved, then open a deck in Arena and try Add again:
    the "Arena isn't on its Decks screen" message appears without script details.
 7. Check the frozen app opens no console windows during these jobs.
+
+## Windows setup and Mono runtime (2026-10-16)
+
+First Windows 11 PC (Steam install), checked offline from the install files without
+attaching: Unity `6000.3.14f1` matches, but Windows Arena is a **Mono** build — no
+`GameAssembly.dll`, it loads `MonoBleedingEdge\EmbedRuntime\mono-2.0-bdwgc.dll` with
+263 managed DLLs. The IL2CPP-only adapter would have stopped at load. Every Mono
+export the new `monoRuntime()` shim uses is present, including Unity's pointer-sized
+`mono_gchandle_*_v2`.
+
+- `arena_decks.js` now selects IL2CPP or Mono and exposes the same helpers; the main-
+  thread hook uses `mono_compile_method` for `UnitySynchronizationContext.Exec`.
+  Archives record `runtime: Mono` on Windows; their JSON models are runtime-neutral.
+- Windows setup fixes: the UI `node_modules` was an incomplete install (no rolldown
+  binding); a clean `npm ci` fixed `npm run build`. Node 26's own `localStorage`
+  global shadowed jsdom in vitest; the test setup restores jsdom's. Deck Finder
+  needed Python 3.10+/3.11+ (`X | None`, `datetime.UTC`) despite `>=3.9`.
+  `native_deck_bridge` read the adapter as cp1252, garbling `’` in its messages.
+  POC scripts fsynced read-only handles/directories, which Windows rejects.
+- Full Python suite on Windows (Python 3.9.13): **1032 passed, 3 skipped,
+  1 deselected**. UI: **426 passed** in 49 files; TypeScript, lint and build pass.
+  Native adapter: **28 passed** (9 new); POC: **15 passed**.
+- **Step 1 passed live** (read-only, Arena on Decks, user-approved): connect 0.7 s,
+  Unity `6000.3.14f1`, Decks screen detected, roster of **92 decks**, limit 100,
+  same deck/summary fields as macOS. Arena stayed responsive; no deck was written.
+  This confirms Mono type-name formatting, the `Exec` main-thread hook on JIT code,
+  GC handles and the shared layout checks.
+- The first live run listed a bogus pile `enumSeperator`: Mono's `System.Enum` declares
+  that string constant and `fields()` walks parent classes, so `pileNames` read an
+  8-byte reference into a 4-byte buffer. It now reads only members typed as
+  `EDeckPile` (confirmed against `SharedClientCore.dll` metadata: values 0–4).
+- Steps 2–7 (including all writes) remain for user-selected live runs.
+
+### Deck Finder Add on Windows (same session)
+
+The user's first Deck Finder **Add to Arena** failed with "access violation
+accessing 0x0" before anything was journaled or saved (no transfer row, no saved
+deck). Two Mono-only causes, both found with read-only live runs:
+
+- Frida's default `exceptions: 'steal'` took a hardware fault that Mono uses for an
+  implicit null check, aborting the managed call midway. Mono `runtime_invoke` now
+  uses `exceptions: 'propagate'`; the same fault then surfaced as a managed
+  `System.NullReferenceException`, and rejected calls now name the exception type.
+- The real cause: the shim passed a pointer to the reference to
+  `mono_field_set_value`, which takes reference values directly (only value types
+  go by pointer). The draft's `Name` pointed into a scratch buffer, which produced
+  the null fault and later a garbage string length. The same call sets `_summary`
+  in restore preparation and `_loadDecksCoroutine` in the Decks redraw.
+- After the fix, live and read-only: `prepareimport` parsed "4 Forest" into
+  `[(1, [(12429, 4)])]` plus three empty piles with the requested name (521-char
+  model), and `preparecreate` rebuilt and matched it. No create was dispatched;
+  the drafts were released on close. Arena stayed responsive throughout.
+- User-run Deck Finder **Add to Arena** then succeeded: create, polling, read-back
+  verification and journal completion (transfer `complete`). The Decks redraw did
+  not appear: Mono's invoke wrapper unboxes `Nullable<T>` arguments, so it needs a
+  boxed Guid (or null) for `Coroutine_LoadDecks`, not IL2CPP's raw 20-byte struct.
+  `nullableGuidArgument` now differs per runtime. A live display-only
+  `refreshscreen` for the added deck then returned true in 1.2 s.
+- Another user-selected deck stopped at the importer comparison (no create). The
+  error now lists the differing cards and quantities so a missing card can be told
+  apart from a name-resolution fault. The tracker resolves names from the only,
+  current `Raw_CardDatabase` in the Steam install.
+- User-run steps 5–6 then passed: Move to collection (`DeleteDeck`) removed the
+  deck from the grid and kept its saved copy; Restore to Arena from Saved worked;
+  Add with Arena off Decks showed the plain Decks-screen message. No security
+  warning was reported (step 2).
+- Deck Finder Add for a list naming "Kavaero, Mind-Bitten" stopped because Arena
+  returned the owned Universes Beyond printing, named "Superior Spider-Man" by
+  the card DB. `Cards.InterchangeableTitleId` links the two (158 pairs). The Add
+  comparison now keys both names together; a read-only live run of the user's
+  75-card list matched with pairing and reproduced the error without it.
+- Remaining: step 7 and frozen-build checks need the installer from CI (no Rust,
+  Inno Setup or PyInstaller on this PC); macOS IL2CPP regression smoke for the
+  shared adapter changes.
+
+Deck Finder: Moxfield and AetherHub returned Cloudflare 403 to every cloudscraper
+Chrome profile from Python 3.9/OpenSSL 1.1.1n on Windows, while `curl.exe` and the
+Firefox profile got 200 from the same PC. `CloudflareSession` keeps the Chrome
+profile first and moves to Firefox (with its own User-Agent) on a Cloudflare 403;
+both real scrapers returned 200 via Firefox.
