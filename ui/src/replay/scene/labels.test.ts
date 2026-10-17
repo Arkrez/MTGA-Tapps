@@ -79,3 +79,54 @@ describe('scene labels', () => {
     expect(quiet.some((l) => l.id === 'stat:pw1')).toBe(false);
   });
 });
+
+describe('commanders', () => {
+  const cards = {
+    cmd: card('Belladonna Took', 'Creature', { power: '2', toughness: '2' }),
+    bear: card('Grizzly Bears', 'Creature', { power: '2', toughness: '2' }),
+  };
+  const opts = { mirrorOpponent: false, hindsight: true, playerSeat: PLAYER, commandZone: true };
+
+  function brawl() {
+    const b = new StreamBuilder();
+    b.move('c1', 'cmd', 'limbo', 'command', PLAYER, 'put');
+    b.turnStart(1, PLAYER);
+    b.move('c1', 'cmd', 'command', 'stack', PLAYER, 'cast');
+    b.add('stack_push', { stack_id: 's1', obj: 'c1', card: 'cmd', stack_kind: 'spell', controller: PLAYER, text: null, targets: [] });
+    b.resolve('c1', 'cmd', PLAYER, 's1', 'battlefield');
+    b.move('b1', 'bear', 'limbo', 'battlefield', PLAYER, 'put');
+    b.add('counter', { obj: 'c1', type: '+1/+1', delta: 1, total: 1 });
+    const stream = b.build(cards, { playerSeat: PLAYER });
+    stream.seats[String(PLAYER)].commanders = ['Belladonna Took'];
+    return stream;
+  }
+
+  it('marks the commander on the battlefield and keeps its empty command zone labelled', () => {
+    const stream = brawl();
+    const timeline = buildTimeline(stream);
+    const resolved = stream.events.findIndex((e) => e.kind === 'move' && e.to === 'battlefield' && e.obj === 'c1');
+    const state = stateAt(timeline, stream.events[resolved].seq);
+    const layout = layoutBoard(state, opts);
+    expect(layout.cards.find((c) => c.obj === 'c1')?.commander).toBe(true);
+    const labels = sceneLabels(layout, cards);
+    const chip = labels.find((l) => l.id === 'counters:c1')!;
+    expect(chip.text).toBe('Commander');
+    expect(chip.tone).toBe('commander');
+    expect(labels.find((l) => l.id === `pile:${PLAYER}:command`)?.text).toBe('Command');
+  });
+
+  it('is not marked before it is cast, and ordinary creatures never are', () => {
+    const stream = brawl();
+    const timeline = buildTimeline(stream);
+    const start = stateAt(timeline, stream.turns[0].first_seq);
+    const first = layoutBoard(start, opts);
+    expect(first.cards.find((c) => c.obj === 'c1')?.zone).toBe('command');
+    expect(sceneLabels(first, cards).find((l) => l.id === `pile:${PLAYER}:command`)?.text).toBe('Command 1');
+    expect(sceneLabels(first, cards).some((l) => l.tone === 'commander')).toBe(false);
+    const end = layoutBoard(stateAt(timeline, stream.events[stream.events.length - 1].seq), opts);
+    expect(end.cards.find((c) => c.obj === 'b1')?.commander).toBe(false);
+    const chip = sceneLabels(end, cards).find((l) => l.id === 'counters:c1')!;
+    expect(chip.text).toBe('Commander · +1/+1');
+    expect(chip.tone).toBe('commander');
+  });
+});

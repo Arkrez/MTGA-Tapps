@@ -189,6 +189,8 @@ export interface CardPlacement {
   counters: Readonly<Record<string, number>>;
   power: string | null;
   toughness: string | null;
+  /** The seat's commander (Brawl/Commander), wherever it is: the scene marks it on the battlefield. */
+  commander: boolean;
   /** Cards tucked under this one (auras, equipment, cards it exiled), bottom first; empty for everything else. */
   under: readonly UnderCard[];
 }
@@ -315,6 +317,20 @@ function highlightOf(ctx: Context, obj: ObjId): PlacementHighlight {
   return null;
 }
 
+/**
+ * A seat's commander is the card the stream's seat info names (Brawl decks are
+ * singleton, so the name is enough). Rules-wise it is an ordinary permanent on
+ * the battlefield; Arena puts it in the creature row like any other, so this
+ * only marks it rather than moving it.
+ */
+function isCommander(ctx: Context, object: ObjectState): boolean {
+  if (!object.card) return false;
+  const names = ctx.state.commanders[object.owner];
+  if (!names || names.length === 0) return false;
+  const name = ctx.state.cards[object.card]?.name;
+  return name !== undefined && names.includes(name);
+}
+
 function printedStat(ctx: Context, object: ObjectState, key: 'power' | 'toughness'): string | null {
   const value = object[key];
   if (value !== null) return String(value);
@@ -353,6 +369,7 @@ function placeObject(
     counters: object.counters,
     power: printedStat(ctx, object, 'power'),
     toughness: printedStat(ctx, object, 'toughness'),
+    commander: isCommander(ctx, object),
     under,
   });
 }

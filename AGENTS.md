@@ -22,14 +22,16 @@ Repo layout:
 - `tests/`: pytest suite, including `tests/deck_downloader/`. `tests/deprecated/` holds
   non-test debug scripts and is not part of the suite.
 - `packaging/` + `scripts/`: PyInstaller specs, entry points, and OS build scripts.
-- `docs/`: log-format reference, research notes, and the removal ledger; `docs/plans/` holds
-  unfinished implementation plans together with their mockups (mockup images live there, not in
-  `docs/images/`, which is for README screenshots). `docs/plans/INDEX.md` records plan status;
+- `docs/`: reference guides, research notes and the removal ledger; `docs/plans/` holds
+  only unfinished implementation plans and related validation notes. README and
+  release screenshots live in `docs/images/`. `docs/plans/INDEX.md` records plan status;
   completed behavior belongs in reference docs, and the README links only to current
   features and reference guides. `docs/RELEASING.md` covers releases. `CHANGELOG.md` tracks releases.
   The version comes from the git tag (setuptools-scm writes `_version.py`); there is no
   hand-edited version string anywhere, and a release is cut by pushing a `v*` tag. Never
-  bump or invent a version in code.
+  bump or invent a version in code. For pre-tag screenshots, the dashboard accepts
+  `?screenshotVersion=<version>` before its hash route; this changes only the sidebar
+  footer label, not the actual package version or update check.
 
 ### Entry points
 
@@ -199,20 +201,34 @@ Primary code paths:
   Do not attach or restart Arena/tracker while the user plays. Wait for the user to explicitly report
   being out of a match on Decks before any live validation; app restarts still
   require explicit approval.
-  Initial runtime support is Apple Silicon macOS IL2CPP Unity `6000.3.14f1`, gated
-  by `paths.native_deck_platform_supported`. Frida is pinned for Mac and lazily
-  imported; the asset and extension are included in Mac packaging configuration.
+  Runtime support is IL2CPP Unity `6000.3.14f1` on Apple Silicon macOS (validated)
+  and x64 Windows (enabled, awaiting live validation; checklist in
+  `docs/plans/deck-manager/VALIDATION.md`), gated by `paths.native_deck_platform_supported`
+  and the adapter's `ARENA_ARCH` build check. The bridge attaches to `MTGA` or
+  `MTGA.exe`. Frida is pinned for Mac and Windows and lazily imported; the asset and
+  extension are included in both platforms' packaging configuration.
   Check the active-game row before attachment and between transfers, and check the
   live Decks controller, same native service and authenticated account for writes.
   Only AccountInformation.AccountID is read/hashed; never read credentials.
   Migration 35 adds `managed_deck_collections` and nullable `managed_decks.collection_id`.
-  Saved decks belong to one named collection or Unsorted. Collection removal moves
+  Saved decks belong to one named collection or Unsorted. Store jobs take one optional
+  top-level `collection_id` (null = Unsorted) that also reassigns an earlier backup. Collection removal moves
   all members (including Trash) to Unsorted; it never deletes decks/revisions.
   `deck_collections.py` owns atomic moves and collection merge mapping; backup merge
   combines equal collection names and gameplay reset preserves memberships.
   Deck Finder passes the saved entry ID to native add so its full native revision
   upgrades the same entry, retaining notes, collection and earlier text revisions.
   Jobs expose verified step counts for progress bars; connecting stays indeterminate.
+  After a job that sent a create/delete, closing the attachment calls `refreshscreen`:
+  it starts Arena's own `DeckManagerController.Coroutine_LoadDecks(_selectedBucket,
+  deckId)` on the open Decks screen, selecting the last created deck (`Guid?` is a
+  HasValue byte plus the Guid at +4); skipped while Arena is loading or a request is
+  pending. Selection does not scroll, so `scrollToSelectedDeck` then centers that tile
+  via the `ScrollRect` on the `DeckViewSelector` (content pinned at the top) once the
+  rebuilt tile exists, skipping a collapsed folder. It is display only and best effort,
+  and never fails a verified transfer.
+  Not-on-Decks failures use the bridge's single `DECKS_SCREEN` message; the job API
+  strips Frida's `Error:` prefix and script stack before showing adapter reasons.
   Migration 34 adds `managed_deck_transfers` with one pending intent per account.
   Commit/read back exact native archives before any removal; write intents commit
   before single native calls. Interrupted outcomes stop; reconciliation is read-only,
@@ -241,7 +257,7 @@ Primary code paths:
   gates. They are unconfirmed observations, not a complete roster or successful save.
   Replay must not move the current revision backward; unresolved IDs remain intact in
   full backups. Do not infer slot usage/account/presence or enable native writes from logs.
-  See `docs/DECK_MANAGER.md`, `docs/plans/DECK_MANAGER.md`, `tests/test_deck_manager.py`
+  See the README's Deck Manager section, `docs/plans/INDEX.md`, `tests/test_deck_manager.py`
   and `ui/src/components/DeckManagerPage.test.tsx`.
 - `deck-manager-bridge/poc/`: explicit development-only Frida/IL2CPP experiment,
   never auto-loaded or packaged. Mac Unity 6 native folder and bulk cache capture
@@ -284,7 +300,9 @@ Primary code paths:
   provider's selection color. Deck names and titles share that provider hue,
   with a subtle matching selected-row tint and darker text in the light theme.
   Source and Export to Arena sit together at the far right of the deck-name
-  row. The heading wraps on narrow screens.
+  row. Add to Arena and Save to collection sit below the description in a
+  fieldset whose legend links to Deck Manager, styled in its orange accent; a
+  right-aligned accent pill notes that Arena must be on Decks, filled in after that failure. The heading wraps on narrow screens.
   Stale hydration responses cannot replace a newer selection or clear its
   loading state. `ui/src/deckFinderImport.ts` parses import text for display,
   retaining separate Deck/Sideboard/Commander/Companion sections; clipboard
@@ -299,7 +317,7 @@ Primary code paths:
   headings to `Deck` and strip title emoji with the bundled `emoji` dependency.
   Reuse the existing 10-minute dashboard memory cache; failed/partial fetches
   show warnings and are not cached. UI uses a simple loading message, no progress
-  bar. See `docs/DECK_FINDER_YOUTUBE.md`; regression fixtures live in
+  bar. The README covers creator setup; regression fixtures live in
   `tests/deck_downloader/fixtures/youtube/`.
 - `src/mtga_tracker/collection_api.py` / `collection_export.py` / `inventory.py`: explicit
   collection-export jobs, macOS/Windows process-memory readers, and local card metadata.
@@ -627,7 +645,7 @@ Important tables:
 - `game_deck_cards`: authoritative per-game submitted main-deck and sideboard quantities from Arena.
 - `game_card_summary`: cards played by each participant.
 - `game_library_events`: per-seat scry choices, destination counts, source card, and
-  visible player card-name lists; see `docs/SCRY_TRACKING.md`.
+  visible player card-name lists; see `docs/MTGA_LOG_FORMAT.md`.
 - `game_participant_stats`: combat, damage/life, cards drawn/discarded/milled/exiled, stack
   stats, plus nullable interaction columns added over time — removal/wipes/bounce/counters
   played+drawn, creatures/non-creatures removed and bounced, spells_countered, lands

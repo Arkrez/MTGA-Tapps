@@ -2,7 +2,8 @@
  * DOM labels drawn over the canvas: pile counts, and on every face-up
  * battlefield card a readable badge across its lower edge with the creature's
  * current power/toughness or the planeswalker's loyalty (Arena style), plus a
- * small chip across its upper edge for any other counters. Stack items are
+ * small chip across its upper edge for any other counters, or "Commander" on
+ * a seat's commander (with its counters after it). Stack items are
  * captioned by the DOM stack preview instead. Pure: computed once per board
  * state; the projector moves them each rendered frame without React.
  */
@@ -10,7 +11,7 @@ import { CARD_HEIGHT } from '../layout';
 import type { CardPlacement, Layout, PileZone } from '../layout';
 import type { CardKey, ReplayCard } from '../types';
 
-export type LabelTone = 'pile' | 'stat' | 'loyalty' | 'counters';
+export type LabelTone = 'pile' | 'stat' | 'loyalty' | 'counters' | 'commander';
 
 export interface SceneLabel {
   id: string;
@@ -76,10 +77,11 @@ export function countersText(placement: CardPlacement): string | null {
 export function sceneLabels(layout: Layout, cards: Readonly<Record<CardKey, ReplayCard>>): SceneLabel[] {
   const labels: SceneLabel[] = [];
   for (const pile of layout.piles) {
-    if (pile.zone === 'command' && pile.count === 0) continue;
+    // An empty command zone keeps its label: it shows where the commander went out from.
+    const empty = pile.zone === 'command' && pile.count === 0;
     labels.push({
       id: `pile:${pile.seat}:${pile.zone}`,
-      text: `${PILE_NAMES[pile.zone]} ${pile.count}`,
+      text: empty ? PILE_NAMES[pile.zone] : `${PILE_NAMES[pile.zone]} ${pile.count}`,
       tone: 'pile',
       obj: null,
       // A badge across the lower edge of the pile, so neighbouring piles never collide.
@@ -108,9 +110,19 @@ export function sceneLabels(layout: Layout, cards: Readonly<Record<CardKey, Repl
       });
     }
     const counters = countersText(placement);
-    if (counters) {
+    const chip = placement.commander ? (counters ? `Commander · ${counters}` : 'Commander') : counters;
+    if (chip) {
       const [dx, dy] = rotate(0, (CARD_HEIGHT / 2 - 0.1) * placement.scale, placement.rotZ);
-      labels.push({ id: `counters:${placement.obj}`, text: counters, tone: 'counters', obj: placement.obj, x: dx, y: dy, z: 0.02, align: 'center' });
+      labels.push({
+        id: `counters:${placement.obj}`,
+        text: chip,
+        tone: placement.commander ? 'commander' : 'counters',
+        obj: placement.obj,
+        x: dx,
+        y: dy,
+        z: 0.02,
+        align: 'center',
+      });
     }
   }
   return labels;

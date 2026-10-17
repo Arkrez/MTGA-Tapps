@@ -75,8 +75,8 @@ function Table({ store, felt, kit, table }: { store: TextureStore; felt: ReplayP
 
 function Pile({ pile, sleeve, store, kit }: { pile: PilePlacement; sleeve: SleeveColor; store: TextureStore; kit: SceneKit }) {
   if (pile.count === 0) {
-    // Command zones exist only in commander formats; an empty one is not drawn.
-    if (pile.zone === 'command') return null;
+    // Command zones exist only in commander formats (see usesCommandZone); an
+    // empty one keeps its slot so the viewer sees the commander is out.
     return (
       <mesh
         geometry={kit.unitPlane}

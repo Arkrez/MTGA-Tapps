@@ -13,20 +13,19 @@ Validated 2026-10-06 from the isolated `deck-manager` worktree.
   recovery and revision save. The redesigned collection was checked with 104
   demo decks, four columns at desktop width, three at 1360 px and one at 390 px,
   with no horizontal overflow. Detail/import dialogs, import completion and
-  return of focus/scrolling were checked. Preview, detail and mobile screenshots
-  contain demo lists and are stored beside this report.
+  return of focus/scrolling were checked. The early demo screenshots were
+  retired when the final Deck Manager layout replaced them.
 - Permanent local deletion was checked on a separate demo dashboard on port
   8877: open a disposable trashed deck, cancel confirmation, then confirm deletion.
-  Trash became empty and the other 104 saved decks remained. `delete.jpg` shows
-  the confirmation. Backend tests verify required Trash/confirmation, complete
+  Trash became empty and the other 104 saved decks remained. Backend tests
+  verify required Trash/confirmation, complete
   revision/card/binding cleanup with foreign keys enabled, rollback on failure,
   and preservation of another same-name deck and recorded game history. UI tests
   cover cancellation, failed deletion and disabled controls while deleting.
 - Move to Trash now has its own confirmation. Browser checks covered cancellation,
   confirmation and recovery of a disposable demo deck, plus the yellow header Copy
   for Arena button and red Trash button at desktop and 390 px mobile widths.
-  The mobile dialog has no horizontal overflow. `trash-actions.jpg` and
-  `trash-confirmation.jpg` record the updated UI. Tests cover cancellation with a
+  The mobile dialog has no horizontal overflow. Tests cover cancellation with a
   historical revision selected and retention of the deck when a Trash write fails.
 - Read-only Player.log smoke check archived into an **in-memory** SQLite database:
   five distinct observed decks, 18 immutable revisions, zero rejected lists and
@@ -183,3 +182,37 @@ remain as previously recorded; no additional Arena deck mutation was performed h
 - Full native create/move verification still requires a user-selected live action.
   The persistent collection section inside Arena, Windows and installed-bundle validation
   remain unfinished; dashboard collections do not claim to implement native folders.
+
+## Decks screen redraw and Windows enablement (2026-10-16)
+
+Validated live on Apple Silicon macOS, Unity `6000.3.14f1`, with the user out of a
+match on Decks:
+
+- Read-only metadata and call tracing showed Arena's Decks screen rebuilds its grid
+  through `DeckManagerController.Coroutine_LoadDecks(bucket, Guid?)` on open and after
+  its own delete. Starting that routine once replaced the request, buckets and
+  view-info list (181 decks); Arena stayed up. No deck was created or deleted.
+- Passing a deck ID selected it (`Guid?` = HasValue byte, Guid at +4). Selection does
+  not scroll; centering the tile via the `ScrollRect` on `DeckViewSelector` moved the
+  grid to the bottom tile and, through the shipped `open`/`refreshscreen`/`close`
+  exports, to a middle tile in 0.58 s. The user confirmed the scroll.
+- One Arena restart during this session was the user's, not a probe crash.
+
+Windows (x64) is enabled in code only. Its code paths share the macOS adapter
+(IL2CPP exports, metadata lookups, `runtime_invoke`), with these platform points:
+`GameAssembly.dll`, process `MTGA.exe`, Frida's `win_amd64` wheel and `ARENA_ARCH`
+`windows: x64`. Before claiming Windows support, run on a Windows PC with Arena
+(installed build, out of a match, on Decks), stopping at the first failure:
+
+1. Settings shows direct transfers available; Deck Manager's **Load Arena decks**
+   lists the roster. A refusal naming a different Unity build means Windows Arena
+   is not on `6000.3.14f1`; record it and stop.
+2. Note whether antivirus or Windows Security warns about the attachment.
+3. **Back up** one Arena deck; open it in Saved and compare the list.
+4. **Add to Arena** from Deck Finder (one free slot): the deck appears, is selected
+   and scrolled into view without leaving Decks; its backup is the newest revision.
+5. **Move to collection** for that new deck: it leaves the grid without reopening
+   Decks, and the saved copy remains.
+6. **Restore to Arena** from Saved, then open a deck in Arena and try Add again:
+   the "Arena isn't on its Decks screen" message appears without script details.
+7. Check the frozen app opens no console windows during these jobs.

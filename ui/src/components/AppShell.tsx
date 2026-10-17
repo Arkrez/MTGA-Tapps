@@ -180,6 +180,11 @@ export function AppShell({
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
   const [version, setVersion] = useState<string | null>(null);
+  const screenshotVersionParam = new URLSearchParams(window.location.search).get('screenshotVersion');
+  const screenshotVersion = screenshotVersionParam && /^\d+\.\d+(?:\.\d+)?$/.test(screenshotVersionParam)
+    ? screenshotVersionParam
+    : null;
+  const footerVersion = screenshotVersion ?? version;
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   // Green when the tracker is running (live or idle), red when it is not.
   const [trackerState, setTrackerState] = useState<'live' | 'idle' | 'offline' | null>(null);
@@ -486,9 +491,12 @@ export function AppShell({
               <Layers aria-hidden="true" />
               <span className="sidebar-nav-label">Deck Manager <span className="sidebar-beta">Beta</span></span>
             </a>
-            {version ? (
-              <span aria-label={`Tracker version ${version}`} className="sidebar-version">
-                v{version}
+            {footerVersion ? (
+              <span
+                aria-label={screenshotVersion ? `Screenshot version ${footerVersion}` : `Tracker version ${footerVersion}`}
+                className="sidebar-version"
+              >
+                v{footerVersion}
               </span>
             ) : null}
           </div>

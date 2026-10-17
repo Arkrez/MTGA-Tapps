@@ -76,6 +76,8 @@ export interface BoardState {
   cards: Readonly<Record<CardKey, ReplayCard>>;
   /** Recorded streams: obj -> card it is later revealed as. Shared, see buildTimeline. */
   hindsight: ReadonlyMap<ObjId, CardKey>;
+  /** Commander card names per seat (Brawl/Commander), from the stream's seat info. Shared. */
+  commanders: Readonly<Record<number, readonly string[]>>;
 }
 
 interface MutableSeat {

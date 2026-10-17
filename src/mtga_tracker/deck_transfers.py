@@ -136,7 +136,15 @@ def check_remaining(before, after, removed=None):
 
 
 def persist_archive(
-    conn, archive, account, resolve_name=None, *, metadata=None, deck_id=None, collection_id=None
+    conn,
+    archive,
+    account,
+    resolve_name=None,
+    *,
+    metadata=None,
+    deck_id=None,
+    collection_id=None,
+    assign_collection=False,
 ):
     deck = na.document(archive, resolve_name)
     deck["metadata"]["native_account_key"] = account
@@ -147,6 +155,7 @@ def persist_archive(
         deck,
         deck_id=deck_id,
         collection_id=collection_id,
+        assign_collection=assign_collection,
         account_key=account,
         arena_deck_id=archive["source_snapshot"]["arena_id"],
         observed_at=dm.now(),
@@ -262,7 +271,9 @@ def transfer(conn, bridge, action, selection, request_id, report, resolve_name=N
         )
     baseline = roster_ids(report)
     if report.get("deck_screen_open") is not True:
-        raise dm.DeckManagerError("Open Arena’s Decks screen outside a match to transfer decks.")
+        raise dm.DeckManagerError(
+            "Arena isn’t on its Decks screen. Go to Decks in Arena, outside a match, then try again."
+        )
     if action == "store":
         arena_id = str(uuid.UUID(selection["id"]))
         if arena_id not in baseline:
@@ -271,7 +282,15 @@ def transfer(conn, bridge, action, selection, request_id, report, resolve_name=N
         if len(archives) != 1 or archives[0]["source_snapshot"]["arena_id"] != arena_id:
             raise dm.DeckManagerError("Arena returned a different backup identity.")
         archive = na.validate_archive(archives[0])
-        saved = persist_archive(conn, archive, account, resolve_name)
+        # A chosen destination also moves a deck that was backed up earlier.
+        saved = persist_archive(
+            conn,
+            archive,
+            account,
+            resolve_name,
+            collection_id=selection.get("collection_id"),
+            assign_collection="collection_id" in selection,
+        )
         # Fetch again after disk commit: an external edit must prevent deletion.
         if not na.equivalent(bridge.fetch(arena_id), archive["source_snapshot"]):
             raise dm.DeckManagerError(

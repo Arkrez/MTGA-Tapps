@@ -8,6 +8,14 @@
   moves and destination selection in imports/Deck Finder. Removing a collection
   asks for confirmation and retains its decks in Unsorted. Migration 35 preserves
   collection membership through full backups, merge and gameplay reset.
+- Direct Arena deck transfers (load, back up, move, restore and Add to Arena) are
+  enabled on 64-bit Windows as well as Apple Silicon Macs. Windows support is new and
+  still being validated; other Arena builds are refused with the build they report.
+- Arena's Decks screen now redraws by itself after Deck Manager or Deck Finder adds,
+  restores or removes decks, so changes appear without leaving and reopening Decks.
+  A newly added or restored deck is selected and scrolled into view.
+- When Arena isn't on its Decks screen, Add to Arena shows a plain message without
+  script details, and Deck Finder's Deck Manager box notes that Arena must be on Decks.
 - Deck transfers show progress from preparation through verified completion.
   “Full backup” describes saved native data separately from “In Arena” location.
 
@@ -16,7 +24,8 @@
   status selector. Arena artwork reuses library images or the roster's printing ID.
 - Deck Finder adds a direct **Add to Arena** action through native text preparation
   and journaled restore, with full-slot/game/pending guards and rejection of changed
-  card quantities. Add to Arena and Save to collection sit under the deck's title.
+  card quantities. Add to Arena and Save to collection sit under the deck's title
+  in a box labelled Deck Manager, with Add to Arena in Deck Manager's orange.
   Added decks receive the Arena format from the Deck Finder label and a deck tile
   (the most-played creature) instead of an empty format and no art. Verification no
   longer rejects a deck Arena created because the server added its usual
@@ -229,12 +238,33 @@
 
 ### Fixes
 
+- Moving Arena decks to your collection now asks which collection to save them in
+  (including a new one), instead of always using Unsorted and needing a second move.
+  The dialog says the decks are deleted from Arena and that Arena may show them until
+  its Decks screen is reopened.
+- Add deck and new-revision dialogs close only from their close or Cancel buttons, so a
+  stray click outside cannot discard a pasted list. No Deck Manager dialog closes when a
+  text selection is dragged past its edge.
+- Text backup pills on saved deck tiles no longer stretch across the tile.
+- Deck Manager shows Arena's deck formats readably ("Traditional Standard",
+  "Historic Brawl" instead of "HistoricBrawlWithAllowList_20260825"). The stored
+  value Arena wrote is unchanged and is what restores send back.
+- Add deck picks its format from a dropdown of Arena's deck formats instead of a
+  free-text box, so Add to Arena gets a format Arena recognizes.
+
 - Native restore compares snapshot values independently of JSON key order. Saving
   a full backup no longer causes a false reconstruction mismatch. Preparation now
   runs before write intent; failures before creation cancel without blocking future
   transfers. Uncertain dispatched requests still require read-only reconciliation.
 - Deck Finder's Save to collection followed by Add to Arena upgrades the same saved
   entry, retaining notes, collection and text revision instead of creating a duplicate.
+- Replay, Brawl: the commander wears a gold "Commander" chip on the
+  battlefield (its counters follow on the same chip), and the command zone
+  keeps its slot and label while the commander is out. The commander sits in
+  the command zone at the start, moves to the stack when cast and lands among
+  the creatures, as Arena shows it; a recorded game follows it back to the
+  command zone after it dies.
+
 - The dashboard serves its built files with cache headers (hashed assets
   are immutable, the page revalidates) over keep-alive HTTP/1.1 connections,
   so a page load no longer re-downloads the whole app or opens a connection
@@ -419,7 +449,7 @@ then bring the week's games back.
 
 Automatic backups after each session, and Google Drive over its own API for
 machines with no sync client, are the next steps
-([plan](docs/plans/BACKUP_AND_SYNC.md)).
+([remaining work](docs/plans/INDEX.md#smaller-follow-ups)).
 
 ### Fixes
 
@@ -637,7 +667,7 @@ the menu bar's **Stop Overlay**.
 
 - Plans for [Linux support](docs/plans/linux_implementation.md) (Arena
   under Steam/Proton or Wine, phased so CI verifies it before a Linux
-  desktop exists) and for [scry/surveil tracking](docs/plans/SCRY_TRACKING.md)
+  desktop exists) and for [scry/surveil tracking](docs/plans/INDEX.md#smaller-follow-ups)
   (the scry half is shipped above).
 
 ## 0.6.2

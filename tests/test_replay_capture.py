@@ -1443,3 +1443,40 @@ def test_creature_rows_carry_current_stats_including_zero_power(tmp_path):
     assert (landed["payload"]["power"], landed["payload"]["toughness"]) == (0, 2)
     drawn = next(r for r in rows if r["object_id"] == 501)
     assert not {"name", "type", "power", "toughness"} & set(drawn["payload"])
+
+
+def test_commander_cast_from_and_returned_to_the_command_zone(tmp_path):
+    """Brawl: the commander is cast out of the command zone (zone 26) like a spell
+    from hand, resolves to the battlefield, and after dying goes back to the
+    command zone. Every leg is an ordinary zone transfer the capture names."""
+    tracker = started_tracker(tmp_path)
+    COMMAND = 26
+    zone = {"zoneId": COMMAND, "type": "ZoneType_Command", "ownerSeatId": P}
+
+    def msg(*annotations, objects):
+        out = message(*annotations, objects=objects)
+        out["data"]["zones"].append(zone)
+        return out
+
+    tracker._handle_event(msg(objects=[obj(600, 1004, P, COMMAND)]))
+    tracker._handle_event(
+        msg(oic(600, 601), zt(601, COMMAND, STACK, "CastSpell"), objects=[obj(601, 1004, P, STACK)])
+    )
+    tracker._handle_event(msg(zt(601, STACK, BF, "Resolve"), objects=[obj(601, 1004, P, BF)]))
+    tracker._handle_event(msg(zt(601, BF, GY[P], "SBA_Damage"), objects=[obj(601, 1004, P, GY[P])]))
+    tracker._handle_event(
+        msg(zt(601, GY[P], COMMAND, "Return"), objects=[obj(601, 1004, P, COMMAND)])
+    )
+    rows = event_rows(tmp_path / "analytics.sqlite3", "object_id = 600")
+    push = next(r for r in rows if r["event_subtype"] == "stack_push")
+    assert push["zone_from"] == "command" and push["payload"]["name"] == "Grizzly Bears"
+    moves = [
+        (r["zone_from"], r["zone_to"], r["payload"]["reason"])
+        for r in rows
+        if r["event_subtype"] == "move"
+    ]
+    assert moves == [
+        ("stack", "battlefield", "resolve"),
+        ("battlefield", "graveyard", "sba"),
+        ("graveyard", "command", "put"),
+    ]

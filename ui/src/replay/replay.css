@@ -285,6 +285,17 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The seat's commander on the battlefield (Brawl/Commander): a gold chip across its upper edge. */
+.replay-label-commander {
+  border-color: rgb(240 198 108 / 75%);
+  background: rgb(52 38 10 / 90%);
+  color: #ffe9b3;
+  font-size: 0.6rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 .replay-narrow-notice {
   margin: 16px;
 }

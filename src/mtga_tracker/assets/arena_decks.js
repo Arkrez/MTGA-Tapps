@@ -10,7 +10,7 @@ const targets = new Set([
   'Client_DeckCard', 'Client_CardSkin', 'EDeckPile',
   'TMP_Text', 'Application', 'GameObject',
   'Guid',
-  'JsonConvert', 'DeckInfo', 'Languages', 'MTGALocalizedString',
+  'JsonConvert', 'DeckInfo', 'Languages', 'MTGALocalizedString', 'ScrollRect',
 ]);
 const game = Process.findModuleByName('GameAssembly.dylib')
   ?? Process.findModuleByName('GameAssembly.dll');
@@ -98,7 +98,7 @@ const required = [
   'Wizards.Mtga.Decks.DeckServiceWrapperHelpers', 'Wizards.Mtga.Decks.Client_DeckSummary',
   'Wizards.Mtga.FrontDoorModels.DeckInfo', 'UnityEngine.UnitySynchronizationContext',
   'UnityEngine.Object', 'UnityEngine.Application', 'System.Guid', 'Newtonsoft.Json.JsonConvert',
-  'Wotc.Mtga.Loc.Languages',
+  'Wotc.Mtga.Loc.Languages', 'UnityEngine.UI.ScrollRect',
 ];
 function images() {
   const count = Memory.alloc(Process.pointerSize);
@@ -429,11 +429,13 @@ function onUnityThread(run) {
   });
 }
 
+// Shown as-is wherever a job needs Arena on Decks (Deck Manager and Deck Finder).
+const DECKS_SCREEN='Arena isn’t on its Decks screen. Go to Decks in Arena, outside a match, then try again.';
 function wrapperObject() {
   const field=fields(classes.get('.WrapperController')).get('<Instance>k__BackingField');
   const value=Memory.alloc(Process.pointerSize); staticValue(field,value);
   const wrapper=value.readPointer();
-  if (wrapper.isNull()) throw new Error('Return to Arena’s Decks screen outside a match.');
+  if (wrapper.isNull()) throw new Error(DECKS_SCREEN);
   return wrapper;
 }
 function accountId() {
@@ -459,7 +461,7 @@ function deckScreenOpen() {
 function guard(expectedAccount, requireDecks=false) {
   if (!connection || accountId()!==expectedAccount || connection.account!==expectedAccount
     || !root().equals(handleTarget(connection.managerHandle))) throw new Error('Arena account or session changed. Reconnect Deck Manager.');
-  if (requireDecks && !deckScreenOpen()) throw new Error('Open Arena’s Decks screen outside a match to transfer decks.');
+  if (requireDecks && !deckScreenOpen()) throw new Error(DECKS_SCREEN);
   return root();
 }
 function releaseConnection() {
@@ -469,14 +471,18 @@ function releaseConnection() {
   connection=null;
   return true;
 }
+// The 64-bit Arena build each platform ships.
+const ARENA_ARCH={darwin:'arm64',windows:'x64'};
 async function openConnection() {
   attached(discover);
   return onUnityThread(()=>{
     if (connection) throw new Error('Deck Manager is already connected.');
     checkedHandleABI();
     const version=text(invoke(findMethod('UnityEngine.Application','get_unityVersion',[])));
-    if (Process.arch!=='arm64' || version!=='6000.3.14f1') throw new Error('This Arena build is not supported by the native deck adapter yet.');
-    if (!deckScreenOpen()) throw new Error('Open Arena’s Decks screen outside a match before connecting Deck Manager.');
+    if (ARENA_ARCH[Process.platform]!==Process.arch || version!=='6000.3.14f1') {
+      throw new Error(`This Arena build is not supported by the native deck adapter yet (Unity ${version}, ${Process.platform} ${Process.arch}).`);
+    }
+    if (!deckScreenOpen()) throw new Error(DECKS_SCREEN);
     const account=accountId(), manager=root();
     connection={account,managerHandle:handleNew(manager,0)};
     return {account_id:account,unity_version:version,deck_screen_open:deckScreenOpen()};
@@ -745,5 +751,79 @@ async function removeDeck(account,snapshot) {
     return true;
   },true);
 }
+// Arena's Decks screen draws its grid once when it opens, so a deck created or
+// removed through the service stays hidden until the screen is reopened. This
+// starts the screen's own load routine, as Arena does after its own delete: it
+// reads the refreshed cache and rebuilds the grid, selecting `selectId` when
+// given (a deck this job created). Display only; no deck write.
+function reloadDecksScreen(selectId) {
+  const flag=Memory.alloc(1); flag.writeU8(0);
+  const found=array(invoke(findMethod('UnityEngine.Object','FindObjectsOfType',['System.Type','System.Boolean']),NULL,
+    [typeObject(classType(classes.get('.DeckManagerController'))),flag]));
+  if (found.length!==1 || selectorObjects().length!==1) return false;
+  const controller=found.data.readPointer();
+  // Arena is already loading the list, and that load shows the change.
+  if (!ref(controller,'_loadDecksCoroutine').isNull()) return true;
+  const bucket=Memory.alloc(4); bucket.writeS32(fieldAt(controller,'_selectedBucket').readS32());
+  // Nullable<Guid>: HasValue byte, then the Guid at +4 (Arena's 20-byte layout).
+  const deck=Memory.alloc(32);
+  if (selectId) {
+    const guid=parseGuid(selectId),held=handleNew(guid,0);
+    try {deck.writeU8(1); Memory.copy(deck.add(4),objectUnbox(guid),16);}
+    finally {handleFree(held);}
+  }
+  const routine=invoke(findMethod('.DeckManagerController','Coroutine_LoadDecks',['System.Int32','System.Nullable<System.Guid>']),
+    controller,[bucket,deck]);
+  if (routine.isNull()) return false;
+  const started=invoke(objectMethod(controller,'StartCoroutine',['System.Collections.IEnumerator']),controller,[routine]);
+  // Null when the cached list loaded at once; otherwise hold it as Arena does.
+  if (!started.isNull()) fieldSetObject(controller,fields(objectClass(controller)).get('_loadDecksCoroutine'),started);
+  return true;
+}
+// Arena's selection does not scroll, so center the selected tile in the grid's
+// ScrollRect (on the selector itself). True once handled, including when the
+// tile is in a closed folder; false while the rebuilt tile is not there yet.
+function scrollToSelectedDeck(selectId) {
+  const selectors=selectorObjects();
+  if (selectors.length!==1) return false;
+  const selector=selectors[0], view=ref(selector,'_selectedDeckView');
+  if (view.isNull() || guidText(fieldAt(ref(view,'_deckViewInfo'),'deckId'))!==selectId) return false;
+  const tile=invoke(objectMethod(view,'get_gameObject',[]),view);
+  if (!objectUnbox(invoke(objectMethod(tile,'get_activeInHierarchy',[]),tile)).readU8()) return true;
+  const scroll=invoke(objectMethod(selector,'GetComponent',['System.Type']),selector,
+    [typeObject(classType(classes.get('UnityEngine.UI.ScrollRect')))]);
+  if (scroll.isNull() || !fieldAt(scroll,'m_Vertical').readU8()) return true;
+  const content=invoke(objectMethod(scroll,'get_content',[]),scroll), viewport=invoke(objectMethod(scroll,'get_viewport',[]),scroll);
+  if (content.isNull() || viewport.isNull()) return true;
+  const rect=transform=>objectUnbox(invoke(objectMethod(transform,'get_rect',[]),transform));
+  const area=rect(content), height=area.add(12).readFloat(), top=area.add(4).readFloat()+height;
+  const visible=rect(viewport).add(12).readFloat();
+  const where=invoke(objectMethod(view,'get_transform',[]),view);
+  const position=objectUnbox(invoke(objectMethod(where,'get_position',[]),where));
+  const local=objectUnbox(invoke(objectMethod(content,'InverseTransformPoint',['UnityEngine.Vector3']),content,[position]));
+  if (height<=visible) return true;
+  const offset=Math.max(0,Math.min(height-visible,top-local.add(4).readFloat()-visible/2));
+  const current=objectUnbox(invoke(objectMethod(scroll,'get_normalizedPosition',[]),scroll));
+  const target=Memory.alloc(8); target.writeFloat(current.readFloat()); target.add(4).writeFloat(1-offset/(height-visible));
+  invoke(objectMethod(scroll,'StopMovement',[]),scroll);
+  invoke(objectMethod(scroll,'set_normalizedPosition',['UnityEngine.Vector2']),scroll,[target]);
+  return true;
+}
+async function refreshScreen(account,selectId=null) {
+  if (selectId!==null && !/^[0-9a-f-]{36}$/.test(selectId)) throw new Error('Invalid deck to select.');
+  // A cache refresh can briefly rebuild the Decks selector; wait it out.
+  let reloaded=false;
+  for (let i=0;i<25 && !reloaded;i++) {
+    reloaded=await onUnityThread(()=>{guard(account); return !pending && reloadDecksScreen(selectId);});
+    if (!reloaded) await sleep(80);
+  }
+  if (!reloaded || !selectId) return reloaded;
+  // New tiles are laid out on a later frame; scroll once they are in place.
+  for (let i=0;i<20;i++) {
+    await sleep(100);
+    if (await onUnityThread(()=>{guard(account); return scrollToSelectedDeck(selectId);})) break;
+  }
+  return true;
+}
 rpc.exports={open:openConnection,roster,archive:archiveDecks,fetchdeck:fullDeck,create:createDeck,remove:removeDeck,prepareimport:prepareImport,preparecreate:prepareCreate,createprepared:createPrepared,
-  close(){return onUnityThread(releaseConnection);}};
+  refreshscreen:refreshScreen,close(){return onUnityThread(releaseConnection);}};

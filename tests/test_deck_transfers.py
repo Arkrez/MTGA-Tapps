@@ -376,6 +376,60 @@ def test_native_move_endpoint_requires_confirmation_before_starting_job(tmp_path
     assert status == 400
 
 
+def test_native_move_endpoint_rejects_an_invalid_destination_before_starting_job(tmp_path):
+    status, _ = api.handle_post(
+        "/api/deck-manager/native/run",
+        {
+            "action": "store",
+            "decks": [{"id": str(uuid.uuid4())}],
+            "request_id": str(uuid.uuid4()),
+            "confirm": "MOVE",
+            "collection_id": 7,
+        },
+        tmp_path / "db",
+    )
+    assert status == 400
+
+
+def test_store_saves_into_the_chosen_collection_including_an_earlier_backup(conn):
+    from mtga_tracker.deck_collections import save_collection
+
+    arena = Arena()
+    store(conn, arena)
+    deck_id = saved(conn)["id"]
+    assert saved(conn)["collection_id"] is None
+    restore(conn, arena)
+    target = save_collection(conn, "Retired")["id"]
+    dt.transfer(
+        conn,
+        arena,
+        "store",
+        {"id": next(iter(arena.decks)), "collection_id": target},
+        str(uuid.uuid4()),
+        arena.roster(),
+        lambda _: "Forest",
+    )
+    assert arena.decks == {}
+    assert saved(conn)["id"] == deck_id
+    assert saved(conn)["collection_id"] == target
+
+
+def test_store_refuses_a_missing_collection_before_removing_from_arena(conn):
+    arena = Arena()
+    with pytest.raises(dm.DeckManagerError, match="existing collection"):
+        dt.transfer(
+            conn,
+            arena,
+            "store",
+            {"id": arena.source["arena_id"], "collection_id": str(uuid.uuid4())},
+            str(uuid.uuid4()),
+            arena.roster(),
+            lambda _: "Forest",
+        )
+    assert arena.source["arena_id"] in arena.decks
+    assert "remove" not in arena.calls
+
+
 @pytest.mark.parametrize("payload", [{"$type": "Arbitrary"}, {"nested": [{"$type": "Arbitrary"}]}])
 def test_native_archive_refuses_arbitrary_deserialization_types(payload):
     value = archive(deck())
@@ -846,8 +900,16 @@ def test_job_failures_show_the_adapters_reason_and_fit_the_action():
     class RPCException(Exception):
         pass
 
-    reason = "Open Arena’s Decks screen outside a match before connecting Deck Manager."
+    reason = (
+        "Arena isn’t on its Decks screen. Go to Decks in Arena, outside a match, then try again."
+    )
     assert api._failure_message(RPCException(reason), "connect") == reason
+    # Frida's "Error:" prefix and script stack never reach the user.
+    raw = f"Error: {reason} at <anonymous> (/script1.js:479) at onEnter (/script1.js:427)"
+    assert api._failure_message(RPCException(raw), "add") == reason
+    assert (
+        api._failure_message(RPCException(f"Error: {reason}\n    at x (/s.js:1)"), "add") == reason
+    )
     assert "Refresh Arena" in api._failure_message(OSError("gone"), "connect")
     assert "reconcile" in api._failure_message(OSError("gone"), "store")
     assert api._failure_message(KeyError("Saved deck not found."), "restore") == (

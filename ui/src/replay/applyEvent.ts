@@ -23,10 +23,12 @@ export function createInitialState(
 ): BoardState {
   const seats: Record<number, SeatState> = {};
   const life: Record<number, number> = {};
+  const commanders: Record<number, readonly string[]> = {};
   for (const [key, seat] of Object.entries(stream.seats)) {
     const seatId = Number(key);
     seats[seatId] = emptySeat();
     life[seatId] = seat.starting_life;
+    commanders[seatId] = seat.commanders ?? [];
   }
   return {
     seq: -1,
@@ -46,6 +48,7 @@ export function createInitialState(
     ended: false,
     cards: stream.cards,
     hindsight,
+    commanders,
   };
 }
 
