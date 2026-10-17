@@ -5,10 +5,12 @@ import {
   DEFAULT_TABLE_WIDTH,
   HAND_SCALE_MAX,
   HAND_SCALE_MIN,
+  HAND_Z,
   MAX_TABLE_WIDTH,
   MIN_TABLE_WIDTH,
   FAR_ROW_STRETCH,
   OPPONENT_HAND_SCALE,
+  OPPONENT_HAND_SCALE_LARGE,
   OPPONENT_HAND_STRETCH,
   ROW_Y,
   TABLE_DEPTH,
@@ -16,6 +18,8 @@ import {
 import {
   DEFAULT_MARGINS,
   HAND_SCALE_STEP,
+  OPPONENT_HAND_LARGE_STAGE_PX,
+  OPPONENT_HAND_SMALL_STAGE_PX,
   RAIL_WIDTH,
   TABLE_FOV_DEG,
   TABLE_TILT_DEG,
@@ -32,6 +36,7 @@ import {
   framedExtent,
   framedFarDepth,
   framedHalfDepth,
+  opponentHandBase,
   tableWidthForView,
 } from './cameraFit';
 import type { TableSize } from './cameraFit';
@@ -39,16 +44,16 @@ import type { TableSize } from './cameraFit';
 const margins = { top: 14, right: 14, bottom: 14, left: 14 };
 const TABLE: TableSize = { width: DEFAULT_TABLE_WIDTH, depth: TABLE_DEPTH };
 
-/** Corners of the framed region: rails and the hand aprons. */
+/** Corners of the framed region: rails and the hand aprons, at the felt and at the floating hands' height. */
 function corners(table: TableSize) {
   const { halfWidth: w, near, far } = framedExtent(table);
   expect(near).toBeCloseTo(framedHalfDepth(table.depth, table.handScale), 9);
-  return [
-    [-w, -near, 0],
-    [w, -near, 0],
-    [-w, far, 0],
-    [w, far, 0],
-  ] as const;
+  return [0, HAND_Z].flatMap((z) => [
+    [-w, -near, z],
+    [w, -near, z],
+    [-w, far, z],
+    [w, far, z],
+  ]);
 }
 
 function ndcExtent(camera: PerspectiveCamera | OrthographicCamera, table: TableSize) {
@@ -155,9 +160,11 @@ describe('camera fit', () => {
     const opp = (s: ReturnType<typeof stageCamera>) => cardPixels(s.camera, s.view.width, -ROW_Y.creatures);
     // Arena-style framing (both hands reach onto their felt strips) makes them
     // about a fifth larger than when the hands sat wholly past the rails
-    // (66 px). The depth binds on all three stages, so the extra width is felt.
-    expect(you(open)).toBeGreaterThan(78);
-    expect(opp(open)).toBeGreaterThan(73);
+    // (66 px), less a little for framing the hands at the height they float
+    // (layout HAND_Z, above the tallest pile). The depth binds on all three
+    // stages, so the extra width is felt.
+    expect(you(open)).toBeGreaterThan(76);
+    expect(opp(open)).toBeGreaterThan(72);
     expect(you(sidebar)).toBeCloseTo(you(open), 0);
     expect(you(collapsed)).toBeCloseTo(you(sidebar), 6);
     expect(opp(collapsed)).toBeCloseTo(opp(sidebar), 6);
@@ -226,6 +233,36 @@ describe('camera fit', () => {
     const e = ndcExtent(camera, table);
     expect(e.maxY).toBeLessThanOrEqual(1 - 28 / view.height + 1e-6);
     expect((e.minY + e.maxY) / 2).toBeCloseTo(0, 2);
+  });
+
+  it('draws the opponent hand larger on a tall high-resolution stage, and keeps it framed', () => {
+    expect(opponentHandBase(OPPONENT_HAND_SMALL_STAGE_PX)).toBe(OPPONENT_HAND_SCALE);
+    expect(opponentHandBase(OPPONENT_HAND_LARGE_STAGE_PX)).toBeCloseTo(OPPONENT_HAND_SCALE_LARGE, 9);
+    expect(opponentHandBase(5000)).toBeCloseTo(OPPONENT_HAND_SCALE_LARGE, 9);
+    expect(opponentHandBase(Number.NaN)).toBe(OPPONENT_HAND_SCALE);
+    const middle = opponentHandBase((OPPONENT_HAND_SMALL_STAGE_PX + OPPONENT_HAND_LARGE_STAGE_PX) / 2);
+    expect(middle).toBeGreaterThan(OPPONENT_HAND_SCALE);
+    expect(middle).toBeLessThan(OPPONENT_HAND_SCALE_LARGE);
+    // The same 1440p-tall CSS stage: small at 1x (a 1440p monitor), large at 2x (a 5K display).
+    const view = { width: 1900, height: 1000 };
+    const monitor = fitTableForView(view, DEFAULT_MARGINS, 'table', TABLE_DEPTH, 1);
+    const retina = fitTableForView(view, DEFAULT_MARGINS, 'table', TABLE_DEPTH, 2);
+    expect(monitor.opponentHandScale).toBe(OPPONENT_HAND_SCALE);
+    expect(retina.opponentHandScale).toBeCloseTo(OPPONENT_HAND_SCALE_LARGE, 9);
+    // The larger far apron frames more depth into the same height (the felt widens with the
+    // stage aspect, everything a little smaller on screen), and the framed region still fits.
+    expect(retina.width).toBeGreaterThan(monitor.width);
+    const table = { width: retina.width, depth: TABLE_DEPTH, handScale: retina.handScale, opponentHandScale: retina.opponentHandScale };
+    expect(framedExtent(table).far).toBeCloseTo(framedFarDepth(TABLE_DEPTH, OPPONENT_HAND_SCALE_LARGE), 9);
+    const camera = new PerspectiveCamera();
+    applyPerspective(camera, fitPerspective(0, view, DEFAULT_MARGINS, table), view);
+    const e = ndcExtent(camera, table);
+    expect(e.maxY).toBeLessThanOrEqual(1 - (2 * DEFAULT_MARGINS.top) / view.height + 1e-6);
+    expect(e.minY).toBeGreaterThanOrEqual(-1 + (2 * DEFAULT_MARGINS.bottom) / view.height - 1e-6);
+    // A narrow stage grows the opponent's hand with the player's.
+    const narrow = fitTableForView({ width: 840, height: 1100 }, DEFAULT_MARGINS, 'table', TABLE_DEPTH, 1);
+    expect(narrow.handScale).toBeGreaterThan(HAND_SCALE_MIN);
+    expect(narrow.opponentHandScale).toBeCloseTo((OPPONENT_HAND_SCALE * narrow.handScale) / HAND_SCALE_MIN, 9);
   });
 
   it('keeps near/far planes around the table for depth precision', () => {

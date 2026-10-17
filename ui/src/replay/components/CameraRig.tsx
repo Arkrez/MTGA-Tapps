@@ -51,7 +51,12 @@ export function CameraRig({ preset, table, zoom }: { preset: CameraPreset; table
   // Reused every transition frame (useFrame paths do not allocate).
   const scratch = useRef({
     view: { width: 1, height: 1 },
-    table: { width: table.width, depth: table.depth, handScale: table.handScale } as TableSize,
+    table: {
+      width: table.width,
+      depth: table.depth,
+      handScale: table.handScale,
+      opponentHandScale: table.opponentHandScale,
+    } as TableSize,
     pose: fitPerspective(0, { width: 1, height: 1 }, MARGINS, table),
     frustum: fitOrthographic({ width: 1, height: 1 }, MARGINS, table),
   });
@@ -92,9 +97,10 @@ export function CameraRig({ preset, table, zoom }: { preset: CameraPreset; table
     scratch.current.table.width = table.width;
     scratch.current.table.depth = table.depth;
     scratch.current.table.handScale = table.handScale;
+    scratch.current.table.opponentHandScale = table.opponentHandScale;
     apply.current(a.u);
     invalidate();
-  }, [blend, width, height, table.width, table.depth, table.handScale, invalidate]);
+  }, [blend, width, height, table.width, table.depth, table.handScale, table.opponentHandScale, invalidate]);
 
   useFrame(() => {
     const a = anim.current;

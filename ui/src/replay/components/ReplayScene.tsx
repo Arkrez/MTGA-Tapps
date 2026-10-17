@@ -248,7 +248,7 @@ function ReplaySceneImpl({
     if (!node || !onTableFit || typeof ResizeObserver === 'undefined') return;
     const measure = () => {
       const { width, height } = node.getBoundingClientRect();
-      if (width > 0 && height > 0) onTableFit(fitTableForView({ width, height }, DEFAULT_MARGINS, preset));
+      if (width > 0 && height > 0) onTableFit(fitTableForView({ width, height }, DEFAULT_MARGINS, preset, undefined, window.devicePixelRatio));
     };
     measure();
     const observer = new ResizeObserver(measure);

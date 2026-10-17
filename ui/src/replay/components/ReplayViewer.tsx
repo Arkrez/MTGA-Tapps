@@ -7,7 +7,7 @@ import { formatDateTime, outcomeLabel, outcomeTone } from '../../format';
 import { REPLAY_ROUTE_HASH, cardRouteHash, parseReplayRoute, replayRouteHash } from '../../routes';
 import { Badge } from '../../components/Badge';
 import { CollapseToggle } from '../../components/CollapseToggle';
-import { DEFAULT_TABLE_WIDTH, HAND_SCALE_MIN } from '../layout';
+import { DEFAULT_TABLE_WIDTH, HAND_SCALE_MIN, OPPONENT_HAND_SCALE } from '../layout';
 import type { TableFit } from '../scene/cameraFit';
 import { savePrefs } from '../prefs';
 import { usePrefs, useReplayPlayback } from '../hooks/useReplayPlayback';
@@ -39,9 +39,15 @@ interface ReplayViewerProps {
 export function ReplayViewer({ stream, gameId, at, returnHash }: ReplayViewerProps) {
   const prefs = usePrefs();
   // The felt's width and the hand scale follow the measured stage (ReplayScene reports them).
-  const [tableFit, setTableFit] = useState<TableFit>(() => ({ width: DEFAULT_TABLE_WIDTH, handScale: HAND_SCALE_MIN }));
+  const [tableFit, setTableFit] = useState<TableFit>(() => ({
+    width: DEFAULT_TABLE_WIDTH,
+    handScale: HAND_SCALE_MIN,
+    opponentHandScale: OPPONENT_HAND_SCALE,
+  }));
   const onTableFit = useCallback((fit: TableFit) => {
-    setTableFit((prev) => (prev.width === fit.width && prev.handScale === fit.handScale ? prev : fit));
+    setTableFit((prev) =>
+      prev.width === fit.width && prev.handScale === fit.handScale && prev.opponentHandScale === fit.opponentHandScale ? prev : fit,
+    );
   }, []);
   const { timeline, clock, snapshot, state, layout, jumped } = useReplayPlayback(stream, prefs, at, tableFit);
   const store = useTextureStore(stream);

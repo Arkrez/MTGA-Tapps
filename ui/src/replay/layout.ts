@@ -63,10 +63,19 @@ const HAND_SIDE_MARGIN = 0.5;
  */
 export const HAND_FELT_OVERLAP = 0.3;
 const APRON_MARGIN = 0.04;
-/** The opponent's hand is drawn smaller than the player's. */
+/**
+ * The opponent's hand is drawn smaller than the player's: OPPONENT_HAND_SCALE
+ * on a stage of ordinary resolution, growing to OPPONENT_HAND_SCALE_LARGE on a
+ * tall high-resolution stage (scene/cameraFit `opponentHandBase`) and with the
+ * player's hand on a narrow one. The stage decides it (`opts.opponentHandScale`).
+ */
 export const OPPONENT_HAND_SCALE = 0.75;
-/** Hand cards float above the rail. */
-const HAND_Z = 0.12;
+export const OPPONENT_HAND_SCALE_LARGE = 1;
+/** Each card in a pile adds this much height, up to PILE_MAX_CARDS (the scene draws piles as boxes). */
+export const PILE_CARD_DEPTH = 0.004;
+export const PILE_MAX_CARDS = 60;
+/** Hand cards float above the tallest pile, so a hand reaching onto the felt covers the library beside it. */
+export const HAND_Z = PILE_CARD_DEPTH * PILE_MAX_CARDS + 0.02;
 const ROW_GAP = 0.12;
 const LAND_GAP = 0.06;
 /** Space between the lands and the other permanents in the back row. */
@@ -83,6 +92,11 @@ export const ROW_Y = {
   creatures: -(CENTER_GAP + CARD_HEIGHT / 2),
   back: -(CENTER_GAP + CARD_HEIGHT + BACK_ROW_GAP + (CARD_HEIGHT * BACK_ROW_SCALE) / 2),
 } as const;
+export function clampOpponentHandScale(scale: number | undefined): number {
+  if (scale === undefined || !Number.isFinite(scale)) return OPPONENT_HAND_SCALE;
+  return Math.min(HAND_SCALE_MAX, Math.max(OPPONENT_HAND_SCALE, scale));
+}
+
 export function clampHandScale(scale: number | undefined): number {
   if (scale === undefined || !Number.isFinite(scale)) return HAND_SCALE_MIN;
   return Math.min(HAND_SCALE_MAX, Math.max(HAND_SCALE_MIN, scale));
@@ -120,15 +134,15 @@ export function apronDepth(scale: number): number {
   return CARD_HEIGHT * scale - HAND_FELT_OVERLAP - RAIL_WIDTH + APRON_MARGIN;
 }
 
-/** Framed apron past the opponent's rail: the rest of their smaller, stretched hand. */
-export function opponentApronDepth(): number {
-  const height = CARD_HEIGHT * OPPONENT_HAND_SCALE * OPPONENT_HAND_STRETCH;
+/** Framed apron past the opponent's rail: the rest of their smaller, stretched hand drawn at `scale`. */
+export function opponentApronDepth(scale: number = OPPONENT_HAND_SCALE): number {
+  const height = CARD_HEIGHT * scale * OPPONENT_HAND_STRETCH;
   return OPPONENT_HAND_INNER + height - TABLE_DEPTH / 2 - RAIL_WIDTH + APRON_MARGIN;
 }
 
-/** Largest scale a seat's hand is drawn at: the stage's hand scale for the player, small for the opponent. */
+/** Largest scale a seat's hand is drawn at: the stage's hand scale for the player, its smaller one for the opponent. */
 export function seatHandScale(table: TableGeometry, opponent: boolean): number {
-  return opponent ? Math.min(OPPONENT_HAND_SCALE, table.handScale) : table.handScale;
+  return opponent ? Math.min(table.opponentHandScale, table.handScale) : table.handScale;
 }
 
 /**
@@ -215,6 +229,8 @@ export interface LayoutOptions {
   tableWidth?: number;
   /** Hand card scale the stage has room for (clamped to HAND_SCALE_MIN..MAX); the minimum when omitted. */
   handScale?: number;
+  /** The opponent's hand card scale (from OPPONENT_HAND_SCALE up); OPPONENT_HAND_SCALE when omitted. */
+  opponentHandScale?: number;
   /** Reserve a command-zone pile (commander formats, see `usesCommandZone`). */
   commandZone?: boolean;
 }
@@ -281,6 +297,8 @@ export interface TableGeometry {
   stackX: number;
   /** Largest hand card scale (a crowded hand may draw smaller); sizes the camera's hand aprons. */
   handScale: number;
+  /** Largest opponent hand card scale; sizes the camera's far apron. */
+  opponentHandScale: number;
 }
 
 export interface Layout {
@@ -298,7 +316,12 @@ function pileScale(commandZone: boolean): number {
   return commandZone ? PILE_SCALE[4] : PILE_SCALE[3];
 }
 
-export function tableGeometry(width: number = DEFAULT_TABLE_WIDTH, commandZone = false, handScale?: number): TableGeometry {
+export function tableGeometry(
+  width: number = DEFAULT_TABLE_WIDTH,
+  commandZone = false,
+  handScale?: number,
+  opponentHandScale?: number,
+): TableGeometry {
   const w = clampTableWidth(width);
   const lane = PILE_MARGIN * 2 + CARD_WIDTH * pileScale(commandZone) + LANE_PAD;
   return {
@@ -308,6 +331,7 @@ export function tableGeometry(width: number = DEFAULT_TABLE_WIDTH, commandZone =
     rowRight: w / 2 - RIGHT_MARGIN,
     stackX: w / 2 - STACK_EDGE - (CARD_WIDTH * STACK_SCALE) / 2,
     handScale: clampHandScale(handScale),
+    opponentHandScale: clampOpponentHandScale(opponentHandScale),
   };
 }
 
@@ -907,7 +931,7 @@ export function layoutBoard(state: BoardState, opts: LayoutOptions): Layout {
   const attachments = collectAttachments(state, seatIds);
   const tucked = tuckedAway(attachments);
   const castable = collectCastable(state, seatIds, tucked);
-  const table = tableGeometry(opts.tableWidth, opts.commandZone ?? false, opts.handScale);
+  const table = tableGeometry(opts.tableWidth, opts.commandZone ?? false, opts.handScale, opts.opponentHandScale);
   const ctx: Context = { state, opts, table, targeted, damaged, blockers, attachments, tucked, castable, out: [] };
   const piles: PilePlacement[] = [];
 

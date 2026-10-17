@@ -5,7 +5,7 @@
 import { useFrame, useThree } from '@react-three/fiber';
 import { useLayoutEffect, useMemo, useRef } from 'react';
 import type { RefObject } from 'react';
-import { CARD_HEIGHT, CARD_WIDTH } from '../layout';
+import { CARD_HEIGHT, CARD_WIDTH, PILE_CARD_DEPTH, PILE_MAX_CARDS } from '../layout';
 import type { CardPlacement, Layout, PilePlacement, TableGeometry } from '../layout';
 import type { ReplayPrefs, SleeveColor } from '../prefs';
 import type { BoardState } from '../reducer';
@@ -27,7 +27,6 @@ import { CardMesh } from './CardMesh';
 import type { CardHandlers } from './CardMesh';
 
 const DAMAGE_FLASH_MS = 700;
-const PILE_UNIT = 0.004;
 
 export interface SceneContentsProps {
   layout: Layout;
@@ -89,7 +88,7 @@ function Pile({ pile, sleeve, store, kit }: { pile: PilePlacement; sleeve: Sleev
       />
     );
   }
-  const height = Math.max(PILE_UNIT, Math.min(pile.count, 60) * PILE_UNIT);
+  const height = Math.max(PILE_CARD_DEPTH, Math.min(pile.count, PILE_MAX_CARDS) * PILE_CARD_DEPTH);
   const library = pile.zone === 'library';
   const faceTop = library ? store.pileTopMaterial(sleeve) : kit.edgeMaterial;
   const materials = [kit.edgeMaterial, kit.edgeMaterial, kit.edgeMaterial, kit.edgeMaterial, faceTop, kit.edgeMaterial];

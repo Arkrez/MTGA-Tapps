@@ -24,7 +24,8 @@
   Full HD, with an optional action log beside the table and a quality setting with a
   size estimate. Replay needs a tablet-width window and WebGL.
 - The table is larger and framed like Arena, and cards are sharper on 1080p/1440p
-  screens. Scroll over the table to zoom toward the pointer (up to 4x), drag to pan,
+  screens. The opponent's hand is larger on tall high-resolution screens, and both
+  hands stay on screen and draw over the library beside them. Scroll over the table to zoom toward the pointer (up to 4x), drag to pan,
   and press `+`/`-`/`0` or Reset zoom; zoomed cards render at full resolution.
 - Damage shows as red badges ("−6") on every permanent a spell or attack hit, and
   attack, block and target highlights glow on the felt. Cards castable from outside

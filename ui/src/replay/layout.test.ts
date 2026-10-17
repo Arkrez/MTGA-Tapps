@@ -22,6 +22,8 @@ import {
   TAPPED_ROTATION,
   OPPONENT_HAND_INNER,
   OPPONENT_HAND_SCALE,
+  PILE_CARD_DEPTH,
+  PILE_MAX_CARDS,
   apronDepth,
   handY,
   opponentApronDepth,
@@ -332,7 +334,8 @@ describe('layoutBoard', () => {
         );
         const framed = opponent ? opponentApronDepth() : apronDepth(table.handScale);
         expect(inner + height).toBeLessThanOrEqual(TABLE_DEPTH / 2 + RAIL_WIDTH + framed + 0.04 + 1e-9);
-        expect(c.z).toBeGreaterThan(0.09);
+        // Above the tallest pile, so a hand on the felt covers the library beside it.
+        expect(c.z).toBeGreaterThan(PILE_CARD_DEPTH * PILE_MAX_CARDS);
       }
     }
     // The whole felt belongs to the battlefield and the piles.
@@ -360,8 +363,15 @@ describe('layoutBoard', () => {
     const big = handOf(7, HAND_SCALE_MAX);
     expect(big.mine).toHaveLength(7);
     expect(big.mine[0].scale).toBeGreaterThan(1.6);
-    // The opponent's hand (card backs) stays small, Arena style.
+    // The opponent's hand (card backs) stays small, Arena style, unless the stage gives it a larger scale.
     expect(big.theirs[0].scale).toBe(OPPONENT_HAND_SCALE);
+    const b = new StreamBuilder();
+    b.add('game_start', { seats_hand_sizes: { 1: 7, 2: 7 }, library_sizes: { 1: 40, 2: 40 } });
+    const state = buildTimeline(b.build({}, { playerSeat: 1 })).final;
+    const large = layoutBoard(state, { ...OPTS, playerSeat: 1, handScale: 1, opponentHandScale: 1, tableWidth: DEFAULT_TABLE_WIDTH });
+    const theirs = large.cards.filter((c) => c.row === 'hand' && c.seat === 2);
+    expect(theirs[0].scale).toBe(1);
+    expect(Math.abs(theirs[0].y)).toBeCloseTo(Math.abs(handY(1, true)), 1);
     const step = big.mine[1].x - big.mine[0].x;
     expect(step).toBeGreaterThanOrEqual(HAND_MIN_VISIBLE * CARD_WIDTH * big.mine[0].scale - 1e-9);
     expect(extent(big.mine).left).toBeGreaterThanOrEqual(-lane(big.table) / 2 - 1e-9);
