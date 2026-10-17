@@ -16,15 +16,11 @@ implementation walkthroughs have been removed.
 - **Replay:** Consider an overlay entry point after a game and a bounded local
   cache of card-image bytes for offline playback. [Current behavior](../../README.md#replay-beta)
   and the [data contract](../REPLAY_FORMAT.md) are documented separately.
-- **Deck Manager:** Validate native backup, move, restore, direct add and
-  reconciliation in an installed Apple Silicon Mac build before claiming that
-  support. Windows (x64) passed its live checklist from a source run; the
-  installed build's checks remain (see [validation notes](deck-manager/VALIDATION.md)). A persistent collection inside
-  Arena, a guarded full-slot swap and automatic backups remain future work.
+- **Deck Manager:** A persistent collection inside Arena, a guarded full-slot
+  swap and automatic backups remain future work.
   Native removal must follow a verified local archive; interrupted operations
   must reconcile without repeating a write. Keep the [native proof of concept](deck-manager/NATIVE_POC.md)
-  and [validation record](deck-manager/VALIDATION.md) as evidence, not release
-  support claims. [Current behavior](../../README.md#deck-manager-beta) is in the README.
+  as evidence, not a release support claim. [Current behavior](../../README.md#deck-manager-beta) is in the README.
 - **Backup and sync:** An opt-in automatic backup after completed sessions
   should reuse the existing online SQLite snapshot and `.tappsbackup` format,
   with bounded retention and visible failure status. Direct cloud APIs need a

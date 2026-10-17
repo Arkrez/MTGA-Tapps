@@ -101,46 +101,6 @@ venv/bin/python -m pytest tests -q --ignore=tests/test_menu_app.py \
 - Update `CHANGELOG.md` for the release being prepared. Review draft notes,
   platform requirements, and download filenames before publishing.
 
-## 0.7 screenshot checklist
-
-For pre-tag dashboard captures, open
-`http://127.0.0.1:8765/?screenshotVersion=0.7#/` (adjust the port if needed).
-The query changes only the sidebar footer label; the tracker version and
-update check remain tag-derived. Keep the query before `#` as you navigate
-between pages, and remove it when checking the real release version.
-
-Capture these from the release candidate at a consistent desktop width and
-theme, with personal names and account information hidden. Replace the existing
-files under `docs/images/`; save new captures there as named below. New image
-links should be added to the README after their files exist, so the page never
-shows broken images. The README's hero SVGs, overlay rail/panel captures and
-Arena's Detailed Logs setting image can remain as they are.
-
-| Action | File in `docs/images/` | Show in the capture |
-| --- | --- | --- |
-| Refresh | `overview.png` | Current dashboard overview and Replay/Deck Manager sidebar entries. |
-| Refresh | `live-log.png` | Finished-game replay pill, compact Today's Games play icons and the waiting status beside the format. |
-| Refresh | `recent-games.png` | A finished game with its replay action and current format filters. |
-| Refresh | `ranked-games.png` | Ranked section with the current sidebar. |
-| Refresh | `deck-overview.png` | Deck table with numbered pagination and the current sidebar. |
-| Refresh | `deck-detail.png` | A deck page showing its list/history and Save to collection or replay entry. |
-| Refresh | `game-detail.png` | Watch replay action and the event timeline with replay links. |
-| Refresh | `opponents.png` | Current All Opponents page and sidebar. |
-| Refresh | `deck-finder.png` | All seven colored provider cards, YouTube creator selected, results, full chosen deck and Deck Manager actions. |
-| Refresh | `export-collection.png` | Collection export in the current Settings layout. |
-| Refresh | `backup-restore.png` | Backup & restore card in the current Settings layout. |
-| New | `replay-list.png` | Recent replay list with replay-detail badges. |
-| New | `replay-player.png` | Mid-game table, cards, stack, action log and transport controls. |
-| New | `replay-export.png` | Video export dialog with quality, pace and action-display choices. |
-| New | `deck-manager.png` | Saved deck grid, named collections, status panel and filters. |
-| New | `deck-manager-detail.png` | Open deck dialog with a revision and card list. |
-| New | `deck-manager-arena.png` | Arena tab after a safe roster read on a supported Mac; show backup status and actions. |
-| New | `startup-gameoverlay.png` | Independent startup controls and the overlay's Turn off button. |
-| Optional | `replay-end.png` | Replay's result screen after the final event. |
-| Optional | `deck-manager-transfer.png` | Progress or confirmation during a disposable-deck native transfer. |
-
-Check the README's rendered image links before tagging the release.
-
 ## Updates and user data
 
 The dashboard already checks GitHub Releases and links to a newer published

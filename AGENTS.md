@@ -196,14 +196,11 @@ Primary code paths:
   list. Import request IDs retain text/name/format provenance and must not replay as
   different lists. The localization provider is the verified static field
   `Wotc.Mtga.Loc.Languages.ActiveLocProvider`, not a getter; CurrentLanguage is a getter.
-  A live four-Forest parsing check passed without any create/delete call. Full
-  direct-add create/verification still needs user-selected live validation.
   Do not attach or restart Arena/tracker while the user plays. Wait for the user to explicitly report
   being out of a match on Decks before any live validation; app restarts still
   require explicit approval.
   Runtime support is Unity `6000.3.14f1` on Apple Silicon macOS (IL2CPP, validated)
-  and x64 Windows (Mono, live-validated from source; installed-build check pending, see
-  `docs/plans/deck-manager/VALIDATION.md`), gated by `paths.native_deck_platform_supported`
+  and x64 Windows (Mono, validated), gated by `paths.native_deck_platform_supported`
   and the adapter's `ARENA_ARCH` build check. Windows Arena ships no `GameAssembly.dll`;
   it embeds `mono-2.0-bdwgc.dll`. `arena_decks.js` picks `il2cppRuntime()` or
   `monoRuntime()`, which expose the same helper names; keep deck logic runtime-neutral
