@@ -711,6 +711,10 @@ class ReplayCaptureMixin:
             host = self._replay_exile_host(annotation, instance_id, game_objects_by_id, zones_by_id)
             if host is not None:
                 payload["with"] = host
+        if zone_to == "battlefield":
+            chosen = self._chosen_land_type(card_obj)
+            if chosen:
+                payload["chosen"] = chosen
         if reason not in _UNSOURCED_MOVES:
             by = self._replay_move_source(annotation, instance_id, game_objects_by_id)
             if by is not None:

@@ -108,6 +108,7 @@ function applyMove(draft: BoardDraft, event: MoveEvent): void {
     if (index >= 0) draft.stack().splice(index, 1);
   }
   const card = event.card ?? prev?.card ?? null;
+  const chosen = event.to === 'battlefield' ? (event.chosen ?? (stays ? prev.chosen : undefined)) : undefined;
   const next: ObjectState = {
     obj: event.obj,
     card,
@@ -124,6 +125,7 @@ function applyMove(draft: BoardDraft, event: MoveEvent): void {
     faceDown: stays ? prev.faceDown : false,
     inferred: event.inferred || (prev?.inferred ?? false),
     revealedAt: prev?.revealedAt ?? (card ? event.seq : null),
+    ...(chosen ? { chosen } : {}),
   };
   draft.set(next);
   const list = draft.zone(zoneSeatOf(next), event.to);

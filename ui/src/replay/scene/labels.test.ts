@@ -166,3 +166,41 @@ describe('damage badges', () => {
     expect([badge?.text, badge?.tone]).toEqual(['−6', 'damage']);
   });
 });
+
+describe('chosen land type', () => {
+  const cards = { passage: card('Multiversal Passage', 'Land') };
+  const opts = { mirrorOpponent: false, hindsight: true, playerSeat: PLAYER };
+
+  it('chips a land with the basic land type it chose, in that color, until it leaves', () => {
+    const b = new StreamBuilder();
+    b.move('p1', 'passage', 'limbo', 'hand', PLAYER, 'put');
+    b.turnStart(1, PLAYER);
+    b.add('move', {
+      obj: 'p1',
+      card: 'passage',
+      from: 'hand',
+      to: 'battlefield',
+      owner: PLAYER,
+      controller: PLAYER,
+      reason: 'play_land',
+      inferred: false,
+      index: null,
+      with: null,
+      chosen: 'Mountain',
+    });
+    b.add('tap', { objs: ['p1'] });
+    b.move('p1', 'passage', 'battlefield', 'graveyard', PLAYER, 'destroy');
+    b.phaseTo('Phase_Main2');
+    const stream = b.build(cards, { playerSeat: PLAYER });
+    const timeline = buildTimeline(stream);
+    const at = (kind: string, to?: string) => {
+      const event = stream.events.findLast((e) => e.kind === kind && (!to || (e.kind === 'move' && e.to === to)))!;
+      return sceneLabels(layoutBoard(stateAt(timeline, event.seq), opts), cards);
+    };
+    expect(at('move', 'battlefield').find((l) => l.id === 'counters:p1')).toMatchObject({ text: 'Mountain', tone: 'land-mountain' });
+    // Tapping keeps the choice; once it has left the battlefield (after the
+    // destroy's own action, where it is held in its slot) the choice is gone.
+    expect(at('tap').find((l) => l.id === 'counters:p1')?.text).toBe('Mountain');
+    expect(at('phase').some((l) => l.id === 'counters:p1')).toBe(false);
+  });
+});

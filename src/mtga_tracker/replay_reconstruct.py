@@ -186,7 +186,9 @@ class Reconstructor(ReconstructionBoard):
         obj, inferred = self._from_hand_or_elsewhere(
             seat, name, types or ["Land"], ["graveyard", "exile"]
         )
-        return self._move(obj, "battlefield", "play_land", inferred=inferred, seat=seat)
+        return self._move(
+            obj, "battlefield", "play_land", inferred=inferred, seat=seat, chosen=match.group(2)
+        )
 
     def _on_cast(self, index: int, row: Dict[str, Any], text: str) -> Optional[Dict[str, Any]]:
         actor, body = _split_actor(text)

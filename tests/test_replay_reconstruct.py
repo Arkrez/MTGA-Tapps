@@ -231,6 +231,13 @@ def test_land_play_moves_the_opening_hand_object():
     assert (play["from"], play["to"], play["obj"]) == ("hand", "battlefield", opening_forest["obj"])
 
 
+def test_land_play_reads_the_chosen_land_type():
+    stream = _stream([T1, ("land", "[0:05] You: played [Multiversal Passage (Land)] as an Island")])
+    play = _logged(stream, "played [Multiversal Passage")
+    assert play["reason"] == "play_land" and play["to"] == "battlefield"
+    assert play["chosen"] == "Island" and play["card"] == "n:Multiversal Passage"
+
+
 def test_cast_without_printed_resolution_resolves_right_after_its_line():
     stream = _stream([T1, ("cast", "[0:05] You: cast [Grizzly Bears (Creature 2/2)]")])
     push = _logged(stream, "cast [Grizzly Bears")

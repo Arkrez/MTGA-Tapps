@@ -259,6 +259,8 @@ export interface CardPlacement {
   toughness: string | null;
   /** The seat's commander (Brawl/Commander), wherever it is: the scene marks it on the battlefield. */
   commander: boolean;
+  /** On the battlefield: the basic land type it chose as it entered ("Mountain"), else null. */
+  chosen: string | null;
   /** Cards tucked under this one (auras, equipment, cards it exiled), bottom first; empty for everything else. */
   under: readonly UnderCard[];
   /** Side cards beside the hand: why the owner may cast it from there; null elsewhere. */
@@ -496,6 +498,7 @@ function placeObject(
     power: printedStat(ctx, object, 'power'),
     toughness: printedStat(ctx, object, 'toughness'),
     commander: isCommander(ctx, object),
+    chosen: object.zone === 'battlefield' ? (object.chosen ?? null) : null,
     under,
     castable: row === 'castable' ? (ctx.castable.get(object.obj) ?? null) : null,
     damage: object.zone === 'battlefield' ? marks?.damage || null : null,

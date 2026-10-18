@@ -1201,18 +1201,42 @@ def test_removal_records_the_source_that_moved_it(tmp_path):
         "parentId": 318,
     }
     taken = obj(323, 1008, P, GY[P])
-    tracker._handle_event(message(zt(323, HAND[P], GY[P], "Discard", 322), objects=[bat, trigger, taken]))
+    tracker._handle_event(
+        message(zt(323, HAND[P], GY[P], "Discard", 322), objects=[bat, trigger, taken])
+    )
     food = obj(500, 1002, P, GY[P])
     tracker._handle_event(message(zt(500, BF, GY[P], "Sacrifice", 500), objects=[food]))
     dead = obj(501, 1003, P, GY[P])
     tracker._handle_event(message(zt(501, BF, GY[P], "SBA_Damage", 400), objects=[murder, dead]))
-    rows = event_rows(tmp_path / "analytics.sqlite3", "event_subtype = 'move' AND zone_to = 'graveyard'")
+    rows = event_rows(
+        tmp_path / "analytics.sqlite3", "event_subtype = 'move' AND zone_to = 'graveyard'"
+    )
     assert [(r["object_id"], r["payload"]["reason"], r["payload"].get("by")) for r in rows] == [
         (401, "destroy", 400),
         (323, "discard", 318),
         (500, "sacrifice", None),
         (501, "sba", None),
     ]
+
+
+def test_land_that_chose_a_basic_land_type_names_it(tmp_path):
+    """Multiversal Passage (shape from a live log): Arena logs ChoiceResult from
+    the entering land in the basic-land-type domain (9), then the land play,
+    with the chosen type as the object's subtype. A land that made no choice
+    (a printed Forest) gets no suffix."""
+    tracker = started_tracker(tmp_path)
+    tracker._handle_event(message(ann("ChoiceResult", [P], 291, Choice_Value=49, Choice_Domain=9)))
+    passage = obj(291, 1008, P, BF, subtypes=["SubType_Mountain"], isTapped=True)
+    tracker._handle_event(
+        message(oic(169, 291), zt(291, HAND[P], BF, "PlayLand"), objects=[passage])
+    )
+    forest = obj(292, 1001, P, BF, subtypes=["SubType_Forest"])
+    tracker._handle_event(message(zt(292, HAND[P], BF, "PlayLand"), objects=[forest]))
+    lands = event_rows(tmp_path / "analytics.sqlite3", "event_type = 'land'")
+    assert lands[0]["text"].endswith("(Land)] as a Mountain")
+    assert lands[0]["payload"]["chosen"] == "Mountain"
+    assert lands[1]["text"].endswith("(Land)]")
+    assert "chosen" not in lands[1]["payload"]
 
 
 def test_one_message_is_one_transaction(tmp_path):

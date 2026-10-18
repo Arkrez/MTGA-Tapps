@@ -3,7 +3,8 @@
  * battlefield card a readable badge across its lower edge with the creature's
  * current power/toughness or the planeswalker's loyalty (Arena style), plus a
  * small chip across its upper edge for any other counters, or "Commander" on
- * a seat's commander (with its counters after it). Stack items are
+ * a seat's commander (with its counters after it), or the basic land type a
+ * land chose as it entered (Multiversal Passage), in that land's color. Stack items are
  * captioned by the DOM stack preview instead. Pure: computed once per board
  * state; the projector moves them each rendered frame without React.
  */
@@ -25,7 +26,19 @@ export type LabelTone =
   | 'debuff'
   | 'effect'
   | 'life-loss'
-  | 'life-gain';
+  | 'life-gain'
+  | LandTypeTone;
+
+/** A chosen basic land type's chip, in that land's mana color. */
+export type LandTypeTone = 'land-plains' | 'land-island' | 'land-swamp' | 'land-mountain' | 'land-forest';
+
+const LAND_TYPE_TONES: Record<string, LandTypeTone> = {
+  Plains: 'land-plains',
+  Island: 'land-island',
+  Swamp: 'land-swamp',
+  Mountain: 'land-mountain',
+  Forest: 'land-forest',
+};
 
 export interface SceneLabel {
   id: string;
@@ -264,13 +277,15 @@ export function sceneLabels(layout: Layout, cards: Readonly<Record<CardKey, Repl
       });
     }
     const counters = countersText(placement);
-    const chip = placement.commander ? (counters ? `Commander · ${counters}` : 'Commander') : counters;
+    const parts = [placement.chosen, placement.commander ? 'Commander' : null, counters].filter(Boolean);
+    const chip = parts.length ? parts.join(' · ') : null;
+    const landTone = placement.chosen ? LAND_TYPE_TONES[placement.chosen.split(' ')[0]] : undefined;
     if (chip) {
       const [dx, dy] = rotate(0, (CARD_HEIGHT / 2 - 0.1) * placement.scale, placement.rotZ);
       labels.push({
         id: `counters:${placement.obj}`,
         text: chip,
-        tone: placement.commander ? 'commander' : 'counters',
+        tone: placement.commander ? 'commander' : counters ? 'counters' : (landTone ?? 'counters'),
         obj: placement.obj,
         x: dx,
         y: dy,

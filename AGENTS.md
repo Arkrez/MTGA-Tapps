@@ -638,6 +638,12 @@ Arena logs are not a simple chronological event stream. Be careful with inferred
   submitted 60 must never win (a tracker launched mid-queue after a deck switch once
   stamped games with the previous deck's name). Leaving the deck unresolved beats
   guessing wrong.
+- A land that chooses a basic land type as it enters (Multiversal Passage) logs
+  `AnnotationType_ChoiceResult` from the land (`Choice_Domain` 9, `Choice_Value` an
+  Arena SubType enum) one message before its PlayLand; the land object then carries
+  the choice in `subtypes` (`SubType_Mountain`) and has no `color`. The tracker
+  remembers the chooser (`GameState.land_type_choosers`) and reads the type from
+  `subtypes`, so printed land types (Sacred Foundry) are never shown as a choice.
 - Arena's SBA death annotations reference instance ids that do NOT match declared
   attacker/blocker ids (verified against real logs) — combat deaths cannot be told apart
   from burn kills at SBA time, which is why lethal-damage deaths are excluded from

@@ -7,6 +7,11 @@ from typing import Any, Dict, List, Optional, Set
 from .state import CardEvent
 
 
+def chosen_article(word: str) -> str:
+    """'a' or 'an' before a land type ('an Island')."""
+    return "an" if word[:1].lower() in "aeiou" else "a"
+
+
 class TrackerZoneTransferMixin:
     """Zone-transfer helpers used by CardTracker."""
 
@@ -1063,11 +1068,13 @@ class TrackerZoneTransferMixin:
 
         if category == "PlayLand":
             self._check_land_replacement(determining_seat)
+            chosen = self._chosen_land_type(card_obj)
+            chosen_suffix = f" as {chosen_article(chosen)} {chosen}" if chosen else ""
             self._print_event(
                 self._format_actor_event(
                     "⛰️",
                     determining_seat,
-                    f"{late_marker}played [{card_name} ({type_str})]",
+                    f"{late_marker}played [{card_name} ({type_str})]{chosen_suffix}",
                     turn_override=turn_for_display,
                 ),
                 "land",
@@ -1176,6 +1183,9 @@ class TrackerZoneTransferMixin:
             self._handle_triggered_ability(affected_ids, annotation, game_objects)
             return True
         if "AnnotationType_PhaseOrStepModified" in ann_type:
+            return True
+        if "AnnotationType_ChoiceResult" in ann_type:
+            self._note_choice_result(affector_id, details)
             return True
         if "AnnotationType_ModifiedLife" in ann_type:
             self._handle_modified_life(

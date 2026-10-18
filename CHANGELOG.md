@@ -18,6 +18,9 @@
   −1/−1, +3/+0), and cards tapped by a spell, discarded or milled are marked.
 - New recordings note which card caused each removal, so replays draw it from the
   right source even when several effects resolve together.
+- Multiversal Passage shows the basic land type chosen for it: a chip in that land's
+  color in the replay, and "played [Multiversal Passage (Land)] as a Mountain" in
+  the tracker log.
 
 ## 0.7.0
 

@@ -178,6 +178,8 @@ export interface MoveEvent extends ReplayEventBase {
   with?: ObjId | null;
   /** The object whose effect moved it (Arena's affector, recorded games), when logged. */
   by?: ObjId | null;
+  /** Onto the battlefield: the basic land type it chose as it entered ("Mountain", Multiversal Passage). */
+  chosen?: string | null;
 }
 export interface TapEvent extends ReplayEventBase {
   kind: 'tap';

@@ -259,6 +259,7 @@ class ReconstructionBoard:
         reason: str,
         inferred: bool = False,
         seat: Optional[int] = None,
+        chosen: Optional[str] = None,
     ) -> Dict[str, Any]:
         source = obj.zone
         holder = obj.controller
@@ -286,6 +287,7 @@ class ReconstructionBoard:
             reason=reason,
             inferred=inferred,
             index=None,
+            chosen=chosen,
         )
         if obj.token and dest in ("graveyard", "exile", "hand", "library"):
             self._move(obj, "limbo", "token_cease")

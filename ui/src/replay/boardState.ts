@@ -43,6 +43,8 @@ export interface ObjectState {
   inferred: boolean;
   /** seq at which the card identity became known; null while hidden. */
   revealedAt: number | null;
+  /** On the battlefield: the basic land type it chose as it entered (Multiversal Passage). */
+  chosen?: string;
 }
 
 export interface StackItem {

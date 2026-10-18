@@ -314,6 +314,49 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The basic land type a land chose as it entered (Multiversal Passage), in its mana color. */
+.replay-label-land-plains,
+.replay-label-land-island,
+.replay-label-land-swamp,
+.replay-label-land-mountain,
+.replay-label-land-forest {
+  padding: 1px 9px;
+  border-width: 1px;
+  color: #fff;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-shadow: 0 1px 1px rgb(0 0 0 / 45%);
+}
+
+.replay-label-land-plains {
+  border-color: rgb(255 246 214 / 80%);
+  background: rgb(214 196 140 / 96%);
+  color: #2a2414;
+  text-shadow: none;
+}
+
+.replay-label-land-island {
+  border-color: rgb(168 214 255 / 75%);
+  background: rgb(26 110 196 / 96%);
+}
+
+.replay-label-land-swamp {
+  border-color: rgb(196 176 214 / 65%);
+  background: rgb(52 40 62 / 96%);
+}
+
+.replay-label-land-mountain {
+  border-color: rgb(255 180 160 / 75%);
+  background: rgb(196 58 40 / 96%);
+}
+
+.replay-label-land-forest {
+  border-color: rgb(170 230 170 / 70%);
+  background: rgb(36 120 58 / 96%);
+}
+
 /* Damage dealt this moment ("−6"): pops in over the card's art. `scale` animates
    separately from the transform the label projector writes every frame. */
 .replay-label-damage {

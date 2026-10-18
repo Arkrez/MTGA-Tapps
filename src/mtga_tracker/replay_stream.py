@@ -70,6 +70,7 @@ EVENT_FIELDS: Dict[str, Tuple[str, ...]] = {
         "index",
         "with",
         "by",
+        "chosen",
     ),
     "tap": ("objs",),
     "untap": ("objs",),

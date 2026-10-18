@@ -282,6 +282,15 @@ function drawHud(ctx: CanvasRenderingContext2D, layout: FrameLayout, hud: FrameH
   });
 }
 
+/** A chosen basic land type's chip (labels.ts LandTypeTone): fill, border, text, as in replay.css. */
+const LAND_TYPE_PILLS: Record<string, [string, string, string]> = {
+  'land-plains': ['rgba(214,196,140,0.96)', 'rgba(255,246,214,0.8)', '#2a2414'],
+  'land-island': ['rgba(26,110,196,0.96)', 'rgba(168,214,255,0.75)', '#ffffff'],
+  'land-swamp': ['rgba(52,40,62,0.96)', 'rgba(196,176,214,0.65)', '#ffffff'],
+  'land-mountain': ['rgba(196,58,40,0.96)', 'rgba(255,180,160,0.75)', '#ffffff'],
+  'land-forest': ['rgba(36,120,58,0.96)', 'rgba(170,230,170,0.7)', '#ffffff'],
+};
+
 function drawLabels(ctx: CanvasRenderingContext2D, layout: FrameLayout, labels: readonly FrameLabel[]): void {
   const s = layout.scale;
   for (const label of labels) {
@@ -293,6 +302,9 @@ function drawLabels(ctx: CanvasRenderingContext2D, layout: FrameLayout, labels: 
       drawPill(ctx, cx, cy, label.text, 10 * s, 600, 'rgba(8,12,16,0.84)', 'rgba(240,198,108,0.4)', COLORS.gold, 999);
     } else if (label.tone === 'damage') {
       drawPill(ctx, cx, cy, label.text, 17 * s, 800, 'rgba(176,24,20,0.96)', 'rgba(255,168,158,0.75)', '#ffffff', 999);
+    } else if (label.tone in LAND_TYPE_PILLS) {
+      const [fill, border, ink] = LAND_TYPE_PILLS[label.tone];
+      drawPill(ctx, cx, cy, label.text.toUpperCase(), 10 * s, 800, fill, border, ink, 999);
     } else if (label.tone === 'castable') {
       const plot = label.emphasis === true;
       const text = label.text.toUpperCase();

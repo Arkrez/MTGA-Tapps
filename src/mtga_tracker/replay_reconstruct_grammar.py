@@ -20,7 +20,8 @@ _PT_RE = re.compile(r"(-?\d+|\?|\*)/(-?\d+|\?|\*)$")
 
 _TURN_RE = re.compile(r"^Turn (\d+) - (YOUR TURN|OPPONENT'S TURN)")
 _DRAW_RE = re.compile(r"^drew (?:a card|\[([^\]]+)\])$")
-_LAND_RE = re.compile(r"^played \[([^\]]+)\]$")
+# A land that chose a basic land type ends "as a Mountain".
+_LAND_RE = re.compile(r"^played \[([^\]]+)\](?: as an? ([A-Za-z ]+))?$")
 _CAST_RE = re.compile(r"^cast \[([^\]]+)\](.*)$", re.S)
 _BECAME_RE = re.compile(r"^\[([^\]]+)\] became \[([^\]]+)\](?: \(([^()]*)\))?\s*$")
 _TAPPED_RE = re.compile(r"^\[([^\]]+)\] tapped \[([^\]]+)\]$")

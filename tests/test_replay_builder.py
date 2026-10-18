@@ -670,6 +670,26 @@ def test_move_carries_the_source_that_moved_it():
     assert ("402", "put", None) in moves
 
 
+def test_land_play_carries_the_chosen_land_type():
+    r = _Rows()
+    r.turn_row(1, PLAYER)
+    r.move(
+        403,
+        "hand",
+        "battlefield",
+        "play_land",
+        PLAYER,
+        97998,
+        "Multiversal Passage",
+        chosen="Mountain",
+    )
+    r.move(404, "hand", "battlefield", "play_land", PLAYER, 1001, "Forest")
+    stream = build_recorded(_game_rows(r.rows))
+    assert validate_stream(stream) == []
+    chosen = {e["obj"]: e["chosen"] for e in stream["events"] if e["kind"] == "move"}
+    assert chosen["403"] == "Mountain" and chosen["404"] is None
+
+
 def test_stack_push_payload_accepts_stack_kind_and_legacy_kind():
     stream = _build()
     pushes = {e["stack_id"]: e["stack_kind"] for e in stream["events"] if e["kind"] == "stack_push"}
