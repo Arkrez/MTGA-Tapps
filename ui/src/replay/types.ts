@@ -176,6 +176,8 @@ export interface MoveEvent extends ReplayEventBase {
   index: number | null;
   /** Exile only: the battlefield permanent whose ability exiled the card (recorded games). */
   with?: ObjId | null;
+  /** The object whose effect moved it (Arena's affector, recorded games), when logged. */
+  by?: ObjId | null;
 }
 export interface TapEvent extends ReplayEventBase {
   kind: 'tap';

@@ -3,6 +3,7 @@
  * event. A draft copies only the seat records, zone arrays and object entries
  * an event touches, so untouched substructures stay shared between states.
  */
+import type { EffectWindow } from './effects';
 import type { CardKey, ObjId, ReplayCard, ReplayEvent, StackItemKind, Zone } from './types';
 import { ZONES } from './types';
 
@@ -70,10 +71,10 @@ export interface BoardState {
   life: Readonly<Record<number, number>>;
   attackers: ReadonlySet<ObjId>;
   /**
-   * Damage dealt this moment, per permanent (summed), shown on the table:
-   * everything one spell or combat hits stays marked until the next action.
+   * What the current action did (effects.ts): damage, life, removal, counters
+   * and P/T changes with their sources, shown on the table until the next action.
    */
-  damage: ReadonlyMap<ObjId, number>;
+  effects: EffectWindow;
   /** blocker -> attacker */
   blocks: ReadonlyMap<ObjId, ObjId>;
   lastEvent: ReplayEvent | null;

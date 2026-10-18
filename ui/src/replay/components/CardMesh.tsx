@@ -104,6 +104,9 @@ function CardMeshImpl({ placement, cardInfo, sleeve, store, kit, registry, spawn
             raycast={noRaycast}
           />
         ) : null}
+        {placement.removed && placement.zone === 'battlefield' ? (
+          <mesh geometry={kit.card} material={kit.removedMaterial} position-z={0.0016} raycast={noRaycast} />
+        ) : null}
         {placement.inferred ? (
           <mesh geometry={kit.inferred} material={kit.inferredMaterial} position-z={-0.002} raycast={noRaycast} />
         ) : null}
@@ -127,6 +130,7 @@ function samePlacement(a: CardPlacement, b: CardPlacement): boolean {
     a.highlight === b.highlight &&
     a.inferred === b.inferred &&
     a.castable === b.castable &&
+    a.removed === b.removed &&
     a.seat === b.seat &&
     sameUnder(a.under, b.under)
   );

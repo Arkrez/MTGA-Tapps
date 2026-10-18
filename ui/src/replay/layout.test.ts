@@ -625,6 +625,8 @@ describe('side cards beside the hand', () => {
     b.move('x1', 'show', 'limbo', 'battlefield', PLAYER, 'put');
     b.move('x1', 'show', 'battlefield', 'exile', PLAYER, 'exile');
     b.move('o1', 'looting', 'limbo', 'graveyard', OPPONENT, 'put');
+    // The next action ends the exile's effect window (x1 is no longer held on the battlefield).
+    b.phaseTo('Phase_Main1');
     extra(b);
     const stream = b.build(
       {
@@ -696,7 +698,7 @@ describe('damage marks', () => {
 
   it('marks every permanent one burst hit, summed, with the damage glow', () => {
     const state = burned();
-    expect([...state.damage]).toEqual([
+    expect([...state.effects.objects].map(([obj, m]) => [obj, m.damage])).toEqual([
       ['c1', 8],
       ['c2', 6],
     ]);
@@ -706,11 +708,18 @@ describe('damage marks', () => {
     expect([byObj(cards, 'c3').damage, byObj(cards, 'c3').highlight]).toEqual([null, null]);
   });
 
-  it('keeps the marks while the damaged die, and clears them at the next action', () => {
+  it('holds a creature that dies of the damage in its slot, dimmed as Died, until the next action', () => {
     const dying = burned((b) => b.move('c2', 'bear', 'battlefield', 'graveyard', OPPONENT, 'sba'));
-    expect(dying.damage.get('c1')).toBe(8);
-    expect(layoutBoard(dying, OPTS).cards.find((c) => c.obj === 'c2')?.damage ?? null).toBeNull();
-    const next = burned((b) => b.turnStart(2, OPPONENT));
-    expect(next.damage.size).toBe(0);
+    expect(dying.effects.objects.get('c1')?.damage).toBe(8);
+    expect(dying.seats[OPPONENT].zones.graveyard).toEqual(['c2']);
+    const held = layoutBoard(dying, OPTS).cards.filter((c) => c.obj === 'c2');
+    expect(held.map((c) => [c.zone, c.row, c.damage, c.removed])).toEqual([['battlefield', 'creatures', 6, 'died']]);
+    const next = burned((b) => {
+      b.move('c2', 'bear', 'battlefield', 'graveyard', OPPONENT, 'sba');
+      b.turnStart(2, OPPONENT);
+    });
+    expect(next.effects.objects.size).toBe(0);
+    const gone = layoutBoard(next, OPTS).cards.filter((c) => c.obj === 'c2');
+    expect(gone.map((c) => [c.zone, c.row, c.removed])).toEqual([['graveyard', 'pile', null]]);
   });
 });

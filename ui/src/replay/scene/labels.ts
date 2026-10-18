@@ -7,11 +7,25 @@
  * captioned by the DOM stack preview instead. Pure: computed once per board
  * state; the projector moves them each rendered frame without React.
  */
-import { CARD_HEIGHT } from '../layout';
+import type { ObjectMarks, RemovalKind, SeatMarks } from '../effects';
+import { CARD_HEIGHT, PILE_CARD_DEPTH, PILE_MAX_CARDS } from '../layout';
 import type { CardPlacement, CastableMark, Layout, PileZone } from '../layout';
 import type { CardKey, ReplayCard } from '../types';
 
-export type LabelTone = 'pile' | 'stat' | 'loyalty' | 'counters' | 'commander' | 'castable' | 'damage';
+export type LabelTone =
+  | 'pile'
+  | 'stat'
+  | 'loyalty'
+  | 'counters'
+  | 'commander'
+  | 'castable'
+  | 'damage'
+  | 'removed'
+  | 'buff'
+  | 'debuff'
+  | 'effect'
+  | 'life-loss'
+  | 'life-gain';
 
 export interface SceneLabel {
   id: string;
@@ -82,8 +96,109 @@ export function countersText(placement: CardPlacement): string | null {
   return parts.length ? parts.join(' · ') : null;
 }
 
+/** Chip text for a card removed by the current action. */
+export const REMOVAL_LABELS: Record<RemovalKind, string> = {
+  destroyed: 'Destroyed',
+  died: 'Died',
+  exiled: 'Exiled',
+  returned: 'Returned to hand',
+  sacrificed: 'Sacrificed',
+  graveyard: 'To graveyard',
+  library: 'To library',
+  discarded: 'Discarded',
+};
+
+const MINUS = '\u2212';
+
+function signed(n: number): string {
+  return n < 0 ? `${MINUS}${-n}` : `+${n}`;
+}
+
+/**
+ * What the current action changed on a permanent besides damage: counters
+ * added or removed ("+2/+2", "−1/−1", "+1 shield") or an effect's
+ * power/toughness change ("+3/+0", "−2/−2"), with its tone.
+ */
+export function changeLabel(marks: ObjectMarks | null): { text: string; tone: 'buff' | 'debuff' | 'effect' } | null {
+  if (!marks) return null;
+  const parts: string[] = [];
+  let score = 0;
+  let plain = false;
+  for (const [type, delta] of Object.entries(marks.counters)) {
+    if (type === '+1/+1' || type === '-1/-1') {
+      const n = type === '+1/+1' ? delta : -delta;
+      parts.push(`${signed(n)}/${signed(n)}`);
+      score += n;
+    } else {
+      parts.push(`${signed(delta)} ${type}`);
+      plain = true;
+    }
+  }
+  if (!parts.length && marks.pt) {
+    parts.push(`${signed(marks.pt.power)}/${signed(marks.pt.toughness)}`);
+    score += marks.pt.power + marks.pt.toughness;
+  }
+  if (!parts.length) return null;
+  const tone = score > 0 ? 'buff' : score < 0 ? 'debuff' : plain ? 'effect' : 'buff';
+  return { text: parts.join(' · '), tone };
+}
+
+/** The number at a seat's table edge: its life change this action (or the damage it took). */
+export function seatNumber(marks: SeatMarks): { text: string; tone: 'life-loss' | 'life-gain' } | null {
+  const change = marks.life || -marks.damage;
+  if (!change) return null;
+  return { text: signed(change), tone: change < 0 ? 'life-loss' : 'life-gain' };
+}
+
+function effectLabels(labels: SceneLabel[], placement: CardPlacement): void {
+  const { marks } = placement;
+  if (!marks) return;
+  if (placement.removed) {
+    const [dx, dy] = rotate(0, -0.2 * placement.scale, placement.rotZ);
+    labels.push({
+      id: `removed:${placement.obj}`,
+      text: REMOVAL_LABELS[placement.removed],
+      tone: 'removed',
+      obj: placement.obj,
+      x: dx,
+      y: dy,
+      z: 0.05,
+      align: 'center',
+    });
+  } else if (marks.tapped && placement.zone === 'battlefield') {
+    const [dx, dy] = rotate(0, -0.2 * placement.scale, placement.rotZ);
+    labels.push({ id: `tapped:${placement.obj}`, text: 'Tapped', tone: 'effect', obj: placement.obj, x: dx, y: dy, z: 0.05, align: 'center' });
+  }
+  const change = placement.zone === 'battlefield' ? changeLabel(marks) : null;
+  if (change) {
+    const [dx, dy] = rotate(0, 0.3 * placement.scale, placement.rotZ);
+    labels.push({ id: `change:${placement.obj}`, text: change.text, tone: change.tone, obj: placement.obj, x: dx, y: dy, z: 0.05, align: 'center' });
+  }
+}
+
 export function sceneLabels(layout: Layout, cards: Readonly<Record<CardKey, ReplayCard>>): SceneLabel[] {
   const labels: SceneLabel[] = [];
+  for (const seat of layout.seatMarks) {
+    const number = seatNumber(seat.marks);
+    if (number) {
+      labels.push({ id: `seat:${seat.seat}`, text: number.text, tone: number.tone, obj: null, x: seat.x, y: seat.y, z: 0.3, align: 'center' });
+    }
+    if (seat.marks.milled) {
+      const pile = layout.piles.find((p) => p.seat === seat.seat && p.zone === 'graveyard');
+      if (pile) {
+        labels.push({
+          id: `milled:${seat.seat}`,
+          text: `Milled ${seat.marks.milled}`,
+          tone: 'effect',
+          obj: null,
+          x: pile.x,
+          y: pile.y + (CARD_HEIGHT * pile.scale) / 2 - 0.12,
+          z: Math.min(pile.count, PILE_MAX_CARDS) * PILE_CARD_DEPTH + 0.03,
+          align: 'center',
+        });
+      }
+    }
+  }
   for (const pile of layout.piles) {
     // An empty command zone keeps its label: it shows where the commander went out from.
     const empty = pile.zone === 'command' && pile.count === 0;
@@ -95,7 +210,7 @@ export function sceneLabels(layout: Layout, cards: Readonly<Record<CardKey, Repl
       // A badge across the lower edge of the pile, so neighbouring piles never collide.
       x: pile.x,
       y: pile.y - (CARD_HEIGHT * pile.scale) / 2 + 0.12,
-      z: Math.min(pile.count, 60) * 0.004 + 0.03,
+      z: Math.min(pile.count, PILE_MAX_CARDS) * PILE_CARD_DEPTH + 0.03,
       align: 'center',
     });
   }
@@ -116,6 +231,7 @@ export function sceneLabels(layout: Layout, cards: Readonly<Record<CardKey, Repl
       });
       continue;
     }
+    if (placement.faceUp) effectLabels(labels, placement);
     if (placement.zone !== 'battlefield' || !placement.faceUp) continue;
     if (placement.damage) {
       // A red badge over the art for damage this moment ("−6"), above the stat badge.

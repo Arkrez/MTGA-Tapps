@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Replay
+
+- Every interaction shows on the table while its action lasts. A spell or ability
+  that resolved stays in the stack preview, and arrows run from it (or from the
+  permanent that acted) to everything it hit.
+- Players: damage and life changes appear at that player's side of the table and
+  beside their life total, red for a loss and green for a gain, so Lightning Helix
+  shows −3 on its target and +3 for its caster.
+- Removal: a destroyed, dying, exiled, bounced or sacrificed permanent stays in its
+  spot, dimmed and labelled (Destroyed, Died, Exiled, Returned to hand, Sacrificed),
+  until the next action, then moves to where it went. Countered and fizzled spells
+  stay stamped in the stack preview, with an arrow from the counterspell.
+- Smaller effects: counters and power/toughness changes pop up on the card (+2/+2,
+  −1/−1, +3/+0), and cards tapped by a spell, discarded or milled are marked.
+- New recordings note which card caused each removal, so replays draw it from the
+  right source even when several effects resolve together.
+
 ## 0.7.0
 
 ### Replay (beta)

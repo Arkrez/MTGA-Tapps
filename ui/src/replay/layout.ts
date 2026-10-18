@@ -16,6 +16,7 @@
  * mapped to the opponent's half by reflecting y, or by a full 180° turn (x and
  * y, plus rotZ + π) when `mirrorOpponent` is on (piles stay in the left lane).
  */
+import type { ObjectMarks, RemovalKind, SeatMarks } from './effects';
 import type { BoardState, ObjectState, StackItem } from './reducer';
 import type { CardKey, ObjId, ReplayCard, ReplayStream, Zone } from './types';
 
@@ -262,8 +263,21 @@ export interface CardPlacement {
   under: readonly UnderCard[];
   /** Side cards beside the hand: why the owner may cast it from there; null elsewhere. */
   castable: CastableMark | null;
-  /** Battlefield: damage dealt to it this moment (BoardState.damage), else null. */
+  /** Battlefield: damage dealt to it this moment (the effect window), else null. */
   damage: number | null;
+  /** What the current action did to it (effects.ts), or null. */
+  marks: ObjectMarks | null;
+  /** Removed this action: held dimmed in its battlefield slot (or, discarded, on the graveyard) with this chip. */
+  removed: RemovalKind | null;
+}
+
+/** A seat's life change, damage taken and cards milled this action, at its table edge. */
+export interface SeatMarkPlacement {
+  seat: number;
+  marks: SeatMarks;
+  /** Where the number sits: the middle of that seat's rail (where attack and damage arrows land). */
+  x: number;
+  y: number;
 }
 
 /** One card tucked under a host, as the hover preview lists it. */
@@ -305,6 +319,8 @@ export interface Layout {
   cards: CardPlacement[];
   piles: PilePlacement[];
   table: TableGeometry;
+  /** Seats with a life change, damage or a mill this action. */
+  seatMarks: SeatMarkPlacement[];
 }
 
 export function clampTableWidth(width: number): number {
@@ -387,6 +403,8 @@ interface Context {
   tucked: ReadonlySet<ObjId>;
   /** Graveyard and exile cards shown beside their owner's hand instead of on their pile. */
   castable: ReadonlyMap<ObjId, CastableMark>;
+  /** Permanents removed this action, still drawn in their battlefield slot (and nowhere else). */
+  held: ReadonlySet<ObjId>;
   out: CardPlacement[];
 }
 
@@ -407,7 +425,7 @@ function collectCastable(state: BoardState, seatIds: readonly number[], tucked: 
   for (const seatId of seatIds) {
     const zones = state.seats[seatId].zones;
     for (const obj of [...zones.graveyard, ...zones.exile]) {
-      if (tucked.has(obj)) continue;
+      if (tucked.has(obj) || state.effects.held.has(obj)) continue;
       const object = state.objects.get(obj);
       const mark = object ? castableMark(state, object) : null;
       if (mark) out.set(obj, mark);
@@ -417,7 +435,7 @@ function collectCastable(state: BoardState, seatIds: readonly number[], tucked: 
 }
 
 function highlightOf(ctx: Context, obj: ObjId): PlacementHighlight {
-  if (ctx.damaged === obj || ctx.state.damage.has(obj)) return 'damaged';
+  if (ctx.damaged === obj || (ctx.state.effects.objects.get(obj)?.damage ?? 0) > 0) return 'damaged';
   if (ctx.targeted.has(obj)) return 'targeted';
   if (ctx.state.attackers.has(obj)) return 'attacking';
   if (ctx.blockers.has(obj)) return 'blocking';
@@ -457,6 +475,7 @@ function placeObject(
 ): void {
   const { x, y } = toTable(frame, local.x, local.y);
   const faceUp = faceCard !== null && !object.faceDown;
+  const marks = ctx.state.effects.objects.get(object.obj) ?? null;
   ctx.out.push({
     obj: object.obj,
     card: faceCard,
@@ -479,7 +498,9 @@ function placeObject(
     commander: isCommander(ctx, object),
     under,
     castable: row === 'castable' ? (ctx.castable.get(object.obj) ?? null) : null,
-    damage: object.zone === 'battlefield' ? (ctx.state.damage.get(object.obj) ?? null) : null,
+    damage: object.zone === 'battlefield' ? marks?.damage || null : null,
+    marks,
+    removed: ctx.held.has(object.obj) || (row === 'pile' && marks?.removed === 'discarded') ? (marks?.removed ?? null) : null,
   });
 }
 
@@ -599,6 +620,7 @@ function collectAttachments(state: BoardState, seatIds: number[]): Map<ObjId, Ob
   for (const seatId of seatIds) {
     for (const zone of ['battlefield', 'exile'] as const) {
       for (const obj of state.seats[seatId].zones[zone]) {
+        if (state.effects.held.has(obj)) continue;
         const object = state.objects.get(obj);
         const host = object && attachedHost(state, object);
         if (object && host) {
@@ -818,8 +840,9 @@ function layoutPiles(ctx: Context, frame: Frame, piles: PilePlacement[]): void {
     const { zone, scale } = slot;
     const objs = zone === 'library' ? [] : zone === 'exile' ? seat.zones.exile.filter((obj) => !ctx.tucked.has(obj)) : seat.zones[zone];
     const count = zone === 'library' ? seat.librarySize : objs.length;
-    // Cards shown beside the hand still count here, but the pile shows the card under them.
-    const onPile = objs.filter((obj) => !ctx.castable.has(obj));
+    // Cards shown beside the hand (or held on the battlefield this action) still
+    // count here, but the pile shows the card under them.
+    const onPile = objs.filter((obj) => !ctx.castable.has(obj) && !ctx.held.has(obj));
     const { x, y } = toTable(pileFrame, slot.x, slot.y);
     const top = onPile.length ? ctx.state.objects.get(onPile[onPile.length - 1]) : undefined;
     piles.push({ seat: frame.seat, zone, count, topCard: top?.card ?? null, x, y, scale, rotZ });
@@ -932,14 +955,15 @@ export function layoutBoard(state: BoardState, opts: LayoutOptions): Layout {
   const tucked = tuckedAway(attachments);
   const castable = collectCastable(state, seatIds, tucked);
   const table = tableGeometry(opts.tableWidth, opts.commandZone ?? false, opts.handScale, opts.opponentHandScale);
-  const ctx: Context = { state, opts, table, targeted, damaged, blockers, attachments, tucked, castable, out: [] };
+  const held = new Set(state.effects.held.keys());
+  const ctx: Context = { state, opts, table, targeted, damaged, blockers, attachments, tucked, castable, held, out: [] };
   const piles: PilePlacement[] = [];
 
   for (const seatId of seatIds) {
     const frame: Frame = { seat: seatId, opponent: seatId !== opts.playerSeat, mirror: opts.mirrorOpponent };
     const seat = state.seats[seatId];
-    const resolve = (obj: ObjId) => state.objects.get(obj);
-    const battlefield = seat.zones.battlefield.map(resolve).filter((o): o is ObjectState => !!o);
+    const resolve = (obj: ObjId) => (held.has(obj) ? undefined : state.objects.get(obj));
+    const battlefield = withHeld(state, seatId, seat.zones.battlefield.map(resolve).filter((o): o is ObjectState => !!o));
     const hand = seat.zones.hand.map(resolve).filter((o): o is ObjectState => !!o);
     const side = [...seat.zones.graveyard, ...seat.zones.exile]
       .filter((obj) => castable.has(obj))
@@ -951,5 +975,30 @@ export function layoutBoard(state: BoardState, opts: LayoutOptions): Layout {
   }
   layoutStack(ctx);
   ctx.out.sort((a, b) => compareKeys(a.obj, b.obj));
-  return { cards: ctx.out, piles, table };
+  return { cards: ctx.out, piles, table, seatMarks: seatMarkPlacements(state, table, opts.playerSeat) };
+}
+
+/**
+ * A seat's battlefield with the permanents removed this action put back in
+ * their slots, as they last stood there (unattached, so a destroyed aura
+ * shows on its own rather than vanishing under its host).
+ */
+function withHeld(state: BoardState, seatId: number, battlefield: ObjectState[]): ObjectState[] {
+  const held = [...state.effects.held.values()].filter((h) => h.seat === seatId).sort((a, b) => a.index - b.index);
+  if (!held.length) return battlefield;
+  const out = battlefield.slice();
+  for (const h of held) {
+    out.splice(Math.min(h.index, out.length), 0, { ...h.object, attachedTo: null, exiledWith: null });
+  }
+  return out;
+}
+
+function seatMarkPlacements(state: BoardState, table: TableGeometry, playerSeat: number): SeatMarkPlacement[] {
+  const out: SeatMarkPlacement[] = [];
+  for (const [seat, marks] of state.effects.seats) {
+    if (!marks.life && !marks.damage && !marks.milled) continue;
+    const y = table.depth / 2 + RAIL_WIDTH / 2;
+    out.push({ seat, marks, x: 0, y: seat === playerSeat ? -y : y });
+  }
+  return out.sort((a, b) => a.seat - b.seat);
 }

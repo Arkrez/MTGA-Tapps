@@ -3,6 +3,7 @@
  * reducer.ts, which adds the keyframed timeline.
  */
 import { BoardDraft, emptySeat, removeFrom, zoneSeatOf } from './boardState';
+import { EMPTY_EFFECTS, clearsEffects, isEmptyEffects, noteEffects } from './effects';
 import type { BoardState, ObjectState, SeatState } from './boardState';
 import type {
   CardKey,
@@ -42,7 +43,7 @@ export function createInitialState(
     step: null,
     life,
     attackers: new Set(),
-    damage: new Map(),
+    effects: EMPTY_EFFECTS,
     blocks: new Map(),
     lastEvent: null,
     winnerSeat: null,
@@ -51,27 +52,6 @@ export function createInitialState(
     hindsight,
     commanders,
   };
-}
-
-/**
- * The next action after some damage: a new turn, phase, spell or ability,
- * attack, block, land, draw or cast. Damage, life changes and the deaths and
- * resolutions that follow it keep the damage marks up.
- */
-export function clearsDamageMarks(event: ReplayEvent): boolean {
-  switch (event.kind) {
-    case 'turn':
-    case 'phase':
-    case 'stack_push':
-    case 'attack':
-    case 'block':
-    case 'game_end':
-      return true;
-    case 'move':
-      return event.reason === 'cast' || event.reason === 'play_land' || event.reason === 'draw';
-    default:
-      return false;
-  }
 }
 
 function isCombatPhase(phase: string | null): boolean {
@@ -247,7 +227,8 @@ function removeStackItem(draft: BoardDraft, stackId: string): void {
 
 export function applyEvent(state: BoardState, event: ReplayEvent): BoardState {
   const draft = new BoardDraft(state);
-  if (state.damage.size && clearsDamageMarks(event)) draft.patch.damage = new Map();
+  if (!isEmptyEffects(state.effects) && clearsEffects(event)) draft.patch.effects = EMPTY_EFFECTS;
+  noteEffects(draft, event);
   if (event.phase !== null && event.phase !== undefined) draft.patch.phase = event.phase;
   if (event.step !== null && event.step !== undefined) draft.patch.step = event.step;
   switch (event.kind) {
@@ -355,12 +336,7 @@ export function applyEvent(state: BoardState, event: ReplayEvent): BoardState {
       draft.patch.ended = true;
       break;
     case 'damage':
-      // Damage never changes life (life events carry totals); it marks the permanent it hit.
-      if (event.target_obj) {
-        const marks = new Map(draft.patch.damage ?? draft.base.damage);
-        marks.set(event.target_obj, (marks.get(event.target_obj) ?? 0) + event.amount);
-        draft.patch.damage = marks;
-      }
+      // Damage never changes life (life events carry totals); noteEffects marked what it hit.
       break;
     case 'note':
       break;

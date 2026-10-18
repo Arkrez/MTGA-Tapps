@@ -138,7 +138,10 @@ Primary code paths:
   binding contract for rows, stream and UI module APIs; change it first. Fixtures in
   `tests/fixtures/replay/` are exported read-only and anonymized by
   `scripts/export_replay_fixture.py`. `python -m mtga_tracker.replay_dump <game_id>` prints a
-  stream.
+  stream. `ui/src/replay/effects.ts` keeps the current action's effect window
+  (damage, life, removal, counters, P/T, discards, mills, each with its source)
+  until the next action; removed permanents stay dimmed in their slot meanwhile,
+  and moves carry `by` (Arena's affector root) for recorded games.
 - `ui/src/replay/`: the Replay page — pure reducer/layout/playback-clock/image-queue/prefs
   modules with tests, `export/` (pure video plan, Canvas 2D frame composer, WebCodecs +
   mp4-muxer encoder for the in-browser MP4 export), and `components/` holding the `@react-three/fiber` scene (lazy-loaded

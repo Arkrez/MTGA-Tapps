@@ -657,6 +657,19 @@ def test_exile_move_carries_the_host_that_exiled_it():
     assert put["with"] is None
 
 
+def test_move_carries_the_source_that_moved_it():
+    r = _Rows()
+    r.turn_row(1, PLAYER)
+    r.move(401, "limbo", "battlefield", "put", OPPONENT, 1001, "Forest")
+    r.move(401, "battlefield", "graveyard", "destroy", OPPONENT, 1001, "Forest", by=400)
+    r.move(402, "limbo", "battlefield", "put", OPPONENT, 1001, "Forest")
+    stream = build_recorded(_game_rows(r.rows))
+    assert validate_stream(stream) == []
+    moves = [(e["obj"], e["reason"], e["by"]) for e in stream["events"] if e["kind"] == "move"]
+    assert ("401", "destroy", "400") in moves
+    assert ("402", "put", None) in moves
+
+
 def test_stack_push_payload_accepts_stack_kind_and_legacy_kind():
     stream = _build()
     pushes = {e["stack_id"]: e["stack_kind"] for e in stream["events"] if e["kind"] == "stack_push"}

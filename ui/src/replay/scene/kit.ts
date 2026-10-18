@@ -48,6 +48,8 @@ export interface SceneKit {
   shadowMaterial: MeshBasicMaterial;
   ringMaterials: Record<Exclude<PlacementHighlight, null>, MeshBasicMaterial>;
   inferredMaterial: MeshBasicMaterial;
+  /** Dims a card the current action removed (held in its slot until the action ends). */
+  removedMaterial: MeshBasicMaterial;
   castableMaterial: MeshBasicMaterial;
   plotMaterial: MeshBasicMaterial;
   slotMaterial: MeshBasicMaterial;
@@ -92,6 +94,13 @@ export function createSceneKit(store: TextureStore): SceneKit {
     damaged: glow(HIGHLIGHT_COLORS.damaged),
   };
   const inferredMaterial = overlay('#ffffff', store.helper('inferred'));
+  const removedMaterial = new MeshBasicMaterial({
+    color: new Color('#05080c'),
+    alphaMap: store.helper('alpha'),
+    transparent: true,
+    opacity: 0.55,
+    depthWrite: false,
+  });
   const castableMaterial = overlay(CASTABLE_COLORS.graveyard, store.helper('castable'));
   const plotMaterial = glow(CASTABLE_COLORS.plot);
   const slotMaterial = new MeshBasicMaterial({ map: store.helper('slot'), transparent: true, depthWrite: false });
@@ -112,6 +121,7 @@ export function createSceneKit(store: TextureStore): SceneKit {
   const materials: Material[] = [
     ...Object.values(ringMaterials),
     inferredMaterial,
+    removedMaterial,
     castableMaterial,
     plotMaterial,
     slotMaterial,
@@ -133,6 +143,7 @@ export function createSceneKit(store: TextureStore): SceneKit {
     shadowMaterial,
     ringMaterials,
     inferredMaterial,
+    removedMaterial,
     castableMaterial,
     plotMaterial,
     slotMaterial,
