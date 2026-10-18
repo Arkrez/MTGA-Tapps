@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.1
 
 ### Replay
 
@@ -21,6 +21,11 @@
 - Multiversal Passage shows the basic land type chosen for it: a chip in that land's
   color in the replay, and "played [Multiversal Passage (Land)] as a Mountain" in
   the tracker log.
+
+### Live Scoreboard
+
+- Today's Games shows a one-letter W/L result pill (the full result on hover), leaving
+  more room for deck names.
 
 ### Deck Finder
 

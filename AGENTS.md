@@ -150,7 +150,8 @@ Primary code paths:
   900 px.
   On Live Scoreboard, the header replay link matches the other pills, the
   between-game waiting status sits beside the format on the right, and Today's
-  Games uses compact 20 px replay icons to preserve space for deck names.
+  Games uses compact 20 px replay icons and one-letter W/L/D result pills
+  (full word on hover and for screen readers) to preserve space for deck names.
 - `src/mtga_tracker/settings.py`: shared `settings.json` — top level of the repo next to
   `config.py` for source runs, per-user data dir for frozen builds (legacy `data/settings.json`
   migrates automatically). Startup preferences are stored in its `startup` section.

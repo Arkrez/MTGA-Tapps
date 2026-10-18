@@ -6680,6 +6680,14 @@ a.sidebar-deck-finder {
   gap: 4px;
 }
 
+/* One-letter result pill (W/L/D), a fixed circle so the deck names line up. */
+.live-game-outcome {
+  flex: none;
+  justify-content: center;
+  width: 26px;
+  padding-inline: 0;
+}
+
 .live-game-item .live-game-row {
   flex: 1;
   min-width: 0;
