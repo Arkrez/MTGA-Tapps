@@ -22,6 +22,11 @@
   color in the replay, and "played [Multiversal Passage (Land)] as a Mountain" in
   the tracker log.
 
+### Deck Finder
+
+- YouTube: complete lists are found even when a creator omits the Deck/Decklist
+  heading.
+
 ## 0.7.0
 
 ### Replay (beta)

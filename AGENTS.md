@@ -327,7 +327,10 @@ Primary code paths:
   sessions, and a watch-page fallback; never download media or require cookies
   from a signed-in browser. HGG/Sloth are defaults in `YouTubeCreators`; preserve
   these entries when old settings payloads omit `youtube`. Normalize Deck/Decklist
-  headings to `Deck` and strip title emoji with the bundled `emoji` dependency.
+  headings to `Deck`; a complete 60-card list without a heading can also be
+  imported when it contains at least ten card rows. Headerless Brawl lists are
+  skipped because the commander cannot be identified. Strip title emoji with
+  the bundled `emoji` dependency.
   Reuse the existing 10-minute dashboard memory cache; failed/partial fetches
   show warnings and are not cached. UI uses a simple loading message, no progress
   bar. The README covers creator setup; regression fixtures live in
