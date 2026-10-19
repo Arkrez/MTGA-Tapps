@@ -37,6 +37,14 @@
 - TCGPlayer: creator decks (such as Arne Huschenbeth's) load again; TCGPlayer
   retired the listing they came from, which failed with a 404.
 
+### Dashboard
+
+- Fewer background requests: Deck Finder checks Arena's status only while a deck
+  is open and reads your collections only when the collection picker opens. Deck
+  Manager, Deck Finder and the Overview stop refreshing in a background tab and
+  catch up as soon as you return. The tracker no longer loads the Arena transfer
+  library until a transfer starts.
+
 ## 0.7.0
 
 ### Replay (beta)

@@ -1023,7 +1023,9 @@ export default function App() {
 
     void loadSnapshot();
     const refreshId = window.setInterval(() => {
-      void loadSnapshot();
+      if (!document.hidden) {
+        void loadSnapshot();
+      }
     }, SNAPSHOT_REFRESH_MS);
 
     return () => {

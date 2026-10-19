@@ -6,6 +6,7 @@ import {
   importManagedDeck, updateManagedDeck, deleteManagedDeck, removeManagedDecks, type DeckLibrary, type ManagedDeckDetail,
   fetchNativeDeckStatus, startNativeDeckJob, fetchNativeDeckJob, cancelNativeDeckJob, addDeckToArena, type NativeDeckStatus, type NativeDeckAction, type ManagedDeck,
 } from '../deckManagerApi';
+import { usePageVisible } from '../usePageVisible';
 import { formatDateTime } from '../format';
 import { DeckVisual } from './DeckVisual';
 import { DeckTransferProgress } from './DeckTransferProgress';
@@ -149,6 +150,7 @@ export function DeckManagerPage() {
   const selectedDeck = library?.decks.find((deck) => deck.id === selected);
   const activeDetail = detail?.id === selected && (!revision || detail.revision_id === revision) ? detail : null;
   const editingRevision = modal === 'revision';
+  const pageVisible = usePageVisible();
   const arenaDecks = sortDecks((native?.decks ?? []).filter((deck) => `${deck.name} ${deck.format_name} ${deckFormatLabel(deck.format_name)}`.toLowerCase().includes(query.toLowerCase())
     && (statusFilter === 'all' || arenaStatuses(deck.id).includes(statusFilter))), activeSort);
   const checkedDecks = (library?.decks ?? []).filter((deck) => checked.includes(deck.id));
@@ -166,6 +168,7 @@ export function DeckManagerPage() {
   }, [refresh]);
 
   useEffect(() => {
+    if (!pageVisible) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     async function readStatus() {
@@ -179,7 +182,7 @@ export function DeckManagerPage() {
     }
     void readStatus();
     return () => { controller.abort(); clearTimeout(timer); };
-  }, [refresh]);
+  }, [refresh, pageVisible]);
 
   useEffect(() => {
     if (!nativeJob) return;

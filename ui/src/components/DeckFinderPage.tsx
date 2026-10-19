@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Archive, Check, Copy, Dices, ExternalLink, FolderOpen, Info, Layers, Plus, RefreshCw, Search } from 'lucide-react';
 import { fetchDeckLibrary, type DeckCollection, type NativeDeckJob, importManagedDeck, addDeckToArena, fetchNativeDeckStatus, fetchNativeDeckJob, type NativeDeckStatus } from '../deckManagerApi';
+import { usePageVisible } from '../usePageVisible';
 import { DeckTransferProgress } from './DeckTransferProgress';
 import { DeckModal } from './DeckModal';
 import { exportedDeckName } from '../deckFinderName';
@@ -23,6 +24,8 @@ import { parseDeckFinderImport } from '../deckFinderImport';
 import { DeckFinderDeckList } from './DeckFinderDeckList';
 
 const JOB_POLL_MS = 700;
+/** Arena status refresh while a deck is open; Add to Arena re-checks everything when clicked. */
+const NATIVE_STATUS_MS = 10_000;
 const JOB_TIMEOUT_MS = 120_000;
 
 const SITE_SUBTITLES: Record<string, string> = {
@@ -131,11 +134,19 @@ export function DeckFinderPage() {
   const [pickingCollection, setPickingCollection] = useState<HTMLElement | null>(null);
   const [collectionQuery, setCollectionQuery] = useState('');
   const [transferProgress, setTransferProgress] = useState<NativeDeckJob['progress']>();
+  const collectionsLoaded = useRef(false);
   useEffect(() => {
+    // The whole saved library comes back with the collections, so it is only
+    // read once someone opens the collection picker.
+    if (!pickingCollection || collectionsLoaded.current) return;
     const controller = new AbortController();
-    fetchDeckLibrary(controller.signal).then((library) => { if (!controller.signal.aborted) setCollections(library.collections ?? []); }).catch(() => {});
+    fetchDeckLibrary(controller.signal).then((library) => {
+      if (controller.signal.aborted) return;
+      collectionsLoaded.current = true;
+      setCollections(library.collections ?? []);
+    }).catch(() => {});
     return () => controller.abort();
-  }, []);
+  }, [pickingCollection]);
   const [nativeStatus, setNativeStatus] = useState<NativeDeckStatus | null>(null);
   const [arenaJob, setArenaJob] = useState<{ id: string; source: string } | null>(null);
   const [arenaFeedback, setArenaFeedback] = useState<{ source: string; message: string; error: boolean } | null>(null);
@@ -148,7 +159,12 @@ export function DeckFinderPage() {
   // and "back to results" after a variants drill-down.
   const [lastFetch, setLastFetch] = useState<FetchArgs | null>(null);
 
+  const pageVisible = usePageVisible();
+  const showingDeck = selectedDeck !== null;
   useEffect(() => {
+    // Arena's status only gates the Add to Arena button, so it is read while a
+    // deck is open in a visible tab, and again at once when either returns.
+    if (!pageVisible || !showingDeck) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     async function poll() {
@@ -156,11 +172,11 @@ export function DeckFinderPage() {
         const status = await fetchNativeDeckStatus(controller.signal);
         if (!controller.signal.aborted) setNativeStatus(status);
       } catch { /* Provider browsing and clipboard export remain available. */ }
-      if (!controller.signal.aborted) timer = setTimeout(() => void poll(), 5000);
+      if (!controller.signal.aborted) timer = setTimeout(() => void poll(), NATIVE_STATUS_MS);
     }
     void poll();
     return () => { controller.abort(); clearTimeout(timer); };
-  }, [nativeRefresh]);
+  }, [nativeRefresh, pageVisible, showingDeck]);
 
   useEffect(() => {
     if (!arenaJob) return;

@@ -258,6 +258,27 @@ it('adds a previously saved deck using the same library entry and selected colle
   expect(await screen.findByRole('progressbar')).toHaveAttribute('value', '0');
 });
 
+it('reads Deck Manager only once a deck is open, and pauses while the tab is hidden', async () => {
+  render(<DeckFinderPage />);
+  await chooseCreator();
+  expect(fetchNativeDeckStatus).not.toHaveBeenCalled();
+  expect(fetchDeckLibrary).not.toHaveBeenCalled();
+  fireEvent.click(await screen.findByRole('button', { name: deck.name }));
+  await waitFor(() => expect(fetchNativeDeckStatus).toHaveBeenCalledTimes(1));
+  expect(fetchDeckLibrary).not.toHaveBeenCalled();
+
+  const visibility = vi.spyOn(document, 'visibilityState', 'get');
+  try {
+    visibility.mockReturnValue('hidden');
+    act(() => { document.dispatchEvent(new Event('visibilitychange')); });
+    visibility.mockReturnValue('visible');
+    act(() => { document.dispatchEvent(new Event('visibilitychange')); });
+    await waitFor(() => expect(fetchNativeDeckStatus).toHaveBeenCalledTimes(2));
+  } finally {
+    visibility.mockRestore();
+  }
+});
+
 it('searches collections in the save picker', async () => {
   vi.mocked(fetchDeckLibrary).mockResolvedValue({ collections: [{ id: 'green', name: 'Green' }, { id: 'brawl', name: 'Brawl decks' }], decks: [], capabilities: { arena_transfers: false, native_section: false, capacity: null, message: '' } });
   render(<DeckFinderPage />);

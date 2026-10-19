@@ -323,6 +323,11 @@ Primary code paths:
   retaining separate Deck/Sideboard/Commander/Companion sections; clipboard
   export uses the original text. Unrecognized imports fall back to raw text.
   The Deck Finder route skips the Overview snapshot request in `ui/src/App.tsx`.
+  Deck Finder reads Arena status (`/api/deck-manager/native`) only while a deck is
+  open and the tab is visible (`usePageVisible`), and the saved library only when
+  the collection picker first opens. Dashboard pollers skip hidden tabs.
+  `native_deck_bridge.availability()` locates Frida with `find_spec` and must not
+  import it; only an attach loads its native library.
 - `src/mtga_deck_downloader/providers/youtube.py` + `scrapers/youtube.py` /
   `youtube_decklist.py`: YouTube creator decks from the latest 15 Videos-tab
   entries sorted by Latest. Use keyless filtered player metadata, three worker
