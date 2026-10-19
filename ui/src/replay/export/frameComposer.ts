@@ -9,7 +9,7 @@
 import { formatCardName } from '../../format';
 import type { LogItem, LogPart } from '../logText';
 import { formatClock } from '../logText';
-import { arrowShape } from '../scene/arrows';
+import { sceneArrowShape } from '../scene/arrows';
 import type { LabelTone } from '../scene/labels';
 import { stackCardWidth } from '../scene/stackView';
 
@@ -78,6 +78,10 @@ export interface FrameArrow {
   core: string;
   /** A player target: draw the reticle. */
   reticle: boolean;
+  /** Its reverse is drawn too: keep to its own lane (scene/arrows.ts). */
+  paired?: boolean;
+  /** Aims at a card: the head stops short of the damage number. */
+  atCard?: boolean;
 }
 
 export interface FrameCaption {
@@ -475,7 +479,7 @@ function drawArrows(ctx: CanvasRenderingContext2D, layout: FrameLayout, arrows: 
     const from = resolveEnd(arrow.from, rects);
     const to = resolveEnd(arrow.to, rects);
     if (!from || !to) continue;
-    const shape = arrowShape(Math.round(from.x), Math.round(from.y), Math.round(to.x), Math.round(to.y));
+    const shape = sceneArrowShape(Math.round(from.x), Math.round(from.y), Math.round(to.x), Math.round(to.y), arrow);
     const path = new Path2D(shape.d);
     ctx.globalAlpha = 0.35;
     ctx.strokeStyle = arrow.glow;
@@ -755,9 +759,10 @@ export function composeFrame(ctx: CanvasRenderingContext2D, layout: FrameLayout,
   } catch {
     // A lost context leaves the background.
   }
-  drawLabels(ctx, layout, input.labels);
   const rects = drawStack(ctx, layout, input.stack, input.colors);
   drawArrows(ctx, layout, input.arrows, rects);
+  // Labels over the arrows, as on the live table: numbers stay readable.
+  drawLabels(ctx, layout, input.labels);
   if (input.ending) drawEnding(ctx, layout, input.ending);
   drawHud(ctx, layout, input.hud, input.colors);
   drawCaption(ctx, layout, input.caption, input.colors);

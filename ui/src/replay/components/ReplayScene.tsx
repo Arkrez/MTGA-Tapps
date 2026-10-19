@@ -344,13 +344,7 @@ function ReplaySceneImpl({
       ) : (
         <WebGLNotice />
       )}
-      <div className="replay-labels" ref={labelRoot} aria-hidden="true">
-        {labels.map((label) => (
-          <span key={label.id} className={`replay-label replay-label-${label.tone}${label.emphasis ? ' replay-label-emphasis' : ''}`}>
-            {label.text}
-          </span>
-        ))}
-      </div>
+      {/* Arrows go under the labels, so a damage number always reads over them. */}
       <svg className={`replay-arrows${snap ? ' replay-arrows-snap' : ''}`} aria-hidden="true">
         <defs>
           <filter id="replay-arrow-blur" x="-20%" y="-20%" width="140%" height="140%">
@@ -378,6 +372,13 @@ function ReplaySceneImpl({
           })}
         </g>
       </svg>
+      <div className="replay-labels" ref={labelRoot} aria-hidden="true">
+        {labels.map((label) => (
+          <span key={label.id} className={`replay-label replay-label-${label.tone}${label.emphasis ? ' replay-label-emphasis' : ''}`}>
+            {label.text}
+          </span>
+        ))}
+      </div>
       {zoomLevel > 1 ? (
         <button type="button" className="replay-zoom-pill" onClick={() => zoom.reset()} title="Show the whole table (0)">
           {zoomLevel.toFixed(1)}× · Reset zoom

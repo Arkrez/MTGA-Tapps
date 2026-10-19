@@ -115,7 +115,7 @@ export function buildFrameInput(
     const to = endOf(arrow.to);
     if (!from || !to) continue;
     const colors = arrow.seat === playerSeat ? neon.player : neon.opponent;
-    arrows.push({ from, to, glow: colors.glow, core: colors.core, reticle: arrow.to.kind === 'seat' });
+    arrows.push({ from, to, glow: colors.glow, core: colors.core, reticle: arrow.to.kind === 'seat', paired: arrow.paired, atCard: arrow.to.kind === 'obj' });
   }
 
   const event = stream.events[clock.snapshot.index];

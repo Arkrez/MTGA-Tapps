@@ -5,7 +5,7 @@ import { layoutBoard } from '../layout';
 import { SLEEVE_COLORS } from '../prefs';
 import { buildTimeline, stateAt } from '../reducer';
 import type { ReplayEvent } from '../types';
-import { arrowBend, arrowControlPoint, arrowShape, neonColors, sceneArrows, seatAnchor, sleeveNeon } from './arrows';
+import { arrowBend, arrowControlPoint, arrowShape, neonColors, sceneArrowShape, sceneArrows, seatAnchor, sleeveNeon } from './arrows';
 import { stackExit, stackView } from './stackView';
 
 const stream = makeSampleStream();
@@ -78,6 +78,25 @@ describe('scene arrows', () => {
     expect(mine.y).toBeLessThan(-layout.table.depth / 2);
     expect(theirs.y).toBe(-mine.y);
   });
+
+  it('pairs the two arrows of creatures that damaged each other, so each keeps its own lane', () => {
+    const b = new StreamBuilder();
+    b.add('game_start', { seats_hand_sizes: { 1: 0, 2: 0 }, library_sizes: { 1: 40, 2: 40 } });
+    b.move('p1', 'a1', 'limbo', 'battlefield', 1, 'put');
+    b.move('o1', 'a2', 'limbo', 'battlefield', 2, 'put');
+    b.add('damage', { source: 'p1', target_obj: 'o1', target_seat: null, amount: 1, combat: false });
+    b.add('damage', { source: 'o1', target_obj: 'p1', target_seat: null, amount: 1, combat: false });
+    const built = b.build({
+      a1: card('Simulacrum Shaper', 'Creature', { power: '2', toughness: '2' }),
+      a2: card('Freya Crescent', 'Creature', { power: '1', toughness: '1' }),
+    }, { playerSeat: 1 });
+    const state = buildTimeline(built).final;
+    const arrows = sceneArrows(state, layoutBoard(state, { ...OPTS, playerSeat: 1 }));
+    expect(arrows.map((arrow) => [arrow.id, arrow.seat, arrow.paired])).toEqual([
+      ['effect:o1', 1, true],
+      ['effect:p1', 2, true],
+    ]);
+  });
 });
 
 describe('arrow colors', () => {
@@ -114,6 +133,29 @@ describe('arrow geometry', () => {
   it('bends short arrows more than long ones', () => {
     expect(arrowBend(60)).toBeGreaterThan(arrowBend(400));
     expect(arrowBend(400)).toBeGreaterThan(arrowBend(900) - 1e-9);
+  });
+
+  it('puts an arrow and its reverse in separate lanes, bowing apart', () => {
+    const down = sceneArrowShape(300, 100, 300, 500, { paired: true });
+    const up = sceneArrowShape(300, 500, 300, 100, { paired: true });
+    const start = (d: string) => d.split(/[MQ ]+/).filter(Boolean).map(Number);
+    const [dsx, , dcx] = start(down.d);
+    const [usx, , ucx] = start(up.d);
+    // Ends sit on opposite sides of the chord, and the curves bow away from each other.
+    expect(Math.sign(dsx - 300)).toBe(-Math.sign(usx - 300));
+    expect(Math.sign(dcx - 300)).toBe(Math.sign(dsx - 300));
+    expect(Math.sign(ucx - 300)).toBe(Math.sign(usx - 300));
+    expect(Math.abs(dcx - ucx)).toBeGreaterThan(100);
+  });
+
+  it("stops an arrow at a card short of the card's centre, where the damage number sits", () => {
+    const tip = (head: string) => head.split(' ')[0].split(',').map(Number);
+    const [, ty] = tip(sceneArrowShape(300, 100, 300, 500, { atCard: true }).head);
+    expect(500 - ty).toBeGreaterThanOrEqual(45);
+    const [tx] = tip(sceneArrowShape(100, 300, 500, 300, { atCard: true }).head);
+    expect(500 - tx).toBeGreaterThanOrEqual(50);
+    // A player target keeps its tip on the reticle.
+    expect(tip(sceneArrowShape(300, 100, 300, 500, {}).head)).toEqual([300, 500]);
   });
 
   it('ends the curve at the arrowhead base and puts the tip on the target', () => {

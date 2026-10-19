@@ -31,6 +31,23 @@ export interface SceneArrow {
   /** Acting seat: picks the sleeve color. */
   seat: number;
   tone: ArrowTone;
+  /**
+   * Another arrow joins the same two ends the other way (two creatures that
+   * damaged each other): the pair bows to opposite sides in separate lanes.
+   */
+  paired?: boolean;
+}
+
+function endKey(end: ArrowEnd): string {
+  return end.kind === 'obj' ? `o:${end.obj}` : end.kind === 'seat' ? `p:${end.seat}` : `s:${end.stackId}`;
+}
+
+/** Flags every arrow whose reverse (same ends, swapped) is also drawn. */
+function markPairs(arrows: SceneArrow[]): void {
+  const keys = new Set(arrows.map((arrow) => `${endKey(arrow.from)}>${endKey(arrow.to)}`));
+  for (const arrow of arrows) {
+    if (keys.has(`${endKey(arrow.to)}>${endKey(arrow.from)}`)) arrow.paired = true;
+  }
 }
 
 /** Combat damage (and a death from it) already has its attack and block arrows. */
@@ -151,6 +168,7 @@ export function sceneArrows(state: BoardState, layout: Layout): SceneArrow[] {
       });
     }
   }
+  markPairs(arrows);
   return arrows;
 }
 
@@ -224,15 +242,17 @@ export interface Point {
  * midpoint pushed sideways by `bend` × the chord length, always toward the
  * top of the screen (or to the left for a vertical chord, away from the stack
  * preview on the right edge) so arrows arc over the board instead of cutting
- * straight across it.
+ * straight across it. With `ownSide`, the side follows the direction instead.
  */
-export function arrowControlPoint(sx: number, sy: number, tx: number, ty: number, bend: number, out: Point): Point {
+export function arrowControlPoint(sx: number, sy: number, tx: number, ty: number, bend: number, out: Point, ownSide = false): Point {
   const dx = tx - sx;
   const dy = ty - sy;
   const length = Math.hypot(dx, dy);
   let nx = length ? dy / length : 0;
   let ny = length ? -dx / length : -1;
-  if (ny > 0 || (ny === 0 && nx > 0)) {
+  // `ownSide` keeps the side the direction gives, so an arrow and its reverse
+  // bow apart instead of sharing one curve.
+  if (!ownSide && (ny > 0 || (ny === 0 && nx > 0))) {
     nx = -nx;
     ny = -ny;
   }
@@ -260,9 +280,9 @@ const control: Point = { x: 0, y: 0 };
  * The head points along the curve's tangent at the target; the curve stops
  * at the head's base so the stroke never pokes through the tip.
  */
-export function arrowShape(sx: number, sy: number, tx: number, ty: number, headLength = 16): ArrowShape {
+export function arrowShape(sx: number, sy: number, tx: number, ty: number, headLength = 16, ownSide = false): ArrowShape {
   const length = Math.hypot(tx - sx, ty - sy);
-  arrowControlPoint(sx, sy, tx, ty, arrowBend(length), control);
+  arrowControlPoint(sx, sy, tx, ty, arrowBend(length), control, ownSide);
   let ux = tx - control.x;
   let uy = ty - control.y;
   const tangent = Math.hypot(ux, uy) || 1;
@@ -277,4 +297,46 @@ export function arrowShape(sx: number, sy: number, tx: number, ty: number, headL
     d: `M${r(sx)} ${r(sy)} Q${r(control.x)} ${r(control.y)} ${r(bx)} ${r(by)}`,
     head: `${r(tx)},${r(ty)} ${r(bx - uy * half)},${r(by + ux * half)} ${r(bx + uy * half)},${r(by - ux * half)}`,
   };
+}
+
+/** How far apart (CSS pixels, each side of the chord) a paired arrow's ends sit. */
+const PAIR_OFFSET = 14;
+/**
+ * Half-extents of the area around a card's centre the tip stays out of: the
+ * damage pill sits just above the centre and a removal chip just below.
+ */
+const CLEAR_X = 56;
+const CLEAR_Y = 50;
+
+/**
+ * Curve and arrowhead for one scene arrow between two screen points. A paired
+ * arrow moves to its own lane (ends shifted to its side of the chord, bowing
+ * that way). An arrow at a card stops short of the card's centre, so its head
+ * lands beside the damage number instead of over it.
+ */
+export function sceneArrowShape(
+  sx: number,
+  sy: number,
+  tx: number,
+  ty: number,
+  { paired = false, atCard = false }: { paired?: boolean; atCard?: boolean },
+): ArrowShape {
+  const length = Math.hypot(tx - sx, ty - sy);
+  if (!length) return arrowShape(sx, sy, tx, ty);
+  const ux = (tx - sx) / length;
+  const uy = (ty - sy) / length;
+  if (paired) {
+    // The direction's own normal: the reverse arrow's points the other way.
+    sx += uy * PAIR_OFFSET;
+    sy -= ux * PAIR_OFFSET;
+    tx += uy * PAIR_OFFSET;
+    ty -= ux * PAIR_OFFSET;
+  }
+  if (atCard) {
+    const clear = 1 / Math.hypot(ux / CLEAR_X, uy / CLEAR_Y);
+    const back = Math.min(clear, length * 0.35);
+    tx -= ux * back;
+    ty -= uy * back;
+  }
+  return arrowShape(Math.round(sx), Math.round(sy), Math.round(tx), Math.round(ty), 16, paired);
 }

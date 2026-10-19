@@ -7,6 +7,9 @@
 - Export video no longer fails with "decoderConfig is null" in browsers whose
   H.264 encoder leaves out the stream description (seen in Firefox on Windows);
   such browsers now export VP9 in the MP4 instead.
+- When two creatures damage each other (a fight), each arrow keeps its own lane in
+  its player's color, and arrows stop beside a card's damage number instead of
+  covering it.
 - Every interaction shows on the table while its action lasts. A spell or ability
   that resolved stays in the stack preview, and arrows run from it (or from the
   permanent that acted) to everything it hit.
