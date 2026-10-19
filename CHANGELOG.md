@@ -4,6 +4,9 @@
 
 ### Replay
 
+- Export video no longer fails with "decoderConfig is null" in browsers whose
+  H.264 encoder leaves out the stream description (seen in Firefox on Windows);
+  such browsers now export VP9 in the MP4 instead.
 - Every interaction shows on the table while its action lasts. A spell or ability
   that resolved stays in the stack preview, and arrows run from it (or from the
   permanent that acted) to everything it hit.
@@ -21,9 +24,6 @@
 - Multiversal Passage shows the basic land type chosen for it: a chip in that land's
   color in the replay, and "played [Multiversal Passage (Land)] as a Mountain" in
   the tracker log.
-- Export video no longer fails with "decoderConfig is null" in browsers whose
-  H.264 encoder leaves out the stream description (seen in Firefox on Windows);
-  such browsers now export VP9 in the MP4 instead.
 
 ### Live Scoreboard
 
@@ -34,6 +34,8 @@
 
 - YouTube: complete lists are found even when a creator omits the Deck/Decklist
   heading.
+- TCGPlayer: creator decks (such as Arne Huschenbeth's) load again; TCGPlayer
+  retired the listing they came from, which failed with a 404.
 
 ## 0.7.0
 
