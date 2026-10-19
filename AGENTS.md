@@ -144,7 +144,8 @@ Primary code paths:
   and moves carry `by` (Arena's affector root) for recorded games.
 - `ui/src/replay/`: the Replay page — pure reducer/layout/playback-clock/image-queue/prefs
   modules with tests, `export/` (pure video plan, Canvas 2D frame composer, WebCodecs +
-  mp4-muxer encoder for the in-browser MP4 export), and `components/` holding the `@react-three/fiber` scene (lazy-loaded
+  mp4-muxer encoder for the in-browser MP4 export; each codec is probed with one frame and
+  H.264 without a reported `decoderConfig` is skipped for VP9, whose config is filled in), and `components/` holding the `@react-three/fiber` scene (lazy-loaded
   route `#/replay/<id>`, list at `#/replay`). Teal `--replay` is reserved for replay
   affordances; everything replay-related carries `replay-wide-only` and is hidden below
   900 px.
