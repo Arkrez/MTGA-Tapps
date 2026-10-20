@@ -437,6 +437,11 @@ UI changes require vitest, tsc, lint, and a fresh `npm run build` (the dashboard
   run still belongs to the Python interpreter; use `build_macos_app.sh --fast`
   when testing current source with its native app identity. The fast build is
   for local iteration only and must not be used for a release.
+- `scripts/refresh_macos_app.sh` (`--pull`, `--fast`, `--no-launch`) is the local
+  "run my latest code" path: Python 3.12 build env in `build/venv-py312`, reuses the
+  installed overlay when cargo is missing, quits the running app (only after the build
+  succeeds), keeps the replaced app in `build/previous-app/`, relaunches and waits for
+  the dashboard. Never for releases.
 - The macOS BUNDLE and Windows folder each ship one tracker executable; Deck Finder's
   terminal UI is its `--deck-finder` mode. After a build, verify the tracker executable,
   integrated Deck Finder provider list, and terminal mode. Do not expect or add a second
