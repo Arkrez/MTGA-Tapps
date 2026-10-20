@@ -870,7 +870,8 @@ def restore_backup(
 #: Tables the merge never touches: this computer's live row and diagnostics,
 #: and SQLite's own bookkeeping.
 MERGE_SKIP_TABLES = {"live_status", "raw_game_payloads", "schema_migrations", "sqlite_sequence", "cards", "managed_deck_transfers",
-                     "managed_decks", "managed_deck_revisions", "managed_deck_cards", "managed_deck_bindings", "managed_deck_collections"}
+                     "managed_decks", "managed_deck_revisions", "managed_deck_cards", "managed_deck_bindings", "managed_deck_collections",
+                     "drafts", "draft_picks"}
 
 
 def _columns(conn: sqlite3.Connection, schema: str, table: str) -> List[Tuple[str, bool]]:
@@ -961,6 +962,17 @@ def merge_snapshot_into(conn: sqlite3.Connection, snapshot_path: Path) -> Dict[s
             else:
                 continue
             copy(table, where)
+        # Drafts are not tied to games: union them by draft id, keeping this computer's rows.
+        for table in ("drafts", "draft_picks"):
+            if conn.execute("SELECT 1 FROM src.sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone():
+                from .draft_capture import ensure_draft_schema
+
+                ensure_draft_schema(conn)
+                names = [name for name, _ in _columns(conn, "src", table)]
+                counts[table] = conn.execute(
+                    f"INSERT OR IGNORE INTO main.{table} ({', '.join(names)}) "
+                    f"SELECT {', '.join(names)} FROM src.{table}"
+                ).rowcount
         from .deck_manager import merge_library
 
         counts.update(merge_library(conn))

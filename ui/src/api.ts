@@ -1,3 +1,4 @@
+import type { DraftListRow, DraftStream } from './replay/draft/types';
 import type { ReplayAvailability, ReplayStream } from './replay/types';
 
 export type { ReplayAvailability, ReplayStream } from './replay/types';
@@ -1212,6 +1213,39 @@ export async function fetchReplay(gameId: string, signal?: AbortSignal): Promise
     throw new Error(`Dashboard API returned ${response.status}`);
   }
   return response.json() as Promise<ReplayStream>;
+}
+
+export async function fetchDrafts(signal?: AbortSignal): Promise<DraftListRow[]> {
+  const response = await fetch('/api/drafts', { signal });
+  if (!response.ok) {
+    throw new Error(`Drafts API returned ${response.status}`);
+  }
+  const body = (await response.json()) as { drafts?: unknown };
+  return Array.isArray(body.drafts) ? (body.drafts as DraftListRow[]) : [];
+}
+
+export async function fetchDraftReplay(draftId: string, signal?: AbortSignal): Promise<DraftStream> {
+  const params = new URLSearchParams({ id: draftId });
+  const response = await fetch(`/api/draft?${params.toString()}`, { signal });
+  if (!response.ok) {
+    throw new Error(response.status === 404 ? `No recorded draft for id: ${draftId}` : `Dashboard API returned ${response.status}`);
+  }
+  return response.json() as Promise<DraftStream>;
+}
+
+export interface DraftImportResult {
+  drafts: number;
+  logs: string[];
+}
+
+/** Rescans Arena's current and previous logs for drafts the tracker has not recorded. */
+export async function importDraftsFromLog(signal?: AbortSignal): Promise<DraftImportResult> {
+  const response = await fetch('/api/drafts/import-log', { method: 'POST', signal });
+  const body = (await response.json().catch(() => ({}))) as Partial<DraftImportResult> & { error?: string };
+  if (!response.ok) {
+    throw new Error(body.error ?? `Draft import failed (HTTP ${response.status})`);
+  }
+  return { drafts: body.drafts ?? 0, logs: body.logs ?? [] };
 }
 
 function appendDetailFilters(params: URLSearchParams, filters: SnapshotFilters): void {

@@ -112,4 +112,5 @@ export const settingsNavItems: AppNavItem[] = [
 export const replayNavItems: AppNavItem[] = [
   { id: 'back-to-dashboard', label: '← Back to dashboard', route: '#overview' },
   { id: 'replay-games', label: 'Recent games' },
+  { id: 'replay-drafts', label: 'Drafts' },
 ];

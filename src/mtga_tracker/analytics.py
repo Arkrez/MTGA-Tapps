@@ -734,6 +734,7 @@ class AnalyticsStore:
             (33, AnalyticsStore._migrate_v33_managed_decks),
             (34, AnalyticsStore._migrate_v34_native_deck_transfers),
             (35, AnalyticsStore._migrate_v35_deck_collections),
+            (36, AnalyticsStore._migrate_v36_drafts),
         )
         ran: list = []
         for version, migrate in migrations:
@@ -1512,6 +1513,13 @@ class AnalyticsStore:
                          "REFERENCES managed_deck_collections(id)")
         conn.execute("CREATE INDEX IF NOT EXISTS managed_decks_collection "
                      "ON managed_decks(collection_id)")
+
+    @staticmethod
+    def _migrate_v36_drafts(conn: sqlite3.Connection) -> None:
+        """Draft Replay: one row per draft plus every pack seen and pick made."""
+        from .draft_capture import ensure_draft_schema
+
+        ensure_draft_schema(conn)
 
     @staticmethod
     def _migrate_v15_purge_welcome_deck_duels(conn: sqlite3.Connection) -> None:
