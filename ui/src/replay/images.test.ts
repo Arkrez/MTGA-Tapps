@@ -7,6 +7,7 @@ import {
   TokenBucket,
   cardImageCandidates,
   generatedTokenFace,
+  prewarmCardImages,
   resolveCardImage,
   resolvedImageCache,
   scryfallResolver,
@@ -325,5 +326,59 @@ describe('generatedTokenFace', () => {
     const token = card('Saproling', 'Creature', { is_token: true, power: '1', toughness: '1' });
     expect(generatedTokenFace(token)).toBe(generatedTokenFace({ ...token }));
     expect(generatedTokenFace(token).width).toBe(488);
+  });
+});
+
+describe('prewarmCardImages', () => {
+  const cdn = (name: string) => `https://cards.scryfall.io/normal/front/x/${name}.jpg`;
+
+  function collectionResponse(identifiers: Array<{ name: string }>, unknown: string[] = []): Response {
+    const data = identifiers
+      .filter(({ name }) => !unknown.includes(name))
+      .map(({ name }) => ({ name: name.replace(/\b\w/g, (c) => c.toUpperCase()), image_uris: { normal: cdn(name) } }));
+    return new Response(JSON.stringify({ data, not_found: unknown.map((name) => ({ name })) }), { status: 200 });
+  }
+
+  it('looks cards up by name 75 at a time and fills the shared cache', async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const { identifiers } = JSON.parse(String(init?.body)) as { identifiers: Array<{ name: string }> };
+      return collectionResponse(identifiers, ['gone card']);
+    });
+    const entries = Array.from({ length: 80 }, (_, n) => ({ key: `k${n}`, card: card(`Card ${n}`, 'Creature') }));
+    entries.push({ key: 'dup', card: card('Card 3', 'Creature') });
+    entries.push({ key: 'gone', card: card('Gone Card', 'Creature') });
+    entries.push({ key: 'token', card: card('Treasure', 'Artifact', { is_token: true }) });
+    const missing = await prewarmCardImages(entries, {
+      fetch: fetchMock as unknown as typeof fetch,
+      limiter: new TokenBucket({ burst: 10 }),
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.scryfall.com/cards/collection');
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).identifiers).toHaveLength(75);
+    expect(resolvedImageCache.get('k3')).toBe(cdn('card 3'));
+    expect(resolvedImageCache.get('dup')).toBe(cdn('card 3'));
+    expect(resolvedImageCache.get('token')).toBeNull();
+    expect([...missing]).toEqual(['gone']);
+  });
+
+  it('retries a failed request and skips cards already cached', async () => {
+    resolvedImageCache.set('cached', cdn('old'));
+    let calls = 0;
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      calls += 1;
+      if (calls === 1) return new Response('busy', { status: 429 });
+      const { identifiers } = JSON.parse(String(init?.body)) as { identifiers: Array<{ name: string }> };
+      expect(identifiers).toEqual([{ name: 'fresh' }]);
+      return collectionResponse(identifiers);
+    });
+    await prewarmCardImages(
+      [
+        { key: 'cached', card: card('Old', 'Creature') },
+        { key: 'fresh', card: card('Fresh', 'Creature') },
+      ],
+      { fetch: fetchMock as unknown as typeof fetch, limiter: new TokenBucket({ burst: 10 }), backoffMs: 1 },
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(resolvedImageCache.get('fresh')).toBe(cdn('fresh'));
   });
 });

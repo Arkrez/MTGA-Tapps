@@ -1,6 +1,7 @@
 """Draft Replay capture, storage and API (docs/DRAFT_REPLAY.md)."""
 
 import json
+from datetime import datetime, timezone
 
 import pytest
 
@@ -246,3 +247,120 @@ def test_backup_merge_unions_drafts_by_id(tmp_path):
         assert result["drafts"] == 1 and result["draft_picks"] == 2
         assert local.execute("SELECT COUNT(*) FROM drafts").fetchone()[0] == 2
         assert merge_snapshot_into(local, source_path)["drafts"] == 0
+
+
+def _set_deck(event, main, sideboard=(), name="Draft Deck"):
+    deck = {
+        "MainDeck": [{"cardId": c, "quantity": q} for c, q in main],
+        "Sideboard": [{"cardId": c, "quantity": q} for c, q in sideboard],
+        "CommandZone": [],
+        "Companions": [],
+    }
+    return _request("EventSetDeckV3", {"EventName": event, "Summary": {"Name": name}, "Deck": deck})
+
+
+def test_submitted_deck_attaches_to_its_draft_and_the_latest_one_wins(conn, tmp_path, monkeypatch):
+    log = PLAYER_LOG + [
+        _set_deck(PLAYER_EVENT, [(10, 1), (12, 1), (81, 15)], [(20, 1)]),
+        "[UnityCrossThreadLogger]10/19/2026 9:30:00 AM\n<== Unrelated(x)\n{}",
+        _set_deck(PLAYER_EVENT, [(10, 1), (20, 1), (81, 15)], [(12, 1)], name="Second Try"),
+        _set_deck("Ladder", [(99, 60)]),
+    ]
+    _feed(DraftCapture(conn), log)
+    deck = json.loads(conn.execute("SELECT deck_json FROM drafts WHERE id = 'd-1'").fetchone()[0])
+    assert deck["name"] == "Second Try"
+    assert deck["main"] == [[10, 1], [20, 1], [81, 15]] and deck["sideboard"] == [[12, 1]]
+
+    # A rescan replays the older submission after the newer one is stored: it must not win.
+    path = tmp_path / "Player.log"
+    path.write_text("\n".join(log[:-3]) + "\n")
+    capture_logs(conn, [path])
+    assert (
+        json.loads(conn.execute("SELECT deck_json FROM drafts").fetchone()[0])["name"]
+        == "Second Try"
+    )
+
+    conn.commit()
+    monkeypatch.setattr(
+        draft_api,
+        "_cards",
+        type("Cards", (), {"draft_card_facts": lambda self, ids: {}})(),
+    )
+    _, stream = draft_api.handle_get("/api/draft", {"id": ["d-1"]}, tmp_path / "tracker.sqlite3")
+    assert stream["deck"]["main"][2] == {"arena_id": 81, "quantity": 15}
+    assert "81" in stream["cards"]
+
+
+def test_stream_serves_drafts_recorded_before_the_deck_column(tmp_path, monkeypatch):
+    import sqlite3
+
+    db = tmp_path / "old.sqlite3"
+    old = sqlite3.connect(db)
+    old.execute(
+        "CREATE TABLE drafts (id TEXT PRIMARY KEY, kind TEXT, event_name TEXT,"
+        " course_id TEXT, started_at TEXT, updated_at TEXT, completed_at TEXT,"
+        " card_pool_json TEXT)"
+    )
+    old.execute(
+        "CREATE TABLE draft_picks (draft_id TEXT, pack_number INTEGER,"
+        " pick_number INTEGER, pack_cards_json TEXT, picked_json TEXT, observed_at TEXT)"
+    )
+    old.execute("INSERT INTO drafts (id, kind) VALUES ('old', 'player')")
+    old.commit()
+    old.close()
+    monkeypatch.setattr(
+        draft_api, "_cards", type("Cards", (), {"draft_card_facts": lambda self, ids: {}})()
+    )
+    status, stream = draft_api.handle_get("/api/draft", {"id": ["old"]}, db)
+    assert status == 200 and stream["deck"] is None
+
+
+def test_draft_records_count_the_event_games_until_the_next_draft(conn, tmp_path, monkeypatch):
+    """Two runs of one event: each owns the games from its start to the next one's."""
+    for draft_id, started in (
+        ("first", "2026-10-19T05:00:00+00:00"),
+        ("second", "2026-10-19T09:00:00+00:00"),
+    ):
+        conn.execute(
+            "INSERT INTO drafts (id, kind, event_name, started_at) VALUES (?, 'player', ?, ?)",
+            (draft_id, PLAYER_EVENT, started),
+        )
+    conn.execute(
+        "INSERT INTO tracker_sessions (id, started_at) VALUES ('s', '2026-10-19T00:00:00')"
+    )
+    conn.execute(
+        "INSERT INTO matches (id, session_id, started_at, event_name) VALUES ('m', 's', '', ?)",
+        (PLAYER_EVENT,),
+    )
+    conn.execute(
+        "INSERT INTO matches (id, session_id, started_at, event_name) VALUES ('l', 's', '', 'Ladder')"
+    )
+
+    def local(iso):  # games store naive local time
+        moment = datetime.fromisoformat(iso).replace(tzinfo=timezone.utc).astimezone()
+        return moment.replace(tzinfo=None).isoformat()
+
+    games = [
+        ("g0", "m", local("2026-10-19T04:00:00"), "win"),  # before either draft: nobody's
+        ("g1", "m", local("2026-10-19T06:00:00"), "win"),
+        ("g2", "m", local("2026-10-19T07:00:00"), "loss"),
+        ("g3", "m", local("2026-10-19T10:00:00"), "loss"),
+        ("g4", "l", local("2026-10-19T10:30:00"), "win"),  # another event
+    ]
+    for game_id, match_id, started, outcome in games:
+        conn.execute(
+            "INSERT INTO games (id, session_id, match_id, game_number, started_at, outcome)"
+            " VALUES (?, 's', ?, 1, ?, ?)",
+            (game_id, match_id, started, outcome),
+        )
+    conn.commit()
+    monkeypatch.setattr(
+        draft_api, "_cards", type("Cards", (), {"draft_card_facts": lambda self, ids: {}})()
+    )
+    rows = {
+        r["id"]: r["record"] for r in draft_api.list_drafts(tmp_path / "tracker.sqlite3")["drafts"]
+    }
+    assert rows == {
+        "first": {"wins": 1, "losses": 1, "games": 2},
+        "second": {"wins": 0, "losses": 1, "games": 1},
+    }

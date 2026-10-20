@@ -6912,3 +6912,154 @@ a.sidebar-deck-finder {
   color: var(--muted);
   font-size: 0.82rem;
 }
+
+/* Replay list: Recent games as deck tiles (Deck Manager's tile, in replay teal). */
+.replay-deck-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.replay-deck-tile.deck-manager-tile {
+  height: auto;
+  min-height: 132px;
+  padding: 14px;
+}
+
+.replay-deck-tile.deck-manager-tile:hover,
+.replay-deck-tile.deck-manager-tile:focus-visible {
+  border-color: var(--replay);
+  background: color-mix(in srgb, var(--replay) 8%, var(--surface));
+}
+
+.replay-deck-tile small + small {
+  margin-top: 2px;
+}
+
+.replay-deck-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-bottom: 10px;
+}
+
+.replay-deck-heading h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.replay-deck-back {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-strong);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.replay-deck-back:hover,
+.replay-deck-back:focus-visible {
+  border-color: var(--replay);
+}
+
+/* Replay list: the last game played, first and large. */
+.replay-latest {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 16px;
+  padding: 14px 18px;
+  border: 1px solid color-mix(in srgb, var(--replay) 55%, var(--border));
+  border-radius: 12px;
+  background: linear-gradient(110deg, color-mix(in srgb, var(--replay) 14%, var(--surface)), var(--surface) 70%);
+}
+
+.replay-latest .deck-visual {
+  flex: 0 0 auto;
+  width: 132px;
+  height: 96px;
+}
+
+.replay-latest-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.replay-latest-eyebrow {
+  color: var(--replay);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.replay-latest h3 {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 2px 0 4px;
+  font-size: 1.2rem;
+}
+
+.replay-latest-opponent,
+.replay-latest-facts {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.replay-latest-opponent {
+  color: var(--text);
+}
+
+.replay-latest .replay-latest-watch {
+  flex: 0 0 auto;
+  padding: 10px 18px;
+  font-size: 0.95rem;
+}
+
+.replay-draft-tile-status {
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+}
+
+a.replay-deck-tile {
+  text-decoration: none;
+}
+
+/* Replay list: deck win rate, red (35%) through amber (50%) to green (65%). */
+.replay-winrate {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border: 1px solid color-mix(in srgb, var(--winrate-color) 70%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--winrate-color) 22%, var(--surface));
+  color: var(--text);
+  font-size: 0.75rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.replay-winrate-none {
+  --winrate-color: var(--muted);
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.replay-tile-record {
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+}
+

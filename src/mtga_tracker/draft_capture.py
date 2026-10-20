@@ -38,6 +38,7 @@ DRAFT_MARKERS = (
     "DraftCompleteDraft",
     "EventJoin",
     "EventGetCoursesV2",
+    "EventSetDeckV3",
 )
 
 _RESPONSE = re.compile(r"<==\s+(\w+)\(")
@@ -117,6 +118,10 @@ def ensure_draft_schema(conn) -> None:
                PRIMARY KEY (draft_id, pack_number, pick_number)
            )""")
     conn.execute("CREATE INDEX IF NOT EXISTS drafts_started ON drafts(started_at)")
+    # Migration 37: the deck last submitted to the draft's event.
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(drafts)")}
+    if "deck_json" not in columns:
+        conn.execute("ALTER TABLE drafts ADD COLUMN deck_json TEXT")
 
 
 class DraftCapture:
@@ -193,7 +198,55 @@ class DraftCapture:
             self._ensure_draft(draft_id, "player", self._player_event)
             self._set_picked(draft_id, pack, pick, _card_ids(request.get("GrpIds")))
             return draft_id
+        if name == "EventSetDeckV3":
+            return self._submitted_deck(request)
         return None
+
+    def _submitted_deck(self, request: Dict[str, Any]) -> Optional[str]:
+        """The deck built from a draft: Arena submits it to the draft's event
+        (again after every edit between matches, so the latest one wins)."""
+        event, deck = request.get("EventName"), request.get("Deck")
+        if not isinstance(event, str) or not isinstance(deck, dict):
+            return None
+        row = self.conn.execute(
+            """SELECT id, deck_json FROM drafts WHERE event_name = ?
+                   AND COALESCE(completed_at, started_at, '') <= COALESCE(?, '9999')
+               ORDER BY COALESCE(completed_at, started_at) DESC LIMIT 1""",
+            (event, self._last_time),
+        ).fetchone()
+        if row is None:
+            return None
+        draft_id, existing = row
+        if existing and self._last_time:
+            earlier = json.loads(existing).get("submitted_at")
+            if earlier and earlier > self._last_time:
+                return draft_id
+
+        def pile(name: str) -> List[List[int]]:
+            out = []
+            for card in deck.get(name) or []:
+                if isinstance(card, dict):
+                    ids = _card_ids([card.get("cardId")])
+                    quantity = card.get("quantity")
+                    if ids and isinstance(quantity, int) and quantity > 0:
+                        out.append([ids[0], quantity])
+            return out
+
+        summary = request.get("Summary") if isinstance(request.get("Summary"), dict) else {}
+        payload = {
+            "name": summary.get("Name"),
+            "main": pile("MainDeck"),
+            "sideboard": pile("Sideboard"),
+            "submitted_at": self._last_time,
+        }
+        if not payload["main"]:
+            return None
+        self.conn.execute(
+            "UPDATE drafts SET deck_json = ? WHERE id = ?", (json.dumps(payload), draft_id)
+        )
+        self.conn.commit()
+        self.touched.add(draft_id)
+        return draft_id
 
     # -- shapes ---------------------------------------------------------
 

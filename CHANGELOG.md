@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Replay
+
+- Card art loads much faster and no longer goes missing: cards are looked up
+  by name in a few batched requests instead of one or two rate-limited
+  lookups each (new sets have no Arena ids on Scryfall yet), and answers are
+  remembered for later visits.
+- **Recent games** on the Replay page is now a grid of deck tiles with art,
+  record and last-played date; open one to see that deck's games. Drafts are
+  tiles too (first pick's art, colors, picks, status).
+- The last game you played sits at the top of the Replay page with a
+  **Watch replay** button.
+- Deck and draft tiles show their win rate as a colored pill (red below 50%,
+  amber around it, green above). A draft's record counts the games of its
+  event from that draft until the next draft of the same event.
+
 ### Draft Replay
 
 - New: replay your drafts pick by pick from the Replay page. Each pick shows the
@@ -13,6 +28,15 @@
 - The tracker records Quick Draft, Premier, Traditional and Pick Two drafts as
   you play. **Find past drafts in Arena logs** recovers drafts from Arena's
   current and previous log.
+- Packs are ordered rarest first, and hovering a card for a moment shows a
+  larger copy, like Arena.
+- Cards that made your final deck are marked (In deck), the rest of the pool is
+  dimmed, and **Final deck** opens the deck you built in Deck Manager's layout.
+- 17lands win rates: each card shows its games-in-hand win rate with a
+  heat-map glow from red to green, relative to the rest of the set; cards
+  17lands has not rated yet are grey (toggle with **Win rates on/off**). The
+  tracker keeps the 17lands data in its data folder and refreshes it at most
+  daily, so win rates still show later and offline.
 - Replays now share a small step-playback framework (timeline, transport bar,
   shortcuts, replay kinds), so more replay types can be added the same way.
 

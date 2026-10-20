@@ -443,6 +443,102 @@ export async function resolveCardImage(
   return null;
 }
 
+/** Scryfall's `/cards/collection` takes at most 75 identifiers per request. */
+export const COLLECTION_BATCH = 75;
+const COLLECTION_URL = `${API_BASE}/collection`;
+const COLLECTION_RETRIES = 3;
+
+interface CollectionCard {
+  name?: string;
+  image_uris?: ScryfallImageUris;
+  card_faces?: Array<{ image_uris?: ScryfallImageUris }>;
+}
+
+async function waitForToken(limiter: TokenBucket): Promise<void> {
+  while (!limiter.take()) {
+    await new Promise((resolve) => setTimeout(resolve, limiter.waitMs()));
+  }
+}
+
+/**
+ * Resolves many cards' front images by name in a few `/cards/collection`
+ * requests (75 names each) instead of one or two rate-limited lookups per
+ * card, and stores every hit in `resolvedImageCache` under its key so the
+ * per-card path (`resolveCardImage`) finds it at once. New sets reach
+ * Scryfall before their Arena ids do, so a lookup by name is what usually
+ * succeeds. A failed request is retried with backoff. Returns the keys
+ * Scryfall answered "not found" for, so callers can skip asking again.
+ * Tokens, back faces and cards with a server-provided URL are left to the
+ * per-card path.
+ */
+export async function prewarmCardImages(
+  entries: Iterable<{ key: CardKey; card: ReplayCard }>,
+  opts: {
+    fetch?: typeof fetch;
+    limiter?: TokenBucket;
+    backoffMs?: number;
+    /** Called after each batch lands, so callers can show its art at once. */
+    onBatch?: () => void;
+    /**
+     * Size of the first batch. Scryfall answers in time proportional to the
+     * batch, so a small first batch holding the cards on screen (callers put
+     * them first) shows them in a fraction of the time.
+     */
+    firstBatch?: number;
+  } = {},
+): Promise<Set<CardKey>> {
+  const fetchImpl = opts.fetch ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
+  const limiter = opts.limiter ?? scryfallRateLimiter;
+  const backoffMs = opts.backoffMs ?? 500;
+  const keysByName = new Map<string, CardKey[]>();
+  for (const { key, card } of entries) {
+    if (resolvedImageCache.get(key) || card.is_token || card.back_face || card.image_url) continue;
+    const name = frontFaceName(card.name ?? '').trim();
+    if (!name || name === 'Unknown card' || name.startsWith('Card #')) continue;
+    const folded = name.toLowerCase();
+    keysByName.set(folded, [...(keysByName.get(folded) ?? []), key]);
+  }
+  const names = [...keysByName.keys()];
+  const missing = new Set<CardKey>();
+  const chunks: string[][] = [];
+  const first = Math.min(COLLECTION_BATCH, Math.max(1, opts.firstBatch ?? COLLECTION_BATCH));
+  if (names.length) chunks.push(names.slice(0, first));
+  for (let start = first; start < names.length; start += COLLECTION_BATCH) chunks.push(names.slice(start, start + COLLECTION_BATCH));
+  // Batches run side by side (each still takes a rate-limit token), so a
+  // draft's art arrives in about one round trip rather than three.
+  await Promise.all(chunks.map(async (chunk) => {
+    for (let attempt = 0; attempt < COLLECTION_RETRIES; attempt += 1) {
+      try {
+        await waitForToken(limiter);
+        const response = await fetchImpl(COLLECTION_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ identifiers: chunk.map((name) => ({ name })) }),
+        });
+        if (!response.ok) throw new Error(`Scryfall collection lookup failed (${response.status})`);
+        const body = (await response.json()) as { data?: CollectionCard[]; not_found?: Array<{ name?: string }> };
+        for (const card of body.data ?? []) {
+          const url = card.image_uris?.normal ?? card.card_faces?.[0]?.image_uris?.normal;
+          if (!url) continue;
+          for (const key of keysByName.get(frontFaceName(card.name ?? '').toLowerCase()) ?? []) {
+            resolvedImageCache.set(key, url);
+          }
+        }
+        for (const gone of body.not_found ?? []) {
+          for (const key of keysByName.get(String(gone.name ?? '').toLowerCase()) ?? []) missing.add(key);
+        }
+        opts.onBatch?.();
+        break;
+      } catch {
+        if (attempt < COLLECTION_RETRIES - 1) {
+          await new Promise((resolve) => setTimeout(resolve, backoffMs * 2 ** attempt));
+        }
+      }
+    }
+  }));
+  return missing;
+}
+
 const generatedFaces = new Map<string, HTMLCanvasElement>();
 
 /** Shared generated face (name, type, P/T) for cards with no image anywhere. */

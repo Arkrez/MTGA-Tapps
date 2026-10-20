@@ -38,12 +38,26 @@ export interface DraftInfo {
   completed_at: string | null;
 }
 
+export interface DraftDeckCard {
+  arena_id: number;
+  quantity: number;
+}
+
+export interface DraftDeck {
+  name: string | null;
+  submitted_at: string | null;
+  main: DraftDeckCard[];
+  sideboard: DraftDeckCard[];
+}
+
 export interface DraftStream {
   version: 1;
   draft: DraftInfo;
   picks: DraftPickRow[];
   /** Arena's final card pool (empty until the draft completes). */
   pool: number[];
+  /** The deck last submitted to the draft's event; null when none was seen. */
+  deck?: DraftDeck | null;
   /** Card facts keyed by grpId. */
   cards: Record<string, DraftCard>;
 }
@@ -60,5 +74,7 @@ export interface DraftListRow {
   packs: number;
   /** The pool's two most-picked colors (WUBRG). */
   colors: string;
+  /** Games played with the draft's deck: its event, from the draft until the next draft of that event. */
+  record?: { wins: number; losses: number; games: number };
   first_pick: { arena_id: number; name: string | null } | null;
 }

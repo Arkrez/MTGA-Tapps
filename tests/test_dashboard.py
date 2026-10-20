@@ -2801,9 +2801,13 @@ def test_all_games_returns_full_history_with_flags(tmp_path):
     assert rows["game-1"]["match_losses"] == 1
     assert "is_flood" in rows["game-1"] and "is_screw" in rows["game-1"]
     assert rows["game-1"]["cards_seen"] == 2
+    # One art tile per deck for the Replay page's deck tiles.
+    assert set(result["deck_visuals"]) == {row["deck_name"] for row in result["games"]}
+    assert result["deck_visuals"]["Boros Mouse"]["source"]
 
     filtered = all_games(db_path, since="2026-06-05")
     assert filtered["total"] == 0
+    assert filtered["deck_visuals"] == {}
 
 
 def test_game_detail_timeline_not_truncated_for_long_games(tmp_path):

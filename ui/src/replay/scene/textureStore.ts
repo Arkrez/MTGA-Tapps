@@ -22,6 +22,7 @@ import {
   cardImageCandidates,
   generatedTokenFace,
   isRateLimitedUrl,
+  prewarmCardImages,
   resolveCardImage,
   resolvedImageCache,
   scryfallRateLimiter,
@@ -65,6 +66,11 @@ export interface TextureStoreOptions {
   loadImage?: ImageLoader;
   maxConcurrent?: number;
   placeholderDelayMs?: number;
+  /**
+   * Look every card up in one batch by name before the per-card queue runs.
+   * Defaults to on unless a queue is injected (tests).
+   */
+  prewarm?: boolean;
 }
 
 export function loadDecodedImage(url: string): Promise<HTMLImageElement> {
@@ -105,6 +111,8 @@ export class TextureStore {
   private readonly loadImage: ImageLoader;
   private readonly maxConcurrent: number;
   private readonly placeholderDelay: number;
+  /** Settles once the batch lookup has filled the shared image cache. */
+  private readonly prewarmed: Promise<unknown>;
   private readonly faces = new Map<CardKey, FaceEntry>();
   private readonly generated = new Map<CardKey, Texture>();
   private readonly generatedUrls = new Map<CardKey, string | null>();
@@ -128,6 +136,9 @@ export class TextureStore {
     this.loadImage = opts.loadImage ?? loadDecodedImage;
     this.maxConcurrent = opts.maxConcurrent ?? MAX_CONCURRENT_IMAGES;
     this.placeholderDelay = opts.placeholderDelayMs ?? PLACEHOLDER_DELAY_MS;
+    this.prewarmed = (opts.prewarm ?? !opts.queue)
+      ? prewarmCardImages(Object.entries(cards).map(([key, card]) => ({ key, card }))).catch(() => undefined)
+      : Promise.resolve();
   }
 
   readonly subscribe = (listener: () => void): (() => void) => {
@@ -269,6 +280,8 @@ export class TextureStore {
     entry.status = 'loading';
     this.active += 1;
     try {
+      await this.prewarmed;
+      if (this.disposed) return;
       const url = await resolveCardImage(key, this.cards[key], this.queue, { priority: entry.priority });
       if (this.disposed) return;
       if (!url) {
