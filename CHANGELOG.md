@@ -27,8 +27,10 @@
 - Cards that made your final deck are marked (In deck), the rest of the pool is
   dimmed, and **Final deck** opens the deck you built in Deck Manager's layout.
 - 17lands win rates: each card shows its games-in-hand win rate with a
-  heat-map glow from red to green, relative to the rest of the set (toggle with
-  **Win rates on/off**).
+  heat-map glow from red to green, relative to the rest of the set; cards
+  17lands has not rated yet are grey (toggle with **Win rates on/off**). The
+  tracker keeps the 17lands data in its data folder and refreshes it at most
+  daily, so win rates still show later and offline.
 - Replays now share a small step-playback framework (timeline, transport bar,
   shortcuts, replay kinds), so more replay types can be added the same way.
 

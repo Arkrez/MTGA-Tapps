@@ -6266,6 +6266,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     {"Cache-Control": "no-store"},
                 )
                 return
+        if request_path == "/api/card-ratings":
+            from . import card_ratings
+
+            try:
+                status, body = card_ratings.handle_get(parse_qs(parsed.query), self.db_path)
+            except Exception as exc:  # noqa: BLE001 - report, never crash the server
+                status, body = 500, {"error": str(exc)}
+            _send_bytes(self, status, json.dumps(body).encode("utf-8"), "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            return
         if request_path in ("/api/drafts", "/api/draft"):
             from . import draft_api
 

@@ -283,7 +283,10 @@ columns. **Hide picks** lets you test yourself before revealing each pick.
 Packs are shown rarest first, and hovering a card for a moment shows a larger
 copy. Cards that made your final deck are marked, and **Final deck** opens the
 deck you built. With **Win rates on**, each card gets a 17lands games-in-hand
-win rate and a heat-map glow (red to green) relative to the rest of the set.
+win rate and a heat-map glow (red to green) relative to the rest of the set;
+cards 17lands has not rated yet are grey. The tracker saves the 17lands data in
+its data folder (refreshed at most daily), so win rates still show later and
+offline.
 Quick Draft, Premier, Traditional and Pick Two drafts are all supported.
 
 The tracker records drafts while it runs. For drafts made while it was not

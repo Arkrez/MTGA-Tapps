@@ -130,17 +130,23 @@ per-card queue. The next picks' images are preloaded; a failed download is
 retried once before the drawn frame. The game replay's `TextureStore` runs the
 same batch before its per-card queue.
 
-### 17lands win rates (`seventeenLands.ts`)
+### 17lands win rates (`card_ratings.py`, `seventeenLands.ts`)
 
-`https://www.17lands.com/card_ratings/data?expansion=&format=&start_date=` is
-public, CORS-enabled and keyed by `mtga_id`. The viewer reads GIH WR
-(`ever_drawn_win_rate`) from the draft's format plus Premier Draft (largest
-sample), for the main set and its Alchemy set (`Y26FRA`); the first non-null
-value per card wins. Answers are cached 12 h in localStorage. The heat map
-colors each card relative to the set: red two standard deviations below the
-mean, amber at it, green two above. Cards 17lands withholds (small samples) get
-no glow. **Win rates on/off** is remembered per browser; failures leave cards
-unrated.
+17lands publishes `https://www.17lands.com/card_ratings/data?expansion=&format=&start_date=`
+keyed by `mtga_id`. The tracker downloads it (`GET /api/card-ratings?expansions=&formats=`,
+up to four of each, formats whitelisted) and keeps each source as
+`card_ratings/<EXP>.<Format>.json` next to the analytics database, refreshed at
+most once a day. When the download fails, the last saved copy is served, so
+replays keep their numbers offline and later. Sources merge in priority order,
+first published rate wins: the draft's own format, then Premier Draft (largest
+sample), for the main set and its Alchemy set (`Y26FRA`).
+
+Only games-in-hand win rate (GIH WR, `ever_drawn_win_rate`) is shown. 17lands
+withholds it until a card has enough games (roughly 500). Such a card stays
+unrated, with a **grey** background, never another statistic in its place. The
+heat map colors rated cards relative to the set: red two standard deviations
+below the mean, amber at it, green two above. **Win rates on/off** is
+remembered per browser.
 
 ### Viewer
 

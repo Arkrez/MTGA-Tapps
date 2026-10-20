@@ -1,23 +1,21 @@
 /**
- * 17lands card ratings for the Draft Replay heat map. 17lands publishes
- * per-card draft statistics keyed by Arena id (`mtga_id`) and allows browser
- * requests. The viewer shows "games in hand" win rate (GIH WR,
- * `ever_drawn_win_rate`), the number drafters usually rank picks by.
+ * 17lands card ratings for the Draft Replay heat map. The tracker downloads
+ * 17lands' per-card data (keyed by Arena id), keeps it on disk next to its
+ * database and refreshes it at most daily (`GET /api/card-ratings`,
+ * src/mtga_tracker/card_ratings.py), so ratings work offline and later.
  *
- * Small samples come back null, so ratings merge several sources, first
- * non-null wins: the draft's own format, then Premier Draft (the largest
- * sample), for the base set and its Alchemy "Y" set. Answers are cached in
- * localStorage for 12 hours; a failed fetch just leaves cards unrated.
+ * Only games-in-hand win rate (GIH WR) is shown. Sources merge in priority
+ * order, first published rate wins: the draft's own format, then Premier
+ * Draft (the largest sample), for the base set and its Alchemy "Y" set.
+ * Cards 17lands has not rated yet stay unrated (grey), never substituted.
  */
 import { useEffect, useState } from 'react';
 import type { DraftInfo, DraftStream } from './types';
 
 export interface CardRating {
-  /** Games-in-hand win rate, 0–1. */
+  /** Games-in-hand win rate, 0–1; null until 17lands publishes one. */
   gihWr: number | null;
-  /** Average pick position (17lands "ATA"/avg_pick), when published. */
-  avgPick: number | null;
-  /** Number of games the win rate is based on. */
+  /** Games in hand 17lands has seen for the card. */
   games: number;
 }
 
@@ -30,10 +28,6 @@ export interface Ratings {
   source: string;
 }
 
-const API = 'https://www.17lands.com/card_ratings/data';
-const CACHE_PREFIX = 'tapps.17lands.v1.';
-const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
-const START_DATE = '2020-01-01';
 
 const FORMAT_LABELS: Record<string, string> = {
   PremierDraft: 'Premier Draft',
@@ -70,31 +64,6 @@ export function seventeenLandsExpansions(stream: Pick<DraftStream, 'cards' | 'dr
   return alchemy ? [base, `${alchemy}${base}`] : [base];
 }
 
-interface RawRating {
-  mtga_id?: number;
-  ever_drawn_win_rate?: number | null;
-  avg_pick?: number | null;
-  ever_drawn_game_count?: number | null;
-}
-
-/** Merges sources in priority order: a card keeps the first non-null win rate it gets. */
-export function mergeRatings(sources: RawRating[][]): Map<number, CardRating> {
-  const out = new Map<number, CardRating>();
-  for (const rows of sources) {
-    for (const row of rows) {
-      if (typeof row.mtga_id !== 'number') continue;
-      const existing = out.get(row.mtga_id);
-      if (existing?.gihWr != null) continue;
-      out.set(row.mtga_id, {
-        gihWr: typeof row.ever_drawn_win_rate === 'number' ? row.ever_drawn_win_rate : null,
-        avgPick: existing?.avgPick ?? (typeof row.avg_pick === 'number' ? row.avg_pick : null),
-        games: row.ever_drawn_game_count ?? 0,
-      });
-    }
-  }
-  return out;
-}
-
 export function ratingStats(byArenaId: ReadonlyMap<number, CardRating>): { mean: number; spread: number } {
   const rates = [...byArenaId.values()].map((r) => r.gihWr).filter((r): r is number => r != null);
   if (!rates.length) return { mean: 0.55, spread: 0.03 };
@@ -117,30 +86,8 @@ export function formatWinRate(gihWr: number): string {
   return `${(gihWr * 100).toFixed(1)}%`;
 }
 
-async function fetchSource(expansion: string, format: string, signal: AbortSignal): Promise<RawRating[]> {
-  const cacheKey = `${CACHE_PREFIX}${expansion}.${format}`;
-  try {
-    const cached = JSON.parse(localStorage.getItem(cacheKey) ?? 'null') as { at: number; rows: RawRating[] } | null;
-    if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.rows;
-  } catch {
-    // Unreadable cache: fetch again.
-  }
-  const params = new URLSearchParams({ expansion, format, start_date: START_DATE });
-  const response = await fetch(`${API}?${params.toString()}`, { signal });
-  if (!response.ok) throw new Error(`17lands returned ${response.status}`);
-  const body = (await response.json()) as RawRating[];
-  const rows = (Array.isArray(body) ? body : []).map((row) => ({
-    mtga_id: row.mtga_id,
-    ever_drawn_win_rate: row.ever_drawn_win_rate ?? null,
-    avg_pick: row.avg_pick ?? null,
-    ever_drawn_game_count: row.ever_drawn_game_count ?? 0,
-  }));
-  try {
-    localStorage.setItem(cacheKey, JSON.stringify({ at: Date.now(), rows }));
-  } catch {
-    // Storage full or blocked: the in-memory answer still works.
-  }
-  return rows;
+interface RatingsResponse {
+  cards?: Record<string, { gih_wr: number | null; games: number }>;
 }
 
 /** 17lands ratings for this draft, or null until loaded (or when disabled / unavailable). */
@@ -152,16 +99,21 @@ export function useSeventeenLandsRatings(stream: DraftStream, enabled: boolean):
     const format = seventeenLandsFormat(stream.draft);
     const formats = format === 'PremierDraft' ? [format] : [format, 'PremierDraft'];
     const expansions = seventeenLandsExpansions(stream);
-    const sources = expansions.flatMap((expansion) => formats.map((f) => ({ expansion, format: f })));
-    void Promise.all(
-      sources.map((source) => fetchSource(source.expansion, source.format, controller.signal).catch(() => [] as RawRating[])),
-    ).then((rows) => {
-      if (controller.signal.aborted) return;
-      const byArenaId = mergeRatings(rows);
-      if (![...byArenaId.values()].some((r) => r.gihWr != null)) return;
-      const label = `${expansions[0]} ${formats.map((f) => FORMAT_LABELS[f] ?? f).join(' + ')}`;
-      setRatings({ stream, ratings: { byArenaId, ...ratingStats(byArenaId), source: label } });
-    });
+    if (!expansions.length) return;
+    const params = new URLSearchParams({ expansions: expansions.join(','), formats: formats.join(',') });
+    fetch(`/api/card-ratings?${params.toString()}`, { signal: controller.signal })
+      .then((response) => (response.ok ? (response.json() as Promise<RatingsResponse>) : null))
+      .then((body) => {
+        if (!body?.cards || controller.signal.aborted) return;
+        const byArenaId = new Map<number, CardRating>();
+        for (const [id, card] of Object.entries(body.cards)) {
+          byArenaId.set(Number(id), { gihWr: card.gih_wr ?? null, games: card.games ?? 0 });
+        }
+        if (![...byArenaId.values()].some((r) => r.gihWr != null)) return;
+        const label = `${expansions[0]} ${formats.map((f) => FORMAT_LABELS[f] ?? f).join(' + ')}`;
+        setRatings({ stream, ratings: { byArenaId, ...ratingStats(byArenaId), source: label } });
+      })
+      .catch(() => undefined);
     return () => controller.abort();
   }, [enabled, stream]);
   return enabled && ratings?.stream === stream ? ratings.ratings : null;

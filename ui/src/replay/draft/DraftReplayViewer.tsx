@@ -38,6 +38,7 @@ const HASH_DEBOUNCE_MS = 300;
 /** Arena enlarges a hovered card after a short pause; this matches its feel. */
 export const HOVER_PREVIEW_MS = 450;
 const WIN_RATES_KEY = 'tapps.draftReplay.winRates';
+const UNRATED_HEAT = 'hsl(230 8% 55%)';
 
 function readWinRatesPref(): boolean {
   try {
@@ -93,10 +94,11 @@ function RatingChip({ arenaId, ratings }: { arenaId: number; ratings: Ratings | 
   );
 }
 
+/** Heat-map glow: win-rate color, or grey when 17lands has no rate for the card yet. */
 function heatStyle(arenaId: number, ratings: Ratings | null) {
-  const rate = ratings?.byArenaId.get(arenaId)?.gihWr;
-  if (!ratings || rate == null) return undefined;
-  return { ['--draft-heat' as string]: heatColor(rate, ratings.mean, ratings.spread) };
+  if (!ratings) return undefined;
+  const rate = ratings.byArenaId.get(arenaId)?.gihWr;
+  return { ['--draft-heat' as string]: rate == null ? UNRATED_HEAT : heatColor(rate, ratings.mean, ratings.spread) };
 }
 
 function largeUrl(url: string | null): string | null {
@@ -320,7 +322,12 @@ export function DraftReplayViewer({ stream, step: initialStep, returnHash }: Dra
               return (
                 <div
                   key={`${current.key}-${n}`}
-                  className={`draft-pack-slot${heatStyle(arenaId, ratings) ? ' draft-heat' : ''}`}
+                  className={`draft-pack-slot${ratings ? ' draft-heat' : ''}`}
+                  title={
+                    ratings && ratings.byArenaId.get(arenaId)?.gihWr == null
+                      ? `17lands has no win rate for this card yet (${(ratings.byArenaId.get(arenaId)?.games ?? 0).toLocaleString()} games in hand)`
+                      : undefined
+                  }
                   style={heatStyle(arenaId, ratings)}
                   data-arena-id={arenaId}
                 >

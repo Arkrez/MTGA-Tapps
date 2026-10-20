@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatWinRate, heatColor, mergeRatings, ratingStats, seventeenLandsExpansions, seventeenLandsFormat } from './seventeenLands';
+import { formatWinRate, heatColor, ratingStats, seventeenLandsExpansions, seventeenLandsFormat } from './seventeenLands';
 import type { DraftCard, DraftStream } from './types';
 
 function stream(eventName: string | null, kind: 'bot' | 'player', sets: string[]): Pick<DraftStream, 'cards' | 'draft'> {
@@ -30,23 +30,8 @@ describe('17lands mapping', () => {
     expect(seventeenLandsExpansions(stream(null, 'player', []))).toEqual([]);
   });
 
-  it('keeps the first non-null win rate across sources', () => {
-    const merged = mergeRatings([
-      [
-        { mtga_id: 1, ever_drawn_win_rate: null, avg_pick: 3.2, ever_drawn_game_count: 12 },
-        { mtga_id: 2, ever_drawn_win_rate: 0.6, ever_drawn_game_count: 900 },
-      ],
-      [
-        { mtga_id: 1, ever_drawn_win_rate: 0.55, ever_drawn_game_count: 5000 },
-        { mtga_id: 2, ever_drawn_win_rate: 0.5, ever_drawn_game_count: 9000 },
-      ],
-    ]);
-    expect(merged.get(1)).toEqual({ gihWr: 0.55, avgPick: 3.2, games: 5000 });
-    expect(merged.get(2)).toEqual({ gihWr: 0.6, avgPick: null, games: 900 });
-  });
-
   it('colors win rates relative to the set: red below, amber at, green above the mean', () => {
-    const { mean, spread } = ratingStats(mergeRatings([[0.5, 0.55, 0.6].map((w, n) => ({ mtga_id: n, ever_drawn_win_rate: w }))]));
+    const { mean, spread } = ratingStats(new Map([0.5, 0.55, 0.6, null].map((w, n) => [n, { gihWr: w, games: 100 }])));
     expect(mean).toBeCloseTo(0.55);
     expect(heatColor(mean, mean, spread)).toBe('hsl(45 85% 52%)');
     expect(heatColor(0.4, mean, spread)).toBe('hsl(0 85% 52%)');

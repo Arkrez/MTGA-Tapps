@@ -157,7 +157,9 @@ Primary code paths:
   marks and the Final deck dialog. Card art resolves through
   `images.prewarmCardImages` (Scryfall `/cards/collection` by name, batched),
   which the game replay's `TextureStore` also runs first; 17lands GIH WR for the
-  heat map comes from `seventeenLands.ts` (browser fetch, 12 h localStorage cache). `docs/DRAFT_REPLAY.md` is the
+  heat map comes from `card_ratings.py` (`GET /api/card-ratings`: downloads 17lands, caches
+  `card_ratings/*.json` beside the DB, daily refresh, stale copy when offline; GIH WR only,
+  unrated cards grey) via `seventeenLands.ts`. `docs/DRAFT_REPLAY.md` is the
   binding contract; change it first. Tests: `tests/test_draft_capture.py`,
   `ui/src/replay/draft/*.test.ts*`, `ui/src/replay/framework/*.test.ts`.
 - `ui/src/replay/`: the Replay page — pure reducer/layout/playback-clock/image-queue/prefs
