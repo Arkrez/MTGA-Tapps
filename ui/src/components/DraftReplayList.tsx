@@ -1,10 +1,12 @@
-import { useEffect, useState, type MouseEvent } from 'react';
+import { useEffect, useState } from 'react';
 import { fetchDrafts, importDraftsFromLog } from '../api';
 import { formatDateTime } from '../format';
 import type { DraftListRow } from '../replay/draft/types';
 import { REPLAY_ROUTE_HASH, draftReplayRouteHash } from '../routes';
+import type { DeckVisual as DeckVisualData } from '../api';
 import { Badge } from './Badge';
 import { ColorPips } from './ColorPips';
+import { DeckVisual } from './DeckVisual';
 import { Section } from './Section';
 
 type LoadState =
@@ -12,8 +14,21 @@ type LoadState =
   | { status: 'loaded'; drafts: DraftListRow[] }
   | { status: 'error'; message: string };
 
-function navigateTo(hash: string): void {
-  window.location.hash = hash;
+/** Tile art: the first pick's art crop (by name first: new sets reach Scryfall before their Arena ids). */
+function firstPickArt(row: DraftListRow): DeckVisualData {
+  const name = row.first_pick?.name && !row.first_pick.name.startsWith('Card #') ? row.first_pick.name : null;
+  const byName = name
+    ? `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}&format=image&version=art_crop`
+    : null;
+  const byId = row.first_pick ? `https://api.scryfall.com/cards/arena/${row.first_pick.arena_id}?format=image&version=art_crop` : null;
+  return {
+    card_id: row.first_pick?.arena_id ?? null,
+    card_name: name,
+    type_category: 'Other',
+    source: 'local_metadata',
+    image_url: byName ?? byId,
+    image_fallback_url: byName ? byId : null,
+  };
 }
 
 type ImportState = { status: 'idle' } | { status: 'running' } | { status: 'done'; message: string } | { status: 'error'; message: string };
@@ -56,11 +71,6 @@ export function DraftReplayList() {
     }
   }
 
-  function openRow(row: DraftListRow, event: MouseEvent<HTMLTableRowElement>) {
-    if ((event.target as HTMLElement).closest('a, button')) return;
-    navigateTo(draftReplayRouteHash(row.id, { returnHash: REPLAY_ROUTE_HASH }));
-  }
-
   const drafts = load.status === 'loaded' ? load.drafts : [];
   return (
     <Section id="replay-drafts" title="Drafts" collapsible={false}>
@@ -91,53 +101,33 @@ export function DraftReplayList() {
           No drafts recorded yet. Draft with the tracker running, or look for earlier drafts in Arena's logs above.
         </p>
       ) : (
-        <div className="table-container">
-          <div className="table-wrap replay-list-table" role="region" aria-label="Drafts to replay" tabIndex={0}>
-            <table>
-              <caption>Drafts to replay</caption>
-              <thead>
-                <tr>
-                  <th scope="col">Date</th>
-                  <th scope="col">Event</th>
-                  <th scope="col">Colors</th>
-                  <th scope="col">First pick</th>
-                  <th scope="col" className="center">
-                    Picks
-                  </th>
-                  <th scope="col" className="center">
-                    Status
-                  </th>
-                  <th scope="col">
-                    <span className="visually-hidden">Replay</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {drafts.map((row) => (
-                  <tr key={row.id} onClick={(event) => openRow(row, event)}>
-                    <td>{row.started_at ? formatDateTime(row.started_at) : '—'}</td>
-                    <td>
-                      {row.format_label}
-                      {row.kind === 'bot' ? <span className="replay-vs"> · bots</span> : null}
-                    </td>
-                    <td>
-                      <ColorPips colors={row.colors} />
-                    </td>
-                    <td>{row.first_pick?.name ?? '—'}</td>
-                    <td className="center">{row.picks}</td>
-                    <td className="center">
-                      <Badge tone={row.completed_at ? 'win' : 'neutral'}>{row.completed_at ? 'Complete' : 'Incomplete'}</Badge>
-                    </td>
-                    <td>
-                      <a className="replay-link" href={draftReplayRouteHash(row.id, { returnHash: REPLAY_ROUTE_HASH })}>
-                        Replay draft
-                      </a>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        <div className="replay-deck-tiles" role="list" aria-label="Drafts">
+          {drafts.map((row) => (
+            <div role="listitem" key={row.id}>
+              <a
+                className="deck-manager-tile replay-deck-tile"
+                href={draftReplayRouteHash(row.id, { returnHash: REPLAY_ROUTE_HASH })}
+                title={`Replay draft: ${row.format_label}`}
+              >
+                <span className="deck-manager-tile-art">
+                  <DeckVisual deckName={row.format_label} visual={firstPickArt(row)} />
+                  <ColorPips colors={row.colors} size={14} />
+                </span>
+                <span className="deck-manager-tile-text">
+                  <strong>
+                    {row.format_label}
+                    {row.kind === 'bot' ? <span className="replay-vs"> · bots</span> : null}
+                  </strong>
+                  <small>{row.started_at ? formatDateTime(row.started_at) : 'Date unknown'}</small>
+                  <small>First pick: {row.first_pick?.name ?? '—'}</small>
+                  <small className="replay-draft-tile-status">
+                    {row.picks} picks
+                    <Badge tone={row.completed_at ? 'win' : 'neutral'}>{row.completed_at ? 'Complete' : 'Incomplete'}</Badge>
+                  </small>
+                </span>
+              </a>
+            </div>
+          ))}
         </div>
       )}
     </Section>

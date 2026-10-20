@@ -78,6 +78,19 @@ describe('ReplayListPage', () => {
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 
+  it('shows the last game played up front with a Watch replay button', async () => {
+    stubGames([row(1), row(5, { replay: { state: 'recorded', reason: null }, outcome: 'win' }), row(3)]);
+    render(<ReplayListPage />);
+    const latest = await screen.findByRole('region', { name: 'Last played' });
+    expect(within(latest).getByRole('heading', { name: /Dimir Control/ })).toBeInTheDocument();
+    expect(within(latest).getByText('vs Rival5')).toBeInTheDocument();
+    expect(within(latest).getByText('Win')).toBeInTheDocument();
+    expect(within(latest).getByRole('link', { name: 'Watch replay' })).toHaveAttribute(
+      'href',
+      '#/replay/game-5?return=%23%2Freplay',
+    );
+  });
+
   it('opens a deck to list its games newest first, and goes back to all decks', async () => {
     stubGames([
       row(1, { replay: { state: 'recorded', reason: null } }),

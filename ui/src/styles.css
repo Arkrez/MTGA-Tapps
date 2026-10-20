@@ -6966,3 +6966,73 @@ a.sidebar-deck-finder {
   border-color: var(--replay);
 }
 
+/* Replay list: the last game played, first and large. */
+.replay-latest {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 16px;
+  padding: 14px 18px;
+  border: 1px solid color-mix(in srgb, var(--replay) 55%, var(--border));
+  border-radius: 12px;
+  background: linear-gradient(110deg, color-mix(in srgb, var(--replay) 14%, var(--surface)), var(--surface) 70%);
+}
+
+.replay-latest .deck-visual {
+  flex: 0 0 auto;
+  width: 132px;
+  height: 96px;
+}
+
+.replay-latest-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.replay-latest-eyebrow {
+  color: var(--replay);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.replay-latest h3 {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 2px 0 4px;
+  font-size: 1.2rem;
+}
+
+.replay-latest-opponent,
+.replay-latest-facts {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.replay-latest-opponent {
+  color: var(--text);
+}
+
+.replay-latest .replay-latest-watch {
+  flex: 0 0 auto;
+  padding: 10px 18px;
+  font-size: 0.95rem;
+}
+
+.replay-draft-tile-status {
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+}
+
+a.replay-deck-tile {
+  text-decoration: none;
+}
+

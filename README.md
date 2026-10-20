@@ -247,8 +247,9 @@ name opening a page with your full history against them:
 ## Replay (beta)
 
 Replay is built into the game pages, so you do not have to hunt for a recording.
-Open **Replay** in the sidebar to browse recent games (grouped into deck tiles;
-open one to list its games), use **Watch replay** on
+Open **Replay** in the sidebar to watch your last game straight away (it sits
+at the top) or browse recent games (grouped into deck tiles; open one to list
+its games), use **Watch replay** on
 the Live Scoreboard after a match, or use the play icon in Today's Games,
 Recent Games, All Games, and deck or opponent histories. Game Detail has a
 **Watch replay** button and links in its event timeline that jump to that

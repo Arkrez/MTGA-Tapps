@@ -57,6 +57,43 @@ function deckTiles(rows: readonly AllGamesRow[]): DeckTile[] {
 
 const NO_ART: DeckVisualData = { card_id: null, card_name: null, type_category: 'Other', image_url: null, source: 'deck_name' };
 
+/** The most recent game, big and first: one click to watch it, no tile to open. */
+function LatestReplay({ row, visual }: { row: AllGamesRow; visual: DeckVisualData }) {
+  const unavailable = replayState(row.replay) === 'unavailable';
+  const facts = [
+    formatCell(row),
+    formatDateTime(row.started_at),
+    row.total_turns ? `${formatNumber(row.total_turns)} turns` : null,
+    row.duration_seconds ? formatDuration(row.duration_seconds) : null,
+  ].filter(Boolean);
+  return (
+    <section className="replay-latest" aria-label="Last played">
+      <DeckVisual deckName={row.deck_name} visual={visual} size="large" />
+      <div className="replay-latest-text">
+        <span className="replay-latest-eyebrow">Last played</span>
+        <h3>
+          {row.deck_name}
+          <Badge tone={outcomeTone(row.outcome)}>{outcomeLabel(row.outcome)}</Badge>
+        </h3>
+        <p className="replay-latest-opponent">
+          vs {opponentLabel(row)} {row.opp_colors ? <ColorPips colors={row.opp_colors} /> : null}
+        </p>
+        <p className="replay-latest-facts">{facts.join(' · ')}</p>
+        {unavailable ? (
+          <p className="replay-latest-facts">{replayStateTitle(row.replay)}</p>
+        ) : null}
+      </div>
+      <ReplayLink
+        availability={row.replay}
+        gameId={row.game_id}
+        returnHash={REPLAY_ROUTE_HASH}
+        variant="button"
+        className="replay-latest-watch"
+      />
+    </section>
+  );
+}
+
 function formatCell(row: AllGamesRow): string {
   const label = shortFormatLabel(row.format_label);
   return (row.best_of ?? 1) > 1 && row.game_number ? `${label} · Game ${row.game_number}` : label;
@@ -108,6 +145,10 @@ export function ReplayListPage() {
   const shown = deckGames.slice(0, visibleCount);
   const visuals = loadState.status === 'loaded' ? loadState.visuals : {};
   const selectedTile = tiles.find((tile) => tile.name === selectedDeck) ?? null;
+  const latest = useMemo(
+    () => games.reduce<AllGamesRow | null>((best, row) => (!best || (row.started_at ?? '') > (best.started_at ?? '') ? row : best), null),
+    [games],
+  );
 
   function chooseDeck(name: string | null) {
     setSelectedDeck(name);
@@ -160,6 +201,7 @@ export function ReplayListPage() {
             </p>
           ) : (
             <>
+              {latest ? <LatestReplay row={latest} visual={visuals[latest.deck_name] ?? NO_ART} /> : null}
               <FormatQuickFilters
                 value={quickFilter}
                 onChange={(id) => {

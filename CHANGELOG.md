@@ -9,7 +9,10 @@
   lookups each (new sets have no Arena ids on Scryfall yet), and answers are
   remembered for later visits.
 - **Recent games** on the Replay page is now a grid of deck tiles with art,
-  record and last-played date; open one to see that deck's games.
+  record and last-played date; open one to see that deck's games. Drafts are
+  tiles too (first pick's art, colors, picks, status).
+- The last game you played sits at the top of the Replay page with a
+  **Watch replay** button.
 
 ### Draft Replay
 
