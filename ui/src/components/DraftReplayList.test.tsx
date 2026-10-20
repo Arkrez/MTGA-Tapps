@@ -14,6 +14,7 @@ const DRAFT = {
   packs: 3,
   colors: 'UR',
   first_pick: { arena_id: 106314, name: 'Fulminous Forte' },
+  record: { wins: 7, losses: 1, games: 8 },
 };
 
 describe('DraftReplayList', () => {
@@ -43,6 +44,8 @@ describe('DraftReplayList', () => {
     expect(within(tile).getByText('First pick: Fulminous Forte')).toBeInTheDocument();
     expect(within(tile).getByText('Incomplete')).toBeInTheDocument();
     expect(within(tile).getByText(/41 picks/)).toBeInTheDocument();
+    expect(within(tile).getByText('88% WR')).toHaveAttribute('title', '7–1 (88% of decided games)');
+    expect(within(tile).getByText('7–1')).toBeInTheDocument();
     expect(tile).toHaveAttribute('href', `#/replay/draft/bot-c1?return=${encodeURIComponent('#/replay')}`);
     expect(within(tile).getByRole('img', { name: 'Fulminous Forte' })).toHaveAttribute(
       'src',

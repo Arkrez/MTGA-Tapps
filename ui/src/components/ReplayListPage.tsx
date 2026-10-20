@@ -7,6 +7,7 @@ import { Badge } from './Badge';
 import { DraftReplayList } from './DraftReplayList';
 import { ColorPips } from './ColorPips';
 import { DeckVisual } from './DeckVisual';
+import { WinRatePill } from './WinRatePill';
 import { FormatQuickFilters } from './FormatQuickFilters';
 import { replayState, replayStateLabel, replayStateTitle } from '../replayAvailability';
 import { ReplayLink } from './ReplayLink';
@@ -58,7 +59,7 @@ function deckTiles(rows: readonly AllGamesRow[]): DeckTile[] {
 const NO_ART: DeckVisualData = { card_id: null, card_name: null, type_category: 'Other', image_url: null, source: 'deck_name' };
 
 /** The most recent game, big and first: one click to watch it, no tile to open. */
-function LatestReplay({ row, visual }: { row: AllGamesRow; visual: DeckVisualData }) {
+function LatestReplay({ row, visual, deck }: { row: AllGamesRow; visual: DeckVisualData; deck: DeckTile | null }) {
   const unavailable = replayState(row.replay) === 'unavailable';
   const facts = [
     formatCell(row),
@@ -74,6 +75,7 @@ function LatestReplay({ row, visual }: { row: AllGamesRow; visual: DeckVisualDat
         <h3>
           {row.deck_name}
           <Badge tone={outcomeTone(row.outcome)}>{outcomeLabel(row.outcome)}</Badge>
+          {deck ? <WinRatePill wins={deck.wins} losses={deck.losses} /> : null}
         </h3>
         <p className="replay-latest-opponent">
           vs {opponentLabel(row)} {row.opp_colors ? <ColorPips colors={row.opp_colors} /> : null}
@@ -138,6 +140,7 @@ export function ReplayListPage() {
       .sort((a, b) => (b.started_at ?? '').localeCompare(a.started_at ?? ''));
   }, [deckQuery, games, quickFilter]);
   const tiles = useMemo(() => deckTiles(filtered), [filtered]);
+  const allTiles = useMemo(() => deckTiles(games), [games]);
   const deckGames = useMemo(
     () => (selectedDeck === null ? [] : filtered.filter((row) => row.deck_name === selectedDeck)),
     [filtered, selectedDeck],
@@ -201,7 +204,13 @@ export function ReplayListPage() {
             </p>
           ) : (
             <>
-              {latest ? <LatestReplay row={latest} visual={visuals[latest.deck_name] ?? NO_ART} /> : null}
+              {latest ? (
+                <LatestReplay
+                  row={latest}
+                  visual={visuals[latest.deck_name] ?? NO_ART}
+                  deck={allTiles.find((tile) => tile.name === latest.deck_name) ?? null}
+                />
+              ) : null}
               <FormatQuickFilters
                 value={quickFilter}
                 onChange={(id) => {
@@ -239,7 +248,8 @@ export function ReplayListPage() {
                         </span>
                         <span className="deck-manager-tile-text">
                           <strong>{tile.name}</strong>
-                          <small>
+                          <small className="replay-tile-record">
+                            <WinRatePill wins={tile.wins} losses={tile.losses} />
                             {tile.games} game{tile.games === 1 ? '' : 's'} · {tile.wins}–{tile.losses}
                           </small>
                           <small>Last played {formatDateTime(tile.lastPlayed)}</small>
@@ -260,7 +270,8 @@ export function ReplayListPage() {
                   <h3>{selectedDeck}</h3>
                   {selectedTile ? (
                     <span className="replay-meta">
-                      <ColorPips colors={selectedTile.colors} size={14} /> {selectedTile.games} game
+                      <ColorPips colors={selectedTile.colors} size={14} />{' '}
+                      <WinRatePill wins={selectedTile.wins} losses={selectedTile.losses} /> {selectedTile.games} game
                       {selectedTile.games === 1 ? '' : 's'} · {selectedTile.wins}–{selectedTile.losses}
                     </span>
                   ) : null}

@@ -56,7 +56,9 @@ Gameplay reset clears both tables; backup merge unions them by draft id.
 - `GET /api/drafts` → `{"drafts": [{id, kind, event_name, format_label,
   started_at, updated_at, completed_at, picks, packs, colors, first_pick:
   {arena_id, name}}]}`, newest first. `colors` is the pool's two most-picked
-  colors in WUBRG order.
+  colors in WUBRG order. `record` is `{wins, losses, games}` for the games of
+  the draft's event from its start until the next draft of that event starts
+  (game rows store naive local time; draft times are UTC).
 - `GET /api/draft?id=` → the stream below; 400 without `id`, 404 for an
   unknown draft.
 - `POST /api/drafts/import-log` → rescans `Player-prev.log` then `Player.log`

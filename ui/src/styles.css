@@ -7036,3 +7036,30 @@ a.replay-deck-tile {
   text-decoration: none;
 }
 
+/* Replay list: deck win rate, red (35%) through amber (50%) to green (65%). */
+.replay-winrate {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border: 1px solid color-mix(in srgb, var(--winrate-color) 70%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--winrate-color) 22%, var(--surface));
+  color: var(--text);
+  font-size: 0.75rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.replay-winrate-none {
+  --winrate-color: var(--muted);
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.replay-tile-record {
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+}
+

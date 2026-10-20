@@ -11,6 +11,7 @@ import json
 import sqlite3
 import threading
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -96,6 +97,60 @@ def _deck(raw: Optional[str]) -> Optional[Dict[str, Any]]:
     }
 
 
+def _utc(value: Optional[str]) -> Optional[datetime]:
+    """An ISO time as aware UTC. Game rows store naive local time; drafts store UTC."""
+    if not value:
+        return None
+    try:
+        moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.astimezone()
+    return moment.astimezone(timezone.utc)
+
+
+def _draft_records(conn: sqlite3.Connection, drafts: List[Tuple]) -> Dict[str, Dict[str, int]]:
+    """Wins and losses per draft: the games of its event from the draft's start
+    until the next draft of the same event starts."""
+    events = sorted({row[2] for row in drafts if row[2]})
+    if not events:
+        return {}
+    try:
+        marks = ",".join("?" for _ in events)
+        games = conn.execute(
+            f"""SELECT COALESCE(m.event_name, m.queue), g.started_at, g.outcome
+                FROM games g JOIN matches m ON m.id = g.match_id
+                WHERE COALESCE(m.event_name, m.queue) IN ({marks})""",
+            events,
+        ).fetchall()
+    except sqlite3.Error:
+        return {}
+    windows: Dict[str, List[Tuple[datetime, str]]] = {}
+    for draft_id, _kind, event, started_at, *_ in drafts:
+        start = _utc(started_at)
+        if event and start:
+            windows.setdefault(event, []).append((start, draft_id))
+    for spans in windows.values():
+        spans.sort()
+    records: Dict[str, Dict[str, int]] = {}
+    for event, started_at, outcome in games:
+        played = _utc(started_at)
+        owner = None
+        for start, draft_id in windows.get(event, []):
+            if played and start <= played:
+                owner = draft_id
+        if owner is None:
+            continue
+        record = records.setdefault(owner, {"wins": 0, "losses": 0, "games": 0})
+        record["games"] += 1
+        if outcome == "win":
+            record["wins"] += 1
+        elif outcome == "loss":
+            record["losses"] += 1
+    return records
+
+
 def list_drafts(db_path: Path) -> Dict[str, Any]:
     conn = _read_conn(db_path)
     if conn is None:
@@ -109,6 +164,7 @@ def list_drafts(db_path: Path) -> Dict[str, Any]:
             " ORDER BY draft_id, pack_number, pick_number"
         ):
             picks.setdefault(draft_id, []).append((pack, pick, _ids(picked)))
+        records = _draft_records(conn, drafts)
     finally:
         conn.close()
     every_card = [card for rows in picks.values() for _, _, cards in rows for card in cards]
@@ -130,6 +186,7 @@ def list_drafts(db_path: Path) -> Dict[str, Any]:
                 "picks": len(rows),
                 "packs": len({pack for pack, _, _ in rows}),
                 "colors": _main_colors(picked, facts),
+                "record": records.get(draft_id, {"wins": 0, "losses": 0, "games": 0}),
                 "first_pick": (
                     {"arena_id": first, "name": (facts.get(first) or {}).get("name")}
                     if first

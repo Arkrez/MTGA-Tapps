@@ -8,6 +8,7 @@ import { Badge } from './Badge';
 import { ColorPips } from './ColorPips';
 import { DeckVisual } from './DeckVisual';
 import { Section } from './Section';
+import { WinRatePill } from './WinRatePill';
 
 type LoadState =
   | { status: 'loading' }
@@ -118,6 +119,10 @@ export function DraftReplayList() {
                     {row.format_label}
                     {row.kind === 'bot' ? <span className="replay-vs"> · bots</span> : null}
                   </strong>
+                  <small className="replay-tile-record">
+                    <WinRatePill wins={row.record?.wins ?? 0} losses={row.record?.losses ?? 0} />
+                    {row.record?.games ? `${row.record.wins}–${row.record.losses}` : 'No games yet'}
+                  </small>
                   <small>{row.started_at ? formatDateTime(row.started_at) : 'Date unknown'}</small>
                   <small>First pick: {row.first_pick?.name ?? '—'}</small>
                   <small className="replay-draft-tile-status">

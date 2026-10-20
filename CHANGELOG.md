@@ -13,6 +13,9 @@
   tiles too (first pick's art, colors, picks, status).
 - The last game you played sits at the top of the Replay page with a
   **Watch replay** button.
+- Deck and draft tiles show their win rate as a colored pill (red below 50%,
+  amber around it, green above). A draft's record counts the games of its
+  event from that draft until the next draft of the same event.
 
 ### Draft Replay
 

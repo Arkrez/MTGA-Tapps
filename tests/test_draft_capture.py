@@ -1,6 +1,7 @@
 """Draft Replay capture, storage and API (docs/DRAFT_REPLAY.md)."""
 
 import json
+from datetime import datetime, timezone
 
 import pytest
 
@@ -312,3 +313,54 @@ def test_stream_serves_drafts_recorded_before_the_deck_column(tmp_path, monkeypa
     )
     status, stream = draft_api.handle_get("/api/draft", {"id": ["old"]}, db)
     assert status == 200 and stream["deck"] is None
+
+
+def test_draft_records_count_the_event_games_until_the_next_draft(conn, tmp_path, monkeypatch):
+    """Two runs of one event: each owns the games from its start to the next one's."""
+    for draft_id, started in (
+        ("first", "2026-10-19T05:00:00+00:00"),
+        ("second", "2026-10-19T09:00:00+00:00"),
+    ):
+        conn.execute(
+            "INSERT INTO drafts (id, kind, event_name, started_at) VALUES (?, 'player', ?, ?)",
+            (draft_id, PLAYER_EVENT, started),
+        )
+    conn.execute(
+        "INSERT INTO tracker_sessions (id, started_at) VALUES ('s', '2026-10-19T00:00:00')"
+    )
+    conn.execute(
+        "INSERT INTO matches (id, session_id, started_at, event_name) VALUES ('m', 's', '', ?)",
+        (PLAYER_EVENT,),
+    )
+    conn.execute(
+        "INSERT INTO matches (id, session_id, started_at, event_name) VALUES ('l', 's', '', 'Ladder')"
+    )
+
+    def local(iso):  # games store naive local time
+        moment = datetime.fromisoformat(iso).replace(tzinfo=timezone.utc).astimezone()
+        return moment.replace(tzinfo=None).isoformat()
+
+    games = [
+        ("g0", "m", local("2026-10-19T04:00:00"), "win"),  # before either draft: nobody's
+        ("g1", "m", local("2026-10-19T06:00:00"), "win"),
+        ("g2", "m", local("2026-10-19T07:00:00"), "loss"),
+        ("g3", "m", local("2026-10-19T10:00:00"), "loss"),
+        ("g4", "l", local("2026-10-19T10:30:00"), "win"),  # another event
+    ]
+    for game_id, match_id, started, outcome in games:
+        conn.execute(
+            "INSERT INTO games (id, session_id, match_id, game_number, started_at, outcome)"
+            " VALUES (?, 's', ?, 1, ?, ?)",
+            (game_id, match_id, started, outcome),
+        )
+    conn.commit()
+    monkeypatch.setattr(
+        draft_api, "_cards", type("Cards", (), {"draft_card_facts": lambda self, ids: {}})()
+    )
+    rows = {
+        r["id"]: r["record"] for r in draft_api.list_drafts(tmp_path / "tracker.sqlite3")["drafts"]
+    }
+    assert rows == {
+        "first": {"wins": 1, "losses": 1, "games": 2},
+        "second": {"wins": 0, "losses": 1, "games": 1},
+    }

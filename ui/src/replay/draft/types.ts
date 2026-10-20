@@ -74,5 +74,7 @@ export interface DraftListRow {
   packs: number;
   /** The pool's two most-picked colors (WUBRG). */
   colors: string;
+  /** Games played with the draft's deck: its event, from the draft until the next draft of that event. */
+  record?: { wins: number; losses: number; games: number };
   first_pick: { arena_id: number; name: string | null } | null;
 }

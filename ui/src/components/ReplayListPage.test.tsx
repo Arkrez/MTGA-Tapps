@@ -73,7 +73,9 @@ describe('ReplayListPage', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/games', expect.anything());
     const tiles = within(decks).getAllByRole('button');
     expect(tiles.map((tile) => tile.querySelector('strong')?.textContent)).toEqual(['Dimir Control', 'Boros Mouse']);
-    expect(within(tiles[0]).getByText('2 games · 1–1')).toBeInTheDocument();
+    expect(within(tiles[0]).getByText(/2 games · 1–1/)).toBeInTheDocument();
+    expect(within(tiles[0]).getByText('50% WR')).toBeInTheDocument();
+    expect(within(tiles[1]).getByText('100% WR')).toBeInTheDocument();
     expect(within(tiles[1]).getByText('0 replays')).toBeInTheDocument();
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
