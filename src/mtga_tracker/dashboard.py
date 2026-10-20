@@ -5184,7 +5184,13 @@ def all_games(
             conn, (row.get("player_participant_id") for row in rows)
         )
         _attach_replay_availability(conn, rows)
+        known_visuals = _deck_visuals(conn)
 
+    # One art tile per deck (the Replay page groups games into deck tiles).
+    deck_visuals = {
+        name: known_visuals.get(name, _empty_deck_visual(name))
+        for name in {str(row.get("deck_name") or "") for row in rows}
+    }
     for row in rows:
         participant_id = row.pop("player_participant_id", None)
         row["deck_colors"] = game_deck_colors.get(str(participant_id)) or deck_color_map.get(
@@ -5213,7 +5219,7 @@ def all_games(
             row["opponent_commander_colors"] = normalize_colors(
                 str(row.get("opponent_commander_colors") or "")
             )
-    return {"games": rows, "total": len(rows)}
+    return {"games": rows, "total": len(rows), "deck_visuals": deck_visuals}
 
 
 def game_annotation(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str, Any]:

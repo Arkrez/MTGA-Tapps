@@ -301,6 +301,8 @@ export interface AllGamesRow extends RecentGameRow {
 export interface AllGamesResponse {
   games: AllGamesRow[];
   total: number;
+  /** Deck tile art keyed by deck name (Replay page). */
+  deck_visuals?: Record<string, DeckVisual>;
 }
 
 export interface MatchRow {

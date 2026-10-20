@@ -72,6 +72,30 @@ def _main_colors(picked: List[int], facts: Dict[int, Dict[str, Any]]) -> str:
     return "".join(c for c in "WUBRG" if c in top)
 
 
+def _deck(raw: Optional[str]) -> Optional[Dict[str, Any]]:
+    """The submitted deck as ``{name, submitted_at, main, sideboard}`` piles of
+    ``{arena_id, quantity}``; None when no deck was submitted."""
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return None
+
+    def pile(name: str) -> List[Dict[str, int]]:
+        return [
+            {"arena_id": int(card), "quantity": int(quantity)}
+            for card, quantity in value.get(name) or []
+        ]
+
+    return {
+        "name": value.get("name"),
+        "submitted_at": value.get("submitted_at"),
+        "main": pile("main"),
+        "sideboard": pile("sideboard"),
+    }
+
+
 def list_drafts(db_path: Path) -> Dict[str, Any]:
     conn = _read_conn(db_path)
     if conn is None:
@@ -121,9 +145,12 @@ def draft_stream(db_path: Path, draft_id: str) -> Dict[str, Any]:
     if conn is None:
         raise LookupError("No drafts have been recorded yet.")
     try:
+        # A database migrated before 37 has no deck column yet (dashboard-only runs).
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(drafts)")}
+        deck_column = "deck_json" if "deck_json" in columns else "NULL"
         draft = conn.execute(
-            """SELECT id, kind, event_name, course_id, started_at, updated_at, completed_at,
-                      card_pool_json FROM drafts WHERE id = ?""",
+            f"""SELECT id, kind, event_name, course_id, started_at, updated_at, completed_at,
+                      card_pool_json, {deck_column} FROM drafts WHERE id = ?""",
             (draft_id,),
         ).fetchone()
         if draft is None:
@@ -135,7 +162,10 @@ def draft_stream(db_path: Path, draft_id: str) -> Dict[str, Any]:
         ).fetchall()
     finally:
         conn.close()
-    _, kind, event_name, course_id, started_at, updated_at, completed_at, pool_json = draft
+    _, kind, event_name, course_id, started_at, updated_at, completed_at, pool_json, deck_json = (
+        draft
+    )
+    deck = _deck(deck_json)
     picks = [
         {
             "pack": pack,
@@ -148,6 +178,8 @@ def draft_stream(db_path: Path, draft_id: str) -> Dict[str, Any]:
     ]
     pool = _ids(pool_json)
     every_card = set(pool)
+    if deck:
+        every_card.update(card["arena_id"] for card in deck["main"] + deck["sideboard"])
     for row in picks:
         every_card.update(row["pack_cards"])
         every_card.update(row["picked"])
@@ -173,6 +205,7 @@ def draft_stream(db_path: Path, draft_id: str) -> Dict[str, Any]:
         },
         "picks": picks,
         "pool": pool,
+        "deck": deck,
         "cards": cards,
     }
 

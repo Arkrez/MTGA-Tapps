@@ -115,9 +115,143 @@
   object-fit: cover;
 }
 
-.draft-pack-grid .draft-card:hover {
+.draft-pack-slot {
+  position: relative;
+  padding: 6px;
+  border-radius: 12px;
+}
+
+.draft-pack-slot:hover {
   z-index: 2;
+}
+
+.draft-pack-slot:hover .draft-card {
   transform: translateY(-4px) scale(1.04);
+}
+
+/* 17lands heat map: a glow in the card's win-rate color behind it. */
+.draft-heat {
+  background: radial-gradient(ellipse 75% 70% at 50% 50%, color-mix(in srgb, var(--draft-heat) 70%, transparent) 0%, color-mix(in srgb, var(--draft-heat) 22%, transparent) 62%, transparent 82%);
+}
+
+.draft-wr-chip {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  z-index: 2;
+  transform: translate(-50%, -30%);
+  padding: 1px 7px;
+  border: 1px solid rgb(0 0 0 / 55%);
+  border-radius: 999px;
+  background: var(--draft-heat, #3a3460);
+  color: #10131a;
+  font-size: 0.68rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.draft-missing-card .draft-wr-chip {
+  position: static;
+  transform: none;
+  margin-left: 4px;
+  background: #3a3460;
+  color: var(--draft-ink);
+}
+
+.draft-wr-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--draft-ink-muted);
+  font-size: 0.75rem;
+}
+
+.draft-wr-scale {
+  width: 64px;
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, hsl(0 85% 52%), hsl(45 85% 52%), hsl(130 85% 52%));
+}
+
+/* Cards that made the final deck. */
+.draft-deck-badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #3ecf8e;
+  color: #052417;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.draft-card .draft-deck-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 50%);
+}
+
+.draft-card-indeck {
+  box-shadow: 0 0 0 2px #3ecf8e, 0 4px 12px rgb(0 0 0 / 55%);
+}
+
+.draft-card-cut {
+  filter: grayscale(0.7) brightness(0.6);
+}
+
+.draft-card-new.draft-card-indeck,
+.draft-card-new.draft-card-cut {
+  box-shadow:
+    0 0 0 2px var(--draft-new),
+    0 0 14px 3px color-mix(in srgb, var(--draft-new) 55%, transparent);
+}
+
+.draft-pool-deck-note {
+  margin: 0;
+  color: var(--draft-ink-muted);
+  font-size: 0.75rem;
+}
+
+.draft-deck-btn:not(:disabled) {
+  border-color: color-mix(in srgb, #3ecf8e 55%, var(--border));
+}
+
+/* Arena-style enlarged copy after a short hover. */
+.draft-hover-preview {
+  position: fixed;
+  z-index: 1000;
+  width: 300px;
+  pointer-events: none;
+  animation: draft-hover-in 120ms ease-out;
+}
+
+.draft-hover-preview .draft-card {
+  box-shadow: 0 18px 50px rgb(0 0 0 / 70%);
+}
+
+.draft-hover-preview .draft-frame {
+  font-size: 0.95rem;
+}
+
+.draft-hover-wr {
+  display: block;
+  margin-top: 6px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgb(10 9 22 / 85%);
+  color: #ece8ff;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+@keyframes draft-hover-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
 }
 
 .draft-card-picked {
@@ -315,11 +449,15 @@
 }
 
 /* Stacked like Arena's pool: each card shows its title bar, the last shows whole. */
-.draft-pool-stack .draft-card + .draft-card {
+.draft-pool-slot {
+  position: relative;
+}
+
+.draft-pool-slot + .draft-pool-slot {
   margin-top: -112%;
 }
 
-.draft-pool-stack .draft-card:hover {
+.draft-pool-slot:hover {
   z-index: 3;
   transform: translateX(6px);
 }

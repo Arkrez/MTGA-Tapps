@@ -246,3 +246,69 @@ def test_backup_merge_unions_drafts_by_id(tmp_path):
         assert result["drafts"] == 1 and result["draft_picks"] == 2
         assert local.execute("SELECT COUNT(*) FROM drafts").fetchone()[0] == 2
         assert merge_snapshot_into(local, source_path)["drafts"] == 0
+
+
+def _set_deck(event, main, sideboard=(), name="Draft Deck"):
+    deck = {
+        "MainDeck": [{"cardId": c, "quantity": q} for c, q in main],
+        "Sideboard": [{"cardId": c, "quantity": q} for c, q in sideboard],
+        "CommandZone": [],
+        "Companions": [],
+    }
+    return _request("EventSetDeckV3", {"EventName": event, "Summary": {"Name": name}, "Deck": deck})
+
+
+def test_submitted_deck_attaches_to_its_draft_and_the_latest_one_wins(conn, tmp_path, monkeypatch):
+    log = PLAYER_LOG + [
+        _set_deck(PLAYER_EVENT, [(10, 1), (12, 1), (81, 15)], [(20, 1)]),
+        "[UnityCrossThreadLogger]10/19/2026 9:30:00 AM\n<== Unrelated(x)\n{}",
+        _set_deck(PLAYER_EVENT, [(10, 1), (20, 1), (81, 15)], [(12, 1)], name="Second Try"),
+        _set_deck("Ladder", [(99, 60)]),
+    ]
+    _feed(DraftCapture(conn), log)
+    deck = json.loads(conn.execute("SELECT deck_json FROM drafts WHERE id = 'd-1'").fetchone()[0])
+    assert deck["name"] == "Second Try"
+    assert deck["main"] == [[10, 1], [20, 1], [81, 15]] and deck["sideboard"] == [[12, 1]]
+
+    # A rescan replays the older submission after the newer one is stored: it must not win.
+    path = tmp_path / "Player.log"
+    path.write_text("\n".join(log[:-3]) + "\n")
+    capture_logs(conn, [path])
+    assert (
+        json.loads(conn.execute("SELECT deck_json FROM drafts").fetchone()[0])["name"]
+        == "Second Try"
+    )
+
+    conn.commit()
+    monkeypatch.setattr(
+        draft_api,
+        "_cards",
+        type("Cards", (), {"draft_card_facts": lambda self, ids: {}})(),
+    )
+    _, stream = draft_api.handle_get("/api/draft", {"id": ["d-1"]}, tmp_path / "tracker.sqlite3")
+    assert stream["deck"]["main"][2] == {"arena_id": 81, "quantity": 15}
+    assert "81" in stream["cards"]
+
+
+def test_stream_serves_drafts_recorded_before_the_deck_column(tmp_path, monkeypatch):
+    import sqlite3
+
+    db = tmp_path / "old.sqlite3"
+    old = sqlite3.connect(db)
+    old.execute(
+        "CREATE TABLE drafts (id TEXT PRIMARY KEY, kind TEXT, event_name TEXT,"
+        " course_id TEXT, started_at TEXT, updated_at TEXT, completed_at TEXT,"
+        " card_pool_json TEXT)"
+    )
+    old.execute(
+        "CREATE TABLE draft_picks (draft_id TEXT, pack_number INTEGER,"
+        " pick_number INTEGER, pack_cards_json TEXT, picked_json TEXT, observed_at TEXT)"
+    )
+    old.execute("INSERT INTO drafts (id, kind) VALUES ('old', 'player')")
+    old.commit()
+    old.close()
+    monkeypatch.setattr(
+        draft_api, "_cards", type("Cards", (), {"draft_card_facts": lambda self, ids: {}})()
+    )
+    status, stream = draft_api.handle_get("/api/draft", {"id": ["old"]}, db)
+    assert status == 200 and stream["deck"] is None

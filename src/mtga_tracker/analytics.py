@@ -735,6 +735,8 @@ class AnalyticsStore:
             (34, AnalyticsStore._migrate_v34_native_deck_transfers),
             (35, AnalyticsStore._migrate_v35_deck_collections),
             (36, AnalyticsStore._migrate_v36_drafts),
+            # Same idempotent schema step: adds drafts.deck_json to databases that ran 36.
+            (37, AnalyticsStore._migrate_v36_drafts),
         )
         ran: list = []
         for version, migrate in migrations:

@@ -25,11 +25,18 @@ Arena never names a bot draft, so its id is `bot-<CourseId>` when the course
 was seen, else a UUID5 of the event and the first time the tracker saw it. A
 bot status with nothing picked after a draft that has picks starts a new row.
 
-### Tables (migration 36)
+**Final deck:** after the draft, Arena submits the built deck with `==> EventSetDeckV3`
+(`EventName`, `Summary.Name`, `Deck.MainDeck` / `Deck.Sideboard` piles of
+`{cardId, quantity}`), again after every edit between matches. The submission
+goes to the newest draft of that event that started before it; a submission
+older than the stored one never replaces it (rescans replay old ones).
+
+### Tables (migrations 36 and 37)
 
 ```
 drafts(id TEXT PK, kind 'bot'|'player', event_name, course_id,
-       started_at, updated_at, completed_at, card_pool_json)
+       started_at, updated_at, completed_at, card_pool_json,
+       deck_json)        -- 37: {name, main, sideboard, submitted_at}
 draft_picks(draft_id, pack_number, pick_number,      -- both 1-based
             pack_cards_json, picked_json, observed_at,
             PRIMARY KEY (draft_id, pack_number, pick_number))
@@ -64,6 +71,8 @@ Gameplay reset clears both tables; backup merge unions them by draft id.
   "picks": [{"pack": 1, "pick": 1, "pack_cards": [grpId…],
              "picked": [grpId…], "observed_at": "ISO|null"}],
   "pool": [grpId…],                     // Arena's final pool; [] until complete
+  "deck": {"name", "submitted_at",      // null when no submission was seen
+           "main": [{"arena_id", "quantity"}], "sideboard": [...]},
   "cards": {"<grpId>": {"arena_id", "name", "rarity", "mana_cost",
                         "mana_value", "colors", "types", "set_code"}}
 }
@@ -108,11 +117,41 @@ and render a lazy-loaded page that uses `useStepPlayback` and `StepControls`.
   are hidden. Laid out in Arena's mana-value columns (0–1, 2, 3, 4, 5, 6+,
   Lands).
 
+### Card art (`draftImages.ts`, `images.prewarmCardImages`)
+
+Scryfall has no Arena ids for new sets for a while, so per-card lookups
+(Arena id, then exact name, both rate-limited) took 20–30 s for a draft and
+dropped cards on rate limits. The viewer now resolves every card **by name**
+through `POST /cards/collection` (75 per request, batches in parallel, retried
+with backoff). The cards on screen go in a small first batch, so they show in
+about a second; answers persist in `resolvedImageCache` (localStorage), so
+later visits need no lookups. Only cards the batch could not answer use the
+per-card queue. The next picks' images are preloaded; a failed download is
+retried once before the drawn frame. The game replay's `TextureStore` runs the
+same batch before its per-card queue.
+
+### 17lands win rates (`seventeenLands.ts`)
+
+`https://www.17lands.com/card_ratings/data?expansion=&format=&start_date=` is
+public, CORS-enabled and keyed by `mtga_id`. The viewer reads GIH WR
+(`ever_drawn_win_rate`) from the draft's format plus Premier Draft (largest
+sample), for the main set and its Alchemy set (`Y26FRA`); the first non-null
+value per card wins. Answers are cached 12 h in localStorage. The heat map
+colors each card relative to the set: red two standard deviations below the
+mean, amber at it, green two above. Cards 17lands withholds (small samples) get
+no glow. **Win rates on/off** is remembered per browser; failures leave cards
+unrated.
+
 ### Viewer
 
-`#/replay/draft/<id>?step=&return=` (lazy route). The pack grid highlights the
-pick, a banner reports first look / seen before, the missing strip sits under
-the pack, and the pool panel stacks cards like Arena's. **Hide picks** (H)
+`#/replay/draft/<id>?step=&return=` (lazy route). The pack grid is ordered
+rarest first (Arena's order within a rarity) and highlights the pick, a banner
+reports first look / seen before, the missing strip sits under the pack, and
+the pool panel stacks cards like Arena's. With a submitted deck, a pick that
+made it carries an **In deck** badge, pool copies in the deck are outlined and
+the rest dimmed (first N copies of a card played N times), and **Final deck**
+opens it in Deck Manager's dialog layout. Hovering a card for 450 ms shows a
+large copy beside it, like Arena. **Hide picks** (H)
 holds each pick back until **Reveal** (R). Images use the replay's
 rate-limited Scryfall queue; cards Scryfall lacks get a drawn frame with name,
 cost, type and rarity.

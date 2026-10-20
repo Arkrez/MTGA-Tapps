@@ -152,7 +152,12 @@ Primary code paths:
   Reset clears the tables; backup merge unions them. `ui/src/replay/framework/` is the
   shared step-replay framework (timeline, `useStepPlayback`, `StepControls`, `kinds.ts`
   route registry); the draft page is lazy at `#/replay/draft/<id>`. Wheel detection
-  infers the pod size and matches only at that gap. `docs/DRAFT_REPLAY.md` is the
+  infers the pod size and matches only at that gap. `EventSetDeckV3` submissions
+  fill `drafts.deck_json` (migration 37; latest submission wins) for the In deck
+  marks and the Final deck dialog. Card art resolves through
+  `images.prewarmCardImages` (Scryfall `/cards/collection` by name, batched),
+  which the game replay's `TextureStore` also runs first; 17lands GIH WR for the
+  heat map comes from `seventeenLands.ts` (browser fetch, 12 h localStorage cache). `docs/DRAFT_REPLAY.md` is the
   binding contract; change it first. Tests: `tests/test_draft_capture.py`,
   `ui/src/replay/draft/*.test.ts*`, `ui/src/replay/framework/*.test.ts`.
 - `ui/src/replay/`: the Replay page — pure reducer/layout/playback-clock/image-queue/prefs

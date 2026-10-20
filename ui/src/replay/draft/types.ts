@@ -38,12 +38,26 @@ export interface DraftInfo {
   completed_at: string | null;
 }
 
+export interface DraftDeckCard {
+  arena_id: number;
+  quantity: number;
+}
+
+export interface DraftDeck {
+  name: string | null;
+  submitted_at: string | null;
+  main: DraftDeckCard[];
+  sideboard: DraftDeckCard[];
+}
+
 export interface DraftStream {
   version: 1;
   draft: DraftInfo;
   picks: DraftPickRow[];
   /** Arena's final card pool (empty until the draft completes). */
   pool: number[];
+  /** The deck last submitted to the draft's event; null when none was seen. */
+  deck?: DraftDeck | null;
   /** Card facts keyed by grpId. */
   cards: Record<string, DraftCard>;
 }

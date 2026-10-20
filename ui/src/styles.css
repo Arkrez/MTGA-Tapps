@@ -6912,3 +6912,57 @@ a.sidebar-deck-finder {
   color: var(--muted);
   font-size: 0.82rem;
 }
+
+/* Replay list: Recent games as deck tiles (Deck Manager's tile, in replay teal). */
+.replay-deck-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.replay-deck-tile.deck-manager-tile {
+  height: auto;
+  min-height: 132px;
+  padding: 14px;
+}
+
+.replay-deck-tile.deck-manager-tile:hover,
+.replay-deck-tile.deck-manager-tile:focus-visible {
+  border-color: var(--replay);
+  background: color-mix(in srgb, var(--replay) 8%, var(--surface));
+}
+
+.replay-deck-tile small + small {
+  margin-top: 2px;
+}
+
+.replay-deck-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-bottom: 10px;
+}
+
+.replay-deck-heading h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.replay-deck-back {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-strong);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.replay-deck-back:hover,
+.replay-deck-back:focus-visible {
+  border-color: var(--replay);
+}
+
