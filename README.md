@@ -272,6 +272,19 @@ if you want it. The game is not uploaded.
 Card artwork loads from Scryfall when needed, and video export depends on the
 desktop browser's graphics and encoder support.
 
+### Draft Replay
+
+The Replay page also lists your drafts. Open one to step through it pick by
+pick: the pack in front of you with your pick highlighted, a **Seen before**
+banner when a pack comes back around, the cards that left it since (rarest
+first, your own earlier pick marked), and your deck so far in mana-value
+columns. **Hide picks** lets you test yourself before revealing each pick.
+Quick Draft, Premier, Traditional and Pick Two drafts are all supported.
+
+The tracker records drafts while it runs. For drafts made while it was not
+running, use **Find past drafts in Arena logs**: Arena keeps the current and
+previous session's logs, so recent drafts can still be recovered.
+
 ## Deck Finder
 
 The Deck Finder lives **right inside the dashboard** — open it from the
@@ -510,7 +523,7 @@ passed for that run.
 | `#/card/<name>` | Card drill-down: by-deck performance, repeat draws, opener impact |
 | `#/games` | Every tracked game with deck picker, format pills, and period filter |
 | `#/opponents` | Everyone you've been paired against; `#/opponent/<name>` for one opponent |
-| `#/replay` | Replay (beta) list; `#/replay/<id>` plays a completed game and can export video |
+| `#/replay` | Replay (beta) list; `#/replay/<id>` plays a completed game and can export video; `#/replay/draft/<id>` steps through a draft |
 | `#/deckfinder` | Deck Finder: browse, export or save decklists from creators and sites |
 | `#/deck-manager` | Deck Manager (beta): saved collections, revisions, Trash and supported Arena transfers |
 | `#/settings` | Startup, in-game overlay, backup/restore, Deck AI, Deck Finder creators, collection export, tracker status |
@@ -619,6 +632,7 @@ guidance lives.
 - [Log-format reference](docs/MTGA_LOG_FORMAT.md) — Arena events and parser behavior
 - [Card database discovery](docs/MTGA_INSTALL_DISCOVERY.md) — resolution and troubleshooting
 - [Replay data contract](docs/REPLAY_FORMAT.md) — capture, stream and playback fields
+- [Draft Replay contract](docs/DRAFT_REPLAY.md) — draft capture, stream and the replay framework
 - [CHANGELOG.md](CHANGELOG.md) — what changed in each release
 
 ## License

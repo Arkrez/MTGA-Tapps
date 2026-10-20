@@ -341,3 +341,46 @@ def test_interchangeable_name_index_links_both_names_of_one_card(tmp_path, monke
         "anti-venom, horrifying healer": "anti-venom, horrifying healer",
         "omenpath healer": "anti-venom, horrifying healer",
     }
+
+
+def test_draft_card_facts_reads_rarity_cost_colors_and_types(tmp_path):
+    from mtga_tracker.card_database import CardDatabase
+
+    raw_dir = tmp_path / "Raw"
+    raw_dir.mkdir()
+    conn = sqlite3.connect(raw_dir / "Raw_CardDatabase_fake.mtga")
+    conn.execute(
+        'CREATE TABLE "Cards" (GrpId INTEGER, TitleId INTEGER, Rarity INTEGER, '
+        "OldSchoolManaText TEXT, Colors TEXT, Types TEXT, ExpansionCode TEXT)"
+    )
+    conn.executemany(
+        'INSERT INTO "Cards" VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [
+            (106394, 1, 2, "o1o(G/U)", "2,5", "2", "fra"),
+            (107781, 2, 5, "oG", "5", "3,2", "Y26"),
+            (106001, 3, 1, "", "", "5", "FRA"),
+        ],
+    )
+    conn.execute('CREATE TABLE "Localizations_enUS" (LocId INTEGER, Loc TEXT)')
+    conn.executemany(
+        'INSERT INTO "Localizations_enUS" VALUES (?, ?)',
+        [(1, "<nobr>Hybrid</nobr> Bear"), (2, "Mythic Thing"), (3, "Forest")],
+    )
+    conn.commit()
+    conn.close()
+    db = CardDatabase(cache_path=str(tmp_path / "cache.json"), mtga_data_dir=str(raw_dir))
+    facts = db.draft_card_facts([106394, 107781, 106001, 999])
+    assert facts[106394] == {
+        "name": "Hybrid Bear",
+        "rarity": "common",
+        "mana_cost": "{1}{G/U}",
+        "mana_value": 2.0,
+        "colors": "UG",
+        "types": ["Creature"],
+        "set_code": "FRA",
+    }
+    assert facts[107781]["rarity"] == "mythic"
+    assert facts[107781]["types"] == ["Enchantment", "Creature"]
+    assert facts[106001]["rarity"] == "basic" and facts[106001]["mana_cost"] == ""
+    assert 999 not in facts
+    assert db.draft_card_facts([]) == {}

@@ -1,4 +1,5 @@
 import type { SnapshotFilters } from './api';
+import { kindForRoute, replayKind } from './replay/framework/kinds';
 
 export interface DeckRoute {
   name: string;
@@ -301,6 +302,9 @@ export function parseReplayRoute(hash: string): ReplayRoute | null {
     return null;
   }
   const route = hash.slice(REPLAY_ROUTE_HASH.length + 1);
+  if (kindForRoute(route).kind.id !== 'game') {
+    return null;
+  }
   const [encoded, query = ''] = route.split('?');
   if (!encoded) {
     return { gameId: null, at: null, row: null, returnHash: null };
@@ -319,4 +323,55 @@ export function parseReplayRoute(hash: string): ReplayRoute | null {
     // Keep the raw segment.
   }
   return { gameId, at, row, returnHash };
+}
+
+export interface DraftReplayRoute {
+  draftId: string;
+  /** Step key to open at (`p<pack>p<pick>`), from `?step=`. */
+  step: string | null;
+  /** Where the back button goes, from `?return=` (always a `#` hash). */
+  returnHash: string | null;
+}
+
+export function draftReplayRouteHash(
+  draftId: string,
+  options: { step?: string | null; returnHash?: string | null } = {},
+): string {
+  const params = new URLSearchParams();
+  if (options.step && /^p\d+p\d+$/.test(options.step)) {
+    params.set('step', options.step);
+  }
+  if (options.returnHash?.startsWith('#')) {
+    params.set('return', options.returnHash);
+  }
+  const query = params.toString();
+  return `${REPLAY_ROUTE_HASH}/${replayKind('draft').segment}${encodeURIComponent(draftId)}${query ? `?${query}` : ''}`;
+}
+
+export function parseDraftReplayRoute(hash: string): DraftReplayRoute | null {
+  if (!hash.startsWith(`${REPLAY_ROUTE_HASH}/`)) {
+    return null;
+  }
+  const { kind, rest } = kindForRoute(hash.slice(REPLAY_ROUTE_HASH.length + 1));
+  if (kind.id !== 'draft') {
+    return null;
+  }
+  const [encoded, query = ''] = rest.split('?');
+  if (!encoded) {
+    return null;
+  }
+  const params = new URLSearchParams(query);
+  const stepParam = params.get('step');
+  const returnParam = params.get('return');
+  let draftId = encoded;
+  try {
+    draftId = decodeURIComponent(encoded);
+  } catch {
+    // Keep the raw segment.
+  }
+  return {
+    draftId,
+    step: stepParam && /^p\d+p\d+$/.test(stepParam) ? stepParam : null,
+    returnHash: returnParam?.startsWith('#') ? returnParam : null,
+  };
 }

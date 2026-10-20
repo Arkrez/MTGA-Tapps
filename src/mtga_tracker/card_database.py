@@ -46,6 +46,9 @@ ARENA_CARD_TYPES = {
     10: "Sorcery",
 }
 
+#: Arena's Cards.Rarity enum (0 = tokens and other unrated objects).
+DRAFT_RARITIES = {1: "basic", 2: "common", 3: "uncommon", 4: "rare", 5: "mythic"}
+
 
 class CardDatabase:
     """Resolves MTGA card IDs (grpId) to card names using Scryfall API with fallback.
@@ -973,6 +976,53 @@ class CardDatabase:
                 index = {}
         self._export_index_by_arena_id = index
         return index
+
+    def draft_card_facts(self, grp_ids: List[int]) -> Dict[int, Dict[str, Any]]:
+        """What the Draft Replay shows per grpId, from Arena's card DB: ``name``,
+        ``rarity`` (``basic``/``common``/``uncommon``/``rare``/``mythic``),
+        ``mana_cost`` (Scryfall braces), ``mana_value``, ``colors`` (WUBRG),
+        ``types`` and ``set_code``. Cards the DB lacks are left out."""
+        wanted = sorted({int(g) for g in grp_ids if str(g).isdigit()})
+        facts: Dict[int, Dict[str, Any]] = {}
+        db_path = self._resolve_mtga_db_path() if wanted else None
+        if not db_path:
+            return facts
+        tag_pattern = re.compile(r"<[^>]+>")
+        try:
+            conn = self._connect_mtga_db(db_path)
+            cur = conn.cursor()
+            for start in range(0, len(wanted), 500):
+                chunk = wanted[start : start + 500]
+                rows = self._title_join_rows(
+                    cur,
+                    'c."GrpId", l."Loc", c."Rarity", c."OldSchoolManaText", c."Colors",'
+                    ' c."Types", c."ExpansionCode"',
+                    f'c."GrpId" IN ({",".join(str(g) for g in chunk)})',
+                )
+                for grp_id, title, rarity, cost, colors, types, set_code in rows:
+                    grp_id = int(grp_id)
+                    if grp_id in facts:
+                        continue
+                    parsed = self.parse_arena_mana_cost(cost)
+                    color_ids = {
+                        int(p) for p in str(colors or "").split(",") if p.strip().isdigit()
+                    }
+                    type_ids = {
+                        int(p) for p in str(types or "").split(",") if p.strip().isdigit()
+                    }
+                    facts[grp_id] = {
+                        "name": tag_pattern.sub("", str(title or "")).strip() or None,
+                        "rarity": DRAFT_RARITIES.get(int(rarity or 0), "common"),
+                        "mana_cost": parsed[0] if parsed else None,
+                        "mana_value": parsed[1] if parsed else None,
+                        "colors": "".join(c for i, c in enumerate("WUBRG", 1) if i in color_ids),
+                        "types": [w for i, w in ARENA_CARD_TYPES.items() if i in type_ids],
+                        "set_code": str(set_code or "").upper() or None,
+                    }
+            conn.close()
+        except Exception:
+            return {}
+        return facts
 
     def get_card_ability_texts(self, grp_id: int) -> List[str]:
         """Return every localized ability text for a card (for role classification)."""

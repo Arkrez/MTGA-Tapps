@@ -108,6 +108,22 @@ describe('replay routes', () => {
     expect(replayRouteHash('g1', { row: 1.5 })).toBe('#/replay/g1');
   });
 
+  it('round-trips a draft replay and keeps it out of the game replay route', async () => {
+    const { draftReplayRouteHash, parseDraftReplayRoute, parseReplayRoute } = await import('./routes');
+    const hash = draftReplayRouteHash('bot-c/1', { step: 'p2p9', returnHash: '#/replay' });
+    expect(hash).toBe(`#/replay/draft/bot-c%2F1?step=p2p9&return=${encodeURIComponent('#/replay')}`);
+    expect(parseDraftReplayRoute(hash)).toEqual({ draftId: 'bot-c/1', step: 'p2p9', returnHash: '#/replay' });
+    expect(parseReplayRoute(hash)).toBeNull();
+    expect(parseDraftReplayRoute('#/replay/draft/d?step=nine&return=https%3A%2F%2Fx')).toEqual({
+      draftId: 'd',
+      step: null,
+      returnHash: null,
+    });
+    expect(parseDraftReplayRoute('#/replay/draft/')).toBeNull();
+    expect(parseDraftReplayRoute('#/replay/g1')).toBeNull();
+    expect(draftReplayRouteHash('d', { step: 'bad' })).toBe('#/replay/draft/d');
+  });
+
   it('drops malformed seq and non-hash return targets', async () => {
     const { parseReplayRoute, replayRouteHash } = await import('./routes');
     expect(parseReplayRoute('#/replay/g?at=-3&return=https%3A%2F%2Fexample.com')).toEqual({

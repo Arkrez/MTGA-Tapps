@@ -142,6 +142,19 @@ Primary code paths:
   (damage, life, removal, counters, P/T, discards, mills, each with its source)
   until the next action; removed permanents stay dimmed in their slot meanwhile,
   and moves carry `by` (Arena's affector root) for recorded games.
+- `src/mtga_tracker/draft_capture.py` / `draft_api.py` + `ui/src/replay/draft/`: Draft
+  Replay. `DraftCapture` reads bot (`BotDraftDraft*`) and player (`Draft.Notify`,
+  `EventPlayerDraftMakePick`) drafts plus courses into `drafts` / `draft_picks`
+  (migration 36) with idempotent upserts, from the live loop (cheap substring gate in
+  `tracker_lifecycle._process_new_events`, failures only log) and from the explicit
+  `POST /api/drafts/import-log` rescan of `Player-prev.log` + `Player.log`. Served by
+  `GET /api/drafts` and `/api/draft?id=`; card facts from `CardDatabase.draft_card_facts`.
+  Reset clears the tables; backup merge unions them. `ui/src/replay/framework/` is the
+  shared step-replay framework (timeline, `useStepPlayback`, `StepControls`, `kinds.ts`
+  route registry); the draft page is lazy at `#/replay/draft/<id>`. Wheel detection
+  infers the pod size and matches only at that gap. `docs/DRAFT_REPLAY.md` is the
+  binding contract; change it first. Tests: `tests/test_draft_capture.py`,
+  `ui/src/replay/draft/*.test.ts*`, `ui/src/replay/framework/*.test.ts`.
 - `ui/src/replay/`: the Replay page — pure reducer/layout/playback-clock/image-queue/prefs
   modules with tests, `export/` (pure video plan, Canvas 2D frame composer, WebCodecs +
   mp4-muxer encoder for the in-browser MP4 export; each codec is probed with one frame and

@@ -82,12 +82,14 @@ import {
   parseDeckRoute,
   parseGameRoute,
   parseOpponentRoute,
+  parseDraftReplayRoute,
   parseReplayRoute,
 } from './routes';
 import './styles.css';
 
 const loadReplayPage = () => import('./replay/components/ReplayPage');
 const ReplayPage = lazy(loadReplayPage);
+const DraftReplayPage = lazy(() => import('./replay/draft/DraftReplayPage'));
 import { getInitialTheme, hasStoredTheme, persistTheme, systemTheme, type ThemeName } from './theme';
 
 type LoadState =
@@ -845,6 +847,7 @@ export default function App() {
   const settingsRoute = useMemo(() => parseSettingsRoute(routeHash), [routeHash]);
   const liveRoute = useMemo(() => parseLiveRoute(routeHash), [routeHash]);
   const replayRoute = useMemo(() => parseReplayRoute(routeHash), [routeHash]);
+  const draftReplayRoute = useMemo(() => parseDraftReplayRoute(routeHash), [routeHash]);
   // The player (three.js, ~1 MB) downloads on first use. Fetch it while the
   // Replay list is open so choosing a game does not wait for it.
   const onReplayList = Boolean(replayRoute && !replayRoute.gameId);
@@ -949,6 +952,7 @@ export default function App() {
       || settingsRoute
       || liveRoute
       || replayRoute
+      || draftReplayRoute
       || gamesRoute
       || opponentsRoute
       || loadState.status !== 'loaded'
@@ -962,11 +966,11 @@ export default function App() {
     } else if (sectionId && !sectionId.startsWith('/')) {
       document.getElementById(sectionId)?.scrollIntoView?.({ block: 'start' });
     }
-  }, [auditRoute, cardRoute, deckFinderRoute, deckManagerRoute, deckRoute, gameRoute, gamesRoute, liveRoute, loadState.status, opponentRoute, opponentsRoute, replayRoute, routeHash, settingsRoute]);
+  }, [auditRoute, cardRoute, deckFinderRoute, deckManagerRoute, deckRoute, draftReplayRoute, gameRoute, gamesRoute, liveRoute, loadState.status, opponentRoute, opponentsRoute, replayRoute, routeHash, settingsRoute]);
 
   useEffect(() => {
-    if (replayRoute?.gameId) {
-      // The replay player titles its own tab.
+    if (replayRoute?.gameId || draftReplayRoute) {
+      // The replay players title their own tab.
       return;
     }
     document.title = replayRoute
@@ -990,10 +994,10 @@ export default function App() {
                   : deckFinderRoute
                     ? pageTitle('Deck Finder')
                     : pageTitle('Overview');
-  }, [auditRoute, deckRoute, gameRoute, gamesRoute, cardRoute, opponentRoute, opponentsRoute, deckFinderRoute, deckManagerRoute, replayRoute]);
+  }, [auditRoute, deckRoute, draftReplayRoute, gameRoute, gamesRoute, cardRoute, opponentRoute, opponentsRoute, deckFinderRoute, deckManagerRoute, replayRoute]);
 
   useEffect(() => {
-    if (deckManagerRoute || deckName || gameId || cardName || opponentRoute || auditRoute || gamesRoute || opponentsRoute || deckFinderRoute || replayRoute) {
+    if (deckManagerRoute || deckName || gameId || cardName || opponentRoute || auditRoute || gamesRoute || opponentsRoute || deckFinderRoute || replayRoute || draftReplayRoute) {
       return;
     }
     let ignore = false;
@@ -1033,7 +1037,7 @@ export default function App() {
       activeController?.abort();
       window.clearInterval(refreshId);
     };
-  }, [filters, trendRange, deckName, gameId, cardName, opponentRoute, auditRoute, gamesRoute, opponentsRoute, deckFinderRoute, deckManagerRoute, replayRoute]);
+  }, [filters, trendRange, deckName, gameId, cardName, opponentRoute, auditRoute, gamesRoute, opponentsRoute, deckFinderRoute, deckManagerRoute, replayRoute, draftReplayRoute]);
 
   const playerName =
     loadState.status === 'loaded' ? loadState.snapshot.summary.player_name : undefined;
@@ -1066,7 +1070,9 @@ export default function App() {
         theme={theme}
         onToggleTheme={toggleTheme}
         navItems={
-          replayRoute
+          draftReplayRoute
+            ? undefined
+          : replayRoute
             ? (replayRoute.gameId ? undefined : replayNavItems)
           : opponentsRoute
             ? opponentsNavItems
@@ -1092,12 +1098,21 @@ export default function App() {
                   ? opponentNavItems
                   : undefined
         }
-        heading={replayRoute ? 'Replay' : opponentsRoute ? 'Opponents' : gamesRoute ? 'All Games' : auditRoute ? 'Database Health' : deckManagerRoute ? 'Deck Manager' : deckFinderRoute ? 'Deck Finder' : settingsRoute ? 'Settings' : liveRoute ? 'Live Scoreboard' : cardName ? formatCardName(cardName) : gameRoute ? 'Game Detail' : deckName ? 'Deck Details' : (opponentRoute ? 'Opponent Information' : dashboardTitle)}
+        heading={replayRoute || draftReplayRoute ? 'Replay' : opponentsRoute ? 'Opponents' : gamesRoute ? 'All Games' : auditRoute ? 'Database Health' : deckManagerRoute ? 'Deck Manager' : deckFinderRoute ? 'Deck Finder' : settingsRoute ? 'Settings' : liveRoute ? 'Live Scoreboard' : cardName ? formatCardName(cardName) : gameRoute ? 'Game Detail' : deckName ? 'Deck Details' : (opponentRoute ? 'Opponent Information' : dashboardTitle)}
         headingBadge={deckManagerRoute ? <span className="deck-manager-beta deck-manager-heading-beta">Beta</span>
-          : replayRoute ? <span className="deck-manager-beta deck-manager-heading-beta replay-heading-beta">Beta</span> : undefined}
-        mainClassName={liveRoute ? 'live-page-main' : replayRoute?.gameId ? 'replay-page-main' : undefined}
+          : replayRoute || draftReplayRoute ? <span className="deck-manager-beta deck-manager-heading-beta replay-heading-beta">Beta</span> : undefined}
+        mainClassName={liveRoute ? 'live-page-main' : replayRoute?.gameId || draftReplayRoute ? 'replay-page-main' : undefined}
       >
-        {replayRoute ? (
+        {draftReplayRoute ? (
+          <Suspense fallback={<div className="replay-loading">Loading draft…</div>}>
+            <DraftReplayPage
+              key={draftReplayRoute.draftId}
+              draftId={draftReplayRoute.draftId}
+              step={draftReplayRoute.step}
+              returnHash={draftReplayRoute.returnHash}
+            />
+          </Suspense>
+        ) : replayRoute ? (
           replayRoute.gameId ? (
             <Suspense fallback={<div className="replay-loading">Loading replay…</div>}>
               <ReplayPage

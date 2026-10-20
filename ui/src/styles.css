@@ -6897,3 +6897,18 @@ a.sidebar-deck-finder {
   gap: 12px;
   margin-bottom: 10px;
 }
+
+/* Replay list: Drafts section (the viewer itself lives in replay/draft/draft.css). */
+
+.draft-list-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-bottom: 10px;
+}
+
+.draft-list-status {
+  color: var(--muted);
+  font-size: 0.82rem;
+}

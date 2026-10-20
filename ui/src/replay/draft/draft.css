@@ -1,0 +1,360 @@
+/* Draft Replay (#/replay/draft/<id>). Arena's draft screen in spirit: a deep
+   indigo table, the pack in a grid with the pick glowing amber, the pool in
+   mana-value stacks on the right. Shares replay.css / replay-controls.css for
+   the header and transport; teal --replay still marks replay affordances. */
+
+.draft-replay {
+  --draft-table: radial-gradient(ellipse 120% 90% at 50% 0%, #2c2552 0%, #171433 45%, #0b0a18 100%);
+  --draft-ink: #ece8ff;
+  --draft-ink-muted: #b4acd6;
+  --draft-pick: #f6a632;
+  --draft-new: #5fd3c3;
+  --draft-card-radius: 4.75%;
+}
+
+.draft-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 34%);
+  gap: 10px;
+  min-height: 0;
+}
+
+.draft-pack-area,
+.draft-pool {
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, #8f7fe0 30%, transparent);
+  border-radius: 10px;
+  background: var(--draft-table);
+  color: var(--draft-ink);
+  box-shadow: inset 0 0 60px rgb(0 0 0 / 45%);
+}
+
+.draft-pack-area {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px 16px;
+}
+
+.draft-pack-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.draft-pick-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-shadow: 0 1px 6px rgb(0 0 0 / 60%);
+}
+
+.draft-seen {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  padding: 4px 11px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  background: rgb(255 255 255 / 7%);
+  color: var(--draft-ink-muted);
+}
+
+.draft-seen-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentcolor;
+}
+
+.draft-seen-wheel {
+  background: color-mix(in srgb, var(--draft-pick) 18%, transparent);
+  color: #ffd79b;
+}
+
+.draft-seen-wheel strong {
+  color: var(--draft-pick);
+}
+
+.draft-seen-new .draft-seen-dot {
+  background: var(--draft-new);
+}
+
+.draft-reveal {
+  margin-left: auto;
+}
+
+.draft-pack-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(clamp(104px, 11vw, 168px), 1fr));
+  gap: 12px;
+  align-content: start;
+}
+
+/* --- Cards --- */
+
+.draft-card {
+  position: relative;
+  aspect-ratio: 63 / 88;
+  border-radius: var(--draft-card-radius);
+  background: #1d1a33;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 55%);
+  transition: transform 140ms ease, box-shadow 140ms ease;
+}
+
+.draft-card img,
+.draft-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--draft-card-radius);
+  object-fit: cover;
+}
+
+.draft-pack-grid .draft-card:hover {
+  z-index: 2;
+  transform: translateY(-4px) scale(1.04);
+}
+
+.draft-card-picked {
+  box-shadow:
+    0 0 0 3px var(--draft-pick),
+    0 0 26px 6px color-mix(in srgb, var(--draft-pick) 60%, transparent);
+  transform: translateY(-3px);
+}
+
+.draft-card-picked::after {
+  content: 'PICKED';
+  position: absolute;
+  left: 50%;
+  bottom: -9px;
+  transform: translateX(-50%);
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--draft-pick);
+  color: #2a1500;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+/* Drawn frame for cards with no image (yet). */
+.draft-frame {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8% 7%;
+  border: 3px solid #0c0b14;
+  color: #15131f;
+  font-size: 0.68rem;
+  line-height: 1.2;
+  overflow: hidden;
+}
+
+.draft-frame-name {
+  font-weight: 800;
+}
+
+.draft-frame-cost {
+  font-weight: 700;
+  opacity: 0.8;
+}
+
+.draft-frame-type {
+  margin-top: auto;
+  font-style: italic;
+  opacity: 0.8;
+}
+
+.draft-frame-w { background: linear-gradient(#f6f1dc, #ddd3b0); }
+.draft-frame-u { background: linear-gradient(#c6dcf2, #8fb5dc); }
+.draft-frame-b { background: linear-gradient(#bdb3b1, #8d827f); }
+.draft-frame-r { background: linear-gradient(#f2c3a6, #df8f69); }
+.draft-frame-g { background: linear-gradient(#c3dcbf, #8cbb8a); }
+.draft-frame-m { background: linear-gradient(#f2dfa0, #d4b65c); }
+.draft-frame-c { background: linear-gradient(#d9d9de, #a9a9b3); }
+
+/* Arena's set-symbol rarity colors, as a small gem in the corner. */
+.draft-rarity {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 9px;
+  height: 9px;
+  border: 1px solid rgb(0 0 0 / 60%);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.draft-rarity-mythic { background: radial-gradient(circle at 35% 35%, #ffbf7a, #e4561b); }
+.draft-rarity-rare { background: radial-gradient(circle at 35% 35%, #fff0b8, #c79a2c); }
+.draft-rarity-uncommon { background: radial-gradient(circle at 35% 35%, #f3f8ff, #8ea1b5); }
+.draft-rarity-common,
+.draft-rarity-basic { background: radial-gradient(circle at 35% 35%, #6b6b74, #17171c); }
+
+/* --- Missing since the pack was last seen --- */
+
+.draft-missing {
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid rgb(255 255 255 / 12%);
+}
+
+.draft-missing h4 {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #ffd79b;
+}
+
+.draft-missing-note {
+  margin-left: 6px;
+  color: var(--draft-ink-muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.draft-missing-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.draft-missing-card {
+  width: clamp(72px, 7vw, 104px);
+  margin: 0;
+}
+
+.draft-missing-card .draft-card {
+  opacity: 0.82;
+  filter: saturate(0.75);
+}
+
+.draft-missing-card figcaption {
+  min-height: 1.1rem;
+  margin-top: 4px;
+  text-align: center;
+}
+
+.draft-your-pick {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--draft-pick);
+  color: #2a1500;
+  font-size: 0.62rem;
+  font-weight: 800;
+}
+
+/* --- Pool --- */
+
+.draft-pool {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+.draft-pool-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.draft-pool-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.draft-pool-count,
+.draft-pool-types {
+  color: var(--draft-ink-muted);
+  font-size: 0.78rem;
+}
+
+.draft-pool-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 0.78rem;
+}
+
+.draft-pool-color {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.draft-pool-columns {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.draft-pool-column {
+  flex: 0 0 clamp(64px, 5.6vw, 92px);
+}
+
+.draft-pool-column-label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--draft-ink-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.draft-pool-column-label small {
+  font-weight: 500;
+}
+
+/* Stacked like Arena's pool: each card shows its title bar, the last shows whole. */
+.draft-pool-stack .draft-card + .draft-card {
+  margin-top: -112%;
+}
+
+.draft-pool-stack .draft-card:hover {
+  z-index: 3;
+  transform: translateX(6px);
+}
+
+.draft-card-new {
+  box-shadow:
+    0 0 0 2px var(--draft-new),
+    0 0 14px 3px color-mix(in srgb, var(--draft-new) 55%, transparent);
+}
+
+.draft-pool-empty {
+  margin: 8px 0;
+  color: var(--draft-ink-muted);
+  font-size: 0.85rem;
+}
+
+/* --- Transport extras --- */
+
+.step-seg-0 { background: var(--replay, #2bb3a3); }
+.step-seg-1 { background: color-mix(in srgb, var(--replay, #2bb3a3) 60%, #8f7fe0); }
+.step-seg-2 { background: #8f7fe0; }
+
+.step-scrub-mark {
+  position: absolute;
+  top: 2px;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 50%;
+  background: #f6a632;
+  pointer-events: none;
+}
+
+@media (max-width: 1100px) {
+  .draft-stage {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

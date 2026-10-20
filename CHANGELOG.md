@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Draft Replay
+
+- New: replay your drafts pick by pick from the Replay page. Each pick shows the
+  pack you saw with your pick highlighted, marks a pack you saw before when it
+  wheels, and lists the cards that left it since, rarest first, with your own
+  earlier pick marked. Your deck builds up beside it in mana-value columns.
+- **Hide picks** holds each pick back until you reveal it (H, then R), to test
+  your own picks.
+- The tracker records Quick Draft, Premier, Traditional and Pick Two drafts as
+  you play. **Find past drafts in Arena logs** recovers drafts from Arena's
+  current and previous log.
+- Replays now share a small step-playback framework (timeline, transport bar,
+  shortcuts, replay kinds), so more replay types can be added the same way.
+
 ## 0.7.1
 
 ### Replay

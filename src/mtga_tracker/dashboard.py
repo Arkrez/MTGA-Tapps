@@ -3599,6 +3599,8 @@ RESET_TABLES = (
     "console_logs",
     "raw_game_payloads",
     "rank_snapshots",
+    "draft_picks",
+    "drafts",
     "tracker_sessions",
 )
 
@@ -5897,6 +5899,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
             status, body = handled or (404, {"error": "Unknown Deck Manager action."})
             _send_bytes(self, status, json.dumps(body).encode("utf-8"), "application/json; charset=utf-8", {"Cache-Control": "no-store"})
             return
+        if parsed.path.startswith("/api/drafts/"):
+            from . import draft_api
+
+            origin = urlparse(self.headers.get("Origin") or "")
+            if origin.hostname and origin.hostname not in {"localhost", "127.0.0.1", "::1"}:
+                _send_bytes(self, 403, b'{"error":"Use the local dashboard to import drafts."}', "application/json")
+                return
+            handled = draft_api.handle_post(parsed.path, self.db_path)
+            status, body = handled or (404, {"error": "Unknown draft action."})
+            _send_bytes(self, status, json.dumps(body).encode("utf-8"), "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            return
         if parsed.path.startswith("/api/deckfinder/"):
             # Deck Finder in the webapp: lazy import keeps the dashboard
             # stdlib-only until the page is actually opened.
@@ -6247,6 +6260,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     {"Cache-Control": "no-store"},
                 )
                 return
+        if request_path in ("/api/drafts", "/api/draft"):
+            from . import draft_api
+
+            try:
+                handled = draft_api.handle_get(request_path, parse_qs(parsed.query), self.db_path)
+            except Exception as exc:  # noqa: BLE001 - report, never crash the server
+                handled = (500, {"error": str(exc)})
+            status, body = handled or (404, {"error": "Unknown draft endpoint."})
+            _send_bytes(self, status, json.dumps(body).encode("utf-8"), "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            return
         if request_path == "/api/overlay":
             from . import live_api
 
