@@ -1,4 +1,4 @@
-import type { DraftListRow, DraftStream } from './replay/draft/types';
+import type { DraftAnalytics, DraftListRow, DraftStream } from './replay/draft/types';
 import type { ReplayAvailability, ReplayStream } from './replay/types';
 
 export type { ReplayAvailability, ReplayStream } from './replay/types';
@@ -1233,6 +1233,23 @@ export async function fetchDraftReplay(draftId: string, signal?: AbortSignal): P
     throw new Error(response.status === 404 ? `No recorded draft for id: ${draftId}` : `Dashboard API returned ${response.status}`);
   }
   return response.json() as Promise<DraftStream>;
+}
+
+export async function fetchDraftAnalytics(signal?: AbortSignal): Promise<DraftAnalytics> {
+  const response = await fetch('/api/drafts/analytics', { signal });
+  if (!response.ok) {
+    throw new Error(`Draft analytics returned ${response.status}`);
+  }
+  const body = (await response.json()) as Partial<DraftAnalytics> | null;
+  const empty = { drafts: 0, wins: 0, losses: 0, games: 0, win_rate: null };
+  return {
+    summary: body?.summary ?? empty,
+    colors: body?.colors ?? [],
+    formats: body?.formats ?? [],
+    cards: body?.cards ?? [],
+    pairs: { best: body?.pairs?.best ?? [], worst: body?.pairs?.worst ?? [] },
+    pair_rules: body?.pair_rules ?? { min_drafts: 2, min_games: 4 },
+  };
 }
 
 export interface DraftImportResult {

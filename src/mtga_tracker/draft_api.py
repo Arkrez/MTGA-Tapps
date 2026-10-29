@@ -110,38 +110,94 @@ def _utc(value: Optional[str]) -> Optional[datetime]:
     return moment.astimezone(timezone.utc)
 
 
-def _draft_records(conn: sqlite3.Connection, drafts: List[Tuple]) -> Dict[str, Dict[str, int]]:
-    """Wins and losses per draft: the games of its event from the draft's start
-    until the next draft of the same event starts."""
-    events = sorted({row[2] for row in drafts if row[2]})
+#: Share of a draft's final main deck (by distinct card) that a game's submitted
+#: deck must contain to count as that draft's game.
+DECK_MATCH = 0.8
+
+
+def game_owners(
+    conn: sqlite3.Connection, *, deck_only: bool = False
+) -> Dict[str, Tuple[str, str, Optional[str]]]:
+    """Which draft each game of a draft event was played with:
+    ``{game_id: (draft_id, outcome, started_at)}``.
+
+    The game's submitted deck is matched against each draft's final deck of the
+    same event (the best match covering at least ``DECK_MATCH`` of it wins), so
+    clocks do not matter. Games no deck matches fall back to time: the latest
+    draft of the event that started before the game.
+    """
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(drafts)")}
+    deck_column = "deck_json" if "deck_json" in columns else "NULL"
+    drafts = conn.execute(
+        f"SELECT id, event_name, started_at, {deck_column} FROM drafts WHERE event_name IS NOT NULL"
+    ).fetchall()
+    events = sorted({row[1] for row in drafts})
     if not events:
         return {}
+    marks = ",".join("?" for _ in events)
     try:
-        marks = ",".join("?" for _ in events)
         games = conn.execute(
-            f"""SELECT COALESCE(m.event_name, m.queue), g.started_at, g.outcome
+            f"""SELECT g.id, COALESCE(m.event_name, m.queue), g.started_at, g.outcome
                 FROM games g JOIN matches m ON m.id = g.match_id
                 WHERE COALESCE(m.event_name, m.queue) IN ({marks})""",
             events,
         ).fetchall()
+        game_cards: Dict[str, set] = {}
+        for game_id, arena_id in conn.execute(
+            f"""SELECT gdc.game_id, gdc.arena_id FROM game_deck_cards gdc
+                JOIN participants p ON p.id = gdc.participant_id
+                JOIN games g ON g.id = gdc.game_id
+                JOIN matches m ON m.id = g.match_id
+                WHERE p.role = 'player' AND gdc.deck_zone = 'deck'
+                  AND gdc.arena_id IS NOT NULL
+                  AND COALESCE(m.event_name, m.queue) IN ({marks})""",
+            events,
+        ):
+            game_cards.setdefault(game_id, set()).add(int(arena_id))
     except sqlite3.Error:
         return {}
+    decks: Dict[str, List[Tuple[str, set]]] = {}
     windows: Dict[str, List[Tuple[datetime, str]]] = {}
-    for draft_id, _kind, event, started_at, *_ in drafts:
+    for draft_id, event, started_at, deck_json in drafts:
+        deck = _deck(deck_json)
+        if deck and deck["main"]:
+            decks.setdefault(event, []).append(
+                (draft_id, {card["arena_id"] for card in deck["main"]})
+            )
         start = _utc(started_at)
-        if event and start:
+        if start:
             windows.setdefault(event, []).append((start, draft_id))
     for spans in windows.values():
         spans.sort()
-    records: Dict[str, Dict[str, int]] = {}
-    for event, started_at, outcome in games:
-        played = _utc(started_at)
+    owners: Dict[str, Tuple[str, str, Optional[str]]] = {}
+    for game_id, event, started_at, outcome in games:
         owner = None
-        for start, draft_id in windows.get(event, []):
-            if played and start <= played:
-                owner = draft_id
-        if owner is None:
-            continue
+        cards = game_cards.get(game_id)
+        if cards:
+            scored = [
+                (len(cards & main) / len(main), draft_id) for draft_id, main in decks.get(event, [])
+            ]
+            best = max(scored, default=(0.0, None))
+            if best[0] >= DECK_MATCH:
+                owner = best[1]
+        if owner is None and not deck_only:
+            played = _utc(started_at)
+            for start, draft_id in windows.get(event, []):
+                if played and start <= played:
+                    owner = draft_id
+        if owner is not None:
+            owners[game_id] = (owner, outcome, started_at)
+    return owners
+
+
+def _draft_records(conn: sqlite3.Connection) -> Dict[str, Dict[str, int]]:
+    """Wins and losses per draft, from the games ``game_owners`` credits to it."""
+    try:
+        owners = game_owners(conn)
+    except sqlite3.Error:
+        return {}
+    records: Dict[str, Dict[str, int]] = {}
+    for owner, outcome, _started in owners.values():
         record = records.setdefault(owner, {"wins": 0, "losses": 0, "games": 0})
         record["games"] += 1
         if outcome == "win":
@@ -164,7 +220,7 @@ def list_drafts(db_path: Path) -> Dict[str, Any]:
             " ORDER BY draft_id, pack_number, pick_number"
         ):
             picks.setdefault(draft_id, []).append((pack, pick, _ids(picked)))
-        records = _draft_records(conn, drafts)
+        records = _draft_records(conn)
     finally:
         conn.close()
     every_card = [card for rows in picks.values() for _, _, cards in rows for card in cards]
@@ -287,9 +343,194 @@ def import_logs(db_path: Path) -> Dict[str, Any]:
         conn.close()
 
 
+#: A pair must have been in at least this many decks, and this many decided
+#: games, before it counts as notable (smaller samples are mostly noise).
+PAIR_MIN_DRAFTS = 2
+PAIR_MIN_GAMES = 4
+NOTABLE_PAIRS = 12
+#: Most pairs shown from one exact set of drafts: two decks that went 11-1
+#: otherwise fill the whole list with every pair of their cards.
+PAIRS_PER_DECK_SET = 2
+
+
+def _tally() -> Dict[str, int]:
+    return {"drafts": 0, "wins": 0, "losses": 0, "games": 0}
+
+
+def _add(tally: Dict[str, int], record: Dict[str, int]) -> None:
+    tally["drafts"] += 1
+    for key in ("wins", "losses", "games"):
+        tally[key] += record.get(key, 0)
+
+
+def _rate(tally: Dict[str, int]) -> Optional[float]:
+    decided = tally["wins"] + tally["losses"]
+    return tally["wins"] / decided if decided else None
+
+
+def draft_analytics(db_path: Path) -> Dict[str, Any]:
+    """Your own results across drafts (docs/DRAFT_REPLAY.md §2).
+
+    Games are credited to a draft as on the draft tiles (its event, from the
+    draft until the next draft of that event). A card's "in deck" record sums
+    the drafts whose final main deck played it; "picked" sums the drafts in
+    which you took it. Pairs are two non-basic cards in the same final deck.
+    """
+    empty = {
+        "summary": {**_tally(), "win_rate": None},
+        "colors": [],
+        "formats": [],
+        "cards": [],
+        "pairs": {"best": [], "worst": []},
+        "pair_rules": {"min_drafts": PAIR_MIN_DRAFTS, "min_games": PAIR_MIN_GAMES},
+    }
+    conn = _read_conn(db_path)
+    if conn is None:
+        return empty
+    try:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(drafts)")}
+        deck_column = "deck_json" if "deck_json" in columns else "NULL"
+        drafts = conn.execute(
+            f"""SELECT id, kind, event_name, started_at, updated_at, completed_at, {deck_column}
+                FROM drafts ORDER BY COALESCE(started_at, updated_at)"""
+        ).fetchall()
+        picks: Dict[str, List[Tuple[int, int, List[int]]]] = {}
+        for draft_id, pack, pick, picked in conn.execute(
+            "SELECT draft_id, pack_number, pick_number, picked_json FROM draft_picks"
+            " ORDER BY draft_id, pack_number, pick_number"
+        ):
+            picks.setdefault(draft_id, []).append((pack, pick, _ids(picked)))
+        records = _draft_records(conn)
+    finally:
+        conn.close()
+    if not drafts:
+        return empty
+
+    decks = {row[0]: _deck(row[6]) for row in drafts}
+    every_card = {c for rows in picks.values() for _, _, cards in rows for c in cards}
+    for deck in decks.values():
+        if deck:
+            every_card.update(card["arena_id"] for card in deck["main"])
+    facts = _card_db().draft_card_facts(sorted(every_card))
+
+    def basic(card: int) -> bool:
+        return (facts.get(card) or {}).get("rarity") == "basic"
+
+    summary = _tally()
+    by_colors: Dict[str, Dict[str, int]] = {}
+    by_format: Dict[str, Dict[str, int]] = {}
+    cards: Dict[int, Dict[str, Any]] = {}
+    pairs: Dict[Tuple[int, int], Dict[str, int]] = {}
+    pair_drafts: Dict[Tuple[int, int], List[str]] = {}
+    for draft_id, kind, event_name, *_rest in drafts:
+        record = records.get(draft_id, {"wins": 0, "losses": 0, "games": 0})
+        deck = decks.get(draft_id)
+        main = sorted({c["arena_id"] for c in deck["main"]} if deck else set())
+        played = [c for c in main if not basic(c)]
+        if record["games"]:
+            _add(summary, record)
+            colors = _main_colors(played, facts) or "C"
+            _add(by_colors.setdefault(colors, _tally()), record)
+            _add(by_format.setdefault(_label(event_name, kind), _tally()), record)
+        rows = picks.get(draft_id, [])
+        order = 0
+        picked_here: Dict[int, int] = {}
+        for pack, pick, taken in rows:
+            for card in taken:
+                order += 1
+                picked_here.setdefault(card, order)
+                entry = cards.setdefault(
+                    card,
+                    {"picked": _tally(), "in_deck": _tally(), "first_picks": 0, "pick_sum": 0},
+                )
+                entry["pick_sum"] += pick
+                if pack == 1 and pick == 1:
+                    entry["first_picks"] += 1
+        for card in picked_here:
+            _add(cards[card]["picked"], record)
+        for card in played:
+            entry = cards.setdefault(
+                card, {"picked": _tally(), "in_deck": _tally(), "first_picks": 0, "pick_sum": 0}
+            )
+            _add(entry["in_deck"], record)
+        if record["games"]:
+            for i, a in enumerate(played):
+                for b in played[i + 1 :]:
+                    _add(pairs.setdefault((a, b), _tally()), record)
+                    pair_drafts.setdefault((a, b), []).append(draft_id)
+
+    def card_ref(card: int) -> Dict[str, Any]:
+        fact = facts.get(card) or {}
+        return {
+            "arena_id": card,
+            "name": fact.get("name") or f"Card #{card}",
+            "rarity": fact.get("rarity", "common"),
+            "colors": fact.get("colors", ""),
+        }
+
+    def with_rate(tally: Dict[str, int]) -> Dict[str, Any]:
+        return {**tally, "win_rate": _rate(tally)}
+
+    card_rows = []
+    for card, entry in cards.items():
+        if basic(card):
+            continue
+        times = entry["picked"]["drafts"]
+        card_rows.append(
+            {
+                **card_ref(card),
+                "picked": with_rate(entry["picked"]),
+                "in_deck": with_rate(entry["in_deck"]),
+                "first_picks": entry["first_picks"],
+                # Average pick number within its pack (1 = taken first).
+                "avg_pick": round(entry["pick_sum"] / times, 1) if times else None,
+            }
+        )
+    card_rows.sort(key=lambda r: (-r["in_deck"]["games"], -r["picked"]["drafts"], r["name"]))
+
+    notable = [
+        (tuple(pair_drafts[(a, b)]), {"cards": [card_ref(a), card_ref(b)], **with_rate(tally)})
+        for (a, b), tally in pairs.items()
+        if tally["drafts"] >= PAIR_MIN_DRAFTS and tally["wins"] + tally["losses"] >= PAIR_MIN_GAMES
+    ]
+
+    def varied(ranked: List[Tuple[Tuple[str, ...], Dict[str, Any]]]) -> List[Dict[str, Any]]:
+        shown: List[Dict[str, Any]] = []
+        per_set: Counter = Counter()
+        for drafts_key, pair in ranked:
+            if per_set[drafts_key] >= PAIRS_PER_DECK_SET:
+                continue
+            per_set[drafts_key] += 1
+            shown.append(pair)
+            if len(shown) == NOTABLE_PAIRS:
+                break
+        return shown
+
+    # Most games first among equal rates: a 10-2 pair says more than a 5-1 one.
+    best = varied(sorted(notable, key=lambda p: (-(p[1]["win_rate"] or 0), -p[1]["games"])))
+    worst = varied(sorted(notable, key=lambda p: ((p[1]["win_rate"] or 0), -p[1]["games"])))
+
+    def grouped(groups: Dict[str, Dict[str, int]], key: str) -> List[Dict[str, Any]]:
+        return sorted(
+            ({key: name, **with_rate(t)} for name, t in groups.items()),
+            key=lambda row: (-row["games"], row[key]),
+        )
+
+    return {
+        "summary": with_rate(summary),
+        "colors": grouped(by_colors, "colors"),
+        "formats": grouped(by_format, "format_label"),
+        "cards": card_rows,
+        "pairs": {"best": best, "worst": worst},
+        "pair_rules": {"min_drafts": PAIR_MIN_DRAFTS, "min_games": PAIR_MIN_GAMES},
+    }
+
+
 def handle_get(path: str, query: Dict[str, List[str]], db_path: Path):
     if path == "/api/drafts":
         return 200, list_drafts(db_path)
+    if path == "/api/drafts/analytics":
+        return 200, draft_analytics(db_path)
     if path == "/api/draft":
         draft_id = (query.get("id") or [None])[0]
         if not draft_id:

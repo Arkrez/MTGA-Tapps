@@ -42,6 +42,13 @@ draft_picks(draft_id, pack_number, pick_number,      -- both 1-based
             PRIMARY KEY (draft_id, pack_number, pick_number))
 ```
 
+**Clock.** Arena's log times carry no zone and clients have written both
+local time and UTC. Live capture measures the offset against the real clock
+(the smallest gap seen, to the quarter hour); a rescan measures it from the
+file's last timestamp and modification time (ignored beyond 14 hours).
+Migration 38 shifts back drafts recorded before this, but only those whose
+deck-matched games prove they were stamped late by the local offset.
+
 Every write is an upsert on that key, so the live tracker and any number of
 rescans of the same log agree. `pack_cards_json` is NULL when the tracker only
 saw the pick, `picked_json` when it only saw the pack. Times are UTC ISO.
@@ -56,9 +63,18 @@ Gameplay reset clears both tables; backup merge unions them by draft id.
 - `GET /api/drafts` → `{"drafts": [{id, kind, event_name, format_label,
   started_at, updated_at, completed_at, picks, packs, colors, first_pick:
   {arena_id, name}}]}`, newest first. `colors` is the pool's two most-picked
-  colors in WUBRG order. `record` is `{wins, losses, games}` for the games of
-  the draft's event from its start until the next draft of that event starts
-  (game rows store naive local time; draft times are UTC).
+  colors in WUBRG order. `record` is `{wins, losses, games}` for the
+  games credited to the draft by `game_owners`: the draft of the same event
+  whose final main deck the game's submitted deck covers best (at least 80% of
+  its distinct cards), else the latest draft of the event that started before
+  the game (game rows store naive local time; draft times are UTC).
+- `GET /api/drafts/analytics` → `{summary, colors, formats, cards, pairs:
+  {best, worst}, pair_rules}`. Tallies are `{drafts, wins, losses, games,
+  win_rate}` over credited games. Per card (basics left out): `picked` (drafts
+  you took it in), `in_deck` (drafts whose final main deck played it),
+  `first_picks`, `avg_pick` (pick number within its pack). Pairs are two cards
+  in the same final deck, shown once they span 2 drafts and 4 decided games,
+  at most 2 per identical set of drafts, best and worst 12.
 - `GET /api/draft?id=` → the stream below; 400 without `id`, 404 for an
   unknown draft.
 - `POST /api/drafts/import-log` → rescans `Player-prev.log` then `Player.log`

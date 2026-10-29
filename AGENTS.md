@@ -159,7 +159,11 @@ Primary code paths:
   which the game replay's `TextureStore` also runs first; 17lands GIH WR for the
   heat map comes from `card_ratings.py` (`GET /api/card-ratings`: downloads 17lands, caches
   `card_ratings/*.json` beside the DB, daily refresh, stale copy when offline; GIH WR only,
-  unrated cards grey) via `seventeenLands.ts`. `docs/DRAFT_REPLAY.md` is the
+  unrated cards grey) via `seventeenLands.ts`. Games are credited to drafts by
+  `draft_api.game_owners` (decklist match first, time window as fallback); `GET
+  /api/drafts/analytics` feeds the Replay page's Draft details (`DraftAnalytics.tsx`).
+  Arena's log clock is measured, never assumed (`draft_capture.clock_offset`);
+  migration 38 repairs drafts stamped late before that. `docs/DRAFT_REPLAY.md` is the
   binding contract; change it first. Tests: `tests/test_draft_capture.py`,
   `ui/src/replay/draft/*.test.ts*`, `ui/src/replay/framework/*.test.ts`.
 - `ui/src/replay/`: the Replay page — pure reducer/layout/playback-clock/image-queue/prefs

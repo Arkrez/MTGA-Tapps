@@ -364,3 +364,190 @@ def test_draft_records_count_the_event_games_until_the_next_draft(conn, tmp_path
         "first": {"wins": 1, "losses": 1, "games": 2},
         "second": {"wins": 0, "losses": 1, "games": 1},
     }
+
+
+def test_draft_analytics_credits_games_to_picks_decks_and_pairs(conn, tmp_path, monkeypatch):
+    """Three drafts of one event: A+B together twice (3-1 and 2-0), B alone once (0-2)."""
+    drafts = [
+        ("d1", "2026-10-19T01:00:00+00:00", [10, 11], [[10, 1], [11, 1], [99, 17]]),
+        ("d2", "2026-10-19T05:00:00+00:00", [10, 11, 12], [[10, 1], [11, 1]]),
+        ("d3", "2026-10-19T09:00:00+00:00", [11, 12], [[11, 2]]),
+    ]
+    for draft_id, started, picked, main in drafts:
+        deck = {"name": "Draft Deck", "main": main, "sideboard": [], "submitted_at": started}
+        conn.execute(
+            "INSERT INTO drafts (id, kind, event_name, started_at, deck_json)"
+            " VALUES (?, 'player', ?, ?, ?)",
+            (draft_id, PLAYER_EVENT, started, json.dumps(deck)),
+        )
+        for n, card in enumerate(picked, 1):
+            conn.execute(
+                "INSERT INTO draft_picks (draft_id, pack_number, pick_number, picked_json)"
+                " VALUES (?, 1, ?, ?)",
+                (draft_id, n, json.dumps([card])),
+            )
+    conn.execute("INSERT INTO tracker_sessions (id, started_at) VALUES ('s', '')")
+    conn.execute(
+        "INSERT INTO matches (id, session_id, started_at, event_name) VALUES ('m', 's', '', ?)",
+        (PLAYER_EVENT,),
+    )
+
+    def local(iso):
+        moment = datetime.fromisoformat(iso).replace(tzinfo=timezone.utc).astimezone()
+        return moment.replace(tzinfo=None).isoformat()
+
+    results = [("02", "win"), ("03", "win"), ("03:30", "win"), ("04", "loss")]
+    results += [("06", "win"), ("07", "win"), ("10", "loss"), ("11", "loss")]
+    for n, (hour, outcome) in enumerate(results):
+        conn.execute(
+            "INSERT INTO games (id, session_id, match_id, game_number, started_at, outcome)"
+            " VALUES (?, 's', 'm', 1, ?, ?)",
+            (f"g{n}", local(f"2026-10-19T{hour if ':' in hour else hour + ':00'}:00"), outcome),
+        )
+    conn.commit()
+
+    class Cards:
+        def draft_card_facts(self, ids):
+            names = {10: "Alpha", 11: "Beta", 12: "Gamma", 99: "Forest"}
+            return {
+                i: {"name": names[i], "rarity": "basic" if i == 99 else "common", "colors": "G"}
+                for i in ids
+            }
+
+    monkeypatch.setattr(draft_api, "_cards", Cards())
+    status, data = draft_api.handle_get("/api/drafts/analytics", {}, tmp_path / "tracker.sqlite3")
+    assert status == 200
+    assert data["summary"] == {"drafts": 3, "wins": 5, "losses": 3, "games": 8, "win_rate": 0.625}
+    cards = {c["name"]: c for c in data["cards"]}
+    assert "Forest" not in cards  # basics are left out
+    assert cards["Alpha"]["in_deck"] == {
+        "drafts": 2,
+        "wins": 5,
+        "losses": 1,
+        "games": 6,
+        "win_rate": 5 / 6,
+    }
+    assert cards["Beta"]["in_deck"]["drafts"] == 3 and cards["Beta"]["in_deck"]["wins"] == 5
+    # Gamma was picked twice but never made a deck.
+    assert cards["Gamma"]["picked"]["drafts"] == 2 and cards["Gamma"]["in_deck"]["drafts"] == 0
+    assert cards["Alpha"]["first_picks"] == 2 and cards["Alpha"]["avg_pick"] == 1.0
+    [pair] = data["pairs"]["best"]
+    assert [c["name"] for c in pair["cards"]] == ["Alpha", "Beta"]
+    assert (pair["wins"], pair["losses"], pair["drafts"]) == (5, 1, 2)
+    assert data["formats"][0]["format_label"].startswith("Premier Draft")
+
+
+def test_clock_offset_rounds_to_quarter_hours_and_ignores_implausible_files(tmp_path):
+    import os
+    from datetime import timedelta
+
+    from mtga_tracker.draft_capture import clock_offset, file_clock_offset
+
+    log = datetime(2026, 10, 28, 3, 12, 19)
+    assert clock_offset(log, datetime(2026, 10, 28, 3, 13, 2, tzinfo=timezone.utc)) == timedelta(0)
+    assert clock_offset(log, datetime(2026, 10, 28, 10, 12, 50, tzinfo=timezone.utc)) == timedelta(
+        hours=7
+    )
+
+    path = tmp_path / "Player-prev.log"
+    path.write_text("[UnityCrossThreadLogger]10/28/2026 3:12:19 AM\n<== X(1)\n{}\n")
+    written = datetime(2026, 10, 28, 3, 12, 30, tzinfo=timezone.utc).timestamp()
+    os.utime(path, (written, written))
+    assert file_clock_offset(path) == timedelta(0)  # current clients log UTC
+    stale = datetime(2026, 11, 2, tzinfo=timezone.utc).timestamp()
+    os.utime(path, (stale, stale))
+    assert file_clock_offset(path) is None  # copied or touched later: no evidence
+
+
+def test_live_capture_measures_the_log_clock(conn):
+    """A client logging local time at UTC-7: the live reader works out the offset."""
+    from datetime import timedelta
+
+    from mtga_tracker.log_entry import LogEntry
+
+    now = datetime.now(timezone.utc)
+    log_time = (now - timedelta(hours=7)).replace(tzinfo=None)
+    capture = DraftCapture(conn, live=True)
+    body = _notify("live-1", 1, 1, [1, 2, 3])
+    capture.consume(
+        LogEntry(header="[UnityCrossThreadLogger]", body="x", first_line="x", timestamp=log_time)
+    )
+    capture.consume(LogEntry(header="[UnityCrossThreadLogger]", body=body, first_line=body))
+    started = datetime.fromisoformat(
+        conn.execute("SELECT started_at FROM drafts WHERE id = 'live-1'").fetchone()[0]
+    )
+    assert abs(started - now) < timedelta(minutes=2)
+
+
+def _deck_game(conn, game_id, started_local, outcome, cards):
+    conn.execute("INSERT OR IGNORE INTO tracker_sessions (id, started_at) VALUES ('s', '')")
+    conn.execute(
+        "INSERT OR IGNORE INTO matches (id, session_id, started_at, event_name)"
+        " VALUES ('m', 's', '', ?)",
+        (PLAYER_EVENT,),
+    )
+    conn.execute(
+        "INSERT INTO games (id, session_id, match_id, game_number, started_at, outcome)"
+        " VALUES (?, 's', 'm', 1, ?, ?)",
+        (game_id, started_local, outcome),
+    )
+    conn.execute(
+        "INSERT INTO participants (id, game_id, role) VALUES (?, ?, 'player')",
+        (f"p-{game_id}", game_id),
+    )
+    for card in cards:
+        conn.execute(
+            "INSERT INTO game_deck_cards"
+            " (game_id, participant_id, arena_id, display_name, deck_zone, quantity)"
+            " VALUES (?, ?, ?, 'Card', 'deck', 1)",
+            (game_id, f"p-{game_id}", card),
+        )
+
+
+def test_games_go_to_the_draft_whose_deck_they_played_whatever_the_clocks_say(
+    conn, tmp_path, monkeypatch
+):
+    import time
+
+    from mtga_tracker.draft_capture import repair_shifted_draft_times
+
+    monkeypatch.setenv("TZ", "America/Los_Angeles")
+    time.tzset()
+    try:
+        for draft_id, started, main in (
+            # Stamped 7 h late (UTC log read as local): its games look earlier than it.
+            ("late", "2026-10-24T06:10:11+00:00", [1, 2, 3, 4, 5]),
+            # Right already (from a local-time log); must be left alone.
+            ("right", "2026-10-25T01:00:00+00:00", [6, 7, 8, 9, 10]),
+        ):
+            deck = {
+                "name": "Draft Deck",
+                "main": [[c, 1] for c in main],
+                "sideboard": [],
+                "submitted_at": started,
+            }
+            conn.execute(
+                "INSERT INTO drafts (id, kind, event_name, started_at, completed_at, deck_json)"
+                " VALUES (?, 'player', ?, ?, ?, ?)",
+                (draft_id, PLAYER_EVENT, started, started, json.dumps(deck)),
+            )
+        # Local (PDT) game times: 17:13 on the 23rd is 00:13 UTC on the 24th.
+        _deck_game(conn, "a", "2026-10-23T17:13:00", "win", [1, 2, 3, 4, 5, 90])
+        _deck_game(conn, "b", "2026-10-23T17:40:00", "loss", [1, 2, 3, 4])
+        _deck_game(conn, "c", "2026-10-24T19:00:00", "win", [6, 7, 8, 9, 10])
+        conn.commit()
+        monkeypatch.setattr(
+            draft_api, "_cards", type("Cards", (), {"draft_card_facts": lambda self, ids: {}})()
+        )
+        db = tmp_path / "tracker.sqlite3"
+        records = {r["id"]: r["record"] for r in draft_api.list_drafts(db)["drafts"]}
+        assert records["late"] == {"wins": 1, "losses": 1, "games": 2}
+        assert records["right"] == {"wins": 1, "losses": 0, "games": 1}
+
+        repair_shifted_draft_times(conn)
+        times = dict(conn.execute("SELECT id, started_at FROM drafts").fetchall())
+        assert times["late"] == "2026-10-23T23:10:11+00:00"
+        assert times["right"] == "2026-10-25T01:00:00+00:00"
+    finally:
+        monkeypatch.delenv("TZ")
+        time.tzset()

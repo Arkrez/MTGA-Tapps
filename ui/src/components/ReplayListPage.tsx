@@ -4,6 +4,7 @@ import { formatDateTime, formatDuration, formatNumber, outcomeLabel, outcomeTone
 import { quickFilterPredicate } from '../quickFilters';
 import { REPLAY_ROUTE_HASH, replayRouteHash } from '../routes';
 import { Badge } from './Badge';
+import { DraftAnalytics } from './DraftAnalytics';
 import { DraftReplayList } from './DraftReplayList';
 import { ColorPips } from './ColorPips';
 import { DeckVisual } from './DeckVisual';
@@ -373,6 +374,7 @@ export function ReplayListPage() {
           )}
         </Section>
         <DraftReplayList />
+        <DraftAnalytics />
       </div>
     </>
   );

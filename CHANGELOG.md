@@ -14,8 +14,16 @@
 - The last game you played sits at the top of the Replay page with a
   **Watch replay** button.
 - Deck and draft tiles show their win rate as a colored pill (red below 50%,
-  amber around it, green above). A draft's record counts the games of its
-  event from that draft until the next draft of the same event.
+  amber around it, green above). A game counts for the draft whose final deck
+  it played (matched by decklist), or else the latest draft of its event.
+- **Draft details** on the Replay page: your overall draft record and win rate
+  by deck colors and by event; every card's win rate when it was in your deck
+  and when you picked it (with times picked, average pick and P1p1s); and the
+  best and worst pairs of cards played together.
+- Fixed: drafts recorded live were stamped hours late (Arena now writes its
+  log times in UTC), so their games were credited to the wrong draft. The
+  tracker now measures the log clock, and a one-time repair moves the affected
+  drafts back.
 
 ### Draft Replay
 

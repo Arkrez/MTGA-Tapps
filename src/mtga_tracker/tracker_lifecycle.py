@@ -274,7 +274,7 @@ class TrackerLifecycleMixin:
                 conn = self.analytics.connect()
                 if conn is None:
                     return
-                capture = self._draft_capture = DraftCapture(conn)
+                capture = self._draft_capture = DraftCapture(conn, live=True)
             capture.consume(entry)
         except Exception:
             self._append_parser_diagnostic_log("Draft Replay could not record a draft entry.")

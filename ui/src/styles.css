@@ -7063,3 +7063,93 @@ a.replay-deck-tile {
   gap: 6px;
 }
 
+/* Replay list: Draft details (analytics). */
+.draft-stats-tabs {
+  margin-bottom: 12px;
+}
+
+.draft-stats-split {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 16px;
+  align-items: start;
+  margin-top: 12px;
+}
+
+.draft-stats-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+
+.draft-stats-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.draft-stats-muted {
+  color: var(--muted);
+}
+
+.draft-stats-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.draft-stats-rarity {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid rgb(0 0 0 / 50%);
+  background: #6b6b74;
+}
+
+.draft-stats-rarity-mythic { background: #e4561b; }
+.draft-stats-rarity-rare { background: #d6ad3e; }
+.draft-stats-rarity-uncommon { background: #b6c4d3; }
+
+.draft-pairs h4 {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+}
+
+.draft-pairs ol {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.draft-pairs li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 0.88rem;
+}
+
+.draft-pairs-cards,
+.draft-pairs-result {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+
+/* The summary tables are four short columns; the app-wide wide-table minimum would scroll their win rates away. */
+.draft-stats-split table {
+  min-width: 0;
+}

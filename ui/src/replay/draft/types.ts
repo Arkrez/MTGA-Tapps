@@ -78,3 +78,44 @@ export interface DraftListRow {
   record?: { wins: number; losses: number; games: number };
   first_pick: { arena_id: number; name: string | null } | null;
 }
+
+/** A draft-games tally: drafts counted, games won/lost/played, and the win rate of decided games. */
+export interface DraftTally {
+  drafts: number;
+  wins: number;
+  losses: number;
+  games: number;
+  win_rate: number | null;
+}
+
+export interface DraftCardRef {
+  arena_id: number;
+  name: string;
+  rarity: DraftRarity;
+  colors: string;
+}
+
+export interface DraftCardStats extends DraftCardRef {
+  /** Drafts in which you took the card, and those drafts' games. */
+  picked: DraftTally;
+  /** Drafts whose final main deck played it, and those drafts' games. */
+  in_deck: DraftTally;
+  /** Times taken Pack 1 Pick 1. */
+  first_picks: number;
+  /** Average pick number within its pack (1 = taken first). */
+  avg_pick: number | null;
+}
+
+export interface DraftPairStats extends DraftTally {
+  cards: [DraftCardRef, DraftCardRef];
+}
+
+/** `GET /api/drafts/analytics` (docs/DRAFT_REPLAY.md §2). */
+export interface DraftAnalytics {
+  summary: DraftTally;
+  colors: Array<DraftTally & { colors: string }>;
+  formats: Array<DraftTally & { format_label: string }>;
+  cards: DraftCardStats[];
+  pairs: { best: DraftPairStats[]; worst: DraftPairStats[] };
+  pair_rules: { min_drafts: number; min_games: number };
+}

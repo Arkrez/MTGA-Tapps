@@ -6275,7 +6275,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 status, body = 500, {"error": str(exc)}
             _send_bytes(self, status, json.dumps(body).encode("utf-8"), "application/json; charset=utf-8", {"Cache-Control": "no-store"})
             return
-        if request_path in ("/api/drafts", "/api/draft"):
+        if request_path in ("/api/drafts", "/api/draft", "/api/drafts/analytics"):
             from . import draft_api
 
             try:

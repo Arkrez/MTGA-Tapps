@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -58,12 +58,124 @@ def bot_draft_id(course_id: Optional[str], event_name: str, started: Optional[st
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"tapps:bot-draft:{event_name}:{started or ''}"))
 
 
-def _iso(timestamp: Optional[datetime]) -> Optional[str]:
+def _iso(timestamp: Optional[datetime], offset: Optional[timedelta] = None) -> Optional[str]:
+    """A log time as UTC ISO. Arena's log times carry no zone, and the client
+    has written them both in local time and in UTC, so the offset from log
+    time to UTC is measured (``clock_offset``) rather than assumed; without a
+    measurement the time is taken as UTC, as current clients write it."""
     if timestamp is None:
         return None
     if timestamp.tzinfo is None:
-        timestamp = timestamp.astimezone()
+        timestamp = (timestamp + (offset or timedelta(0))).replace(tzinfo=timezone.utc)
     return timestamp.astimezone(timezone.utc).isoformat()
+
+
+MAX_UTC_OFFSET = timedelta(hours=14)
+
+
+def clock_offset(log_time: datetime, real_utc: datetime) -> timedelta:
+    """UTC minus log time, to the nearest quarter hour (every UTC offset is a
+    multiple of 15 minutes, so seconds of logging lag round away)."""
+    seconds = (real_utc.replace(tzinfo=None) - log_time.replace(tzinfo=None)).total_seconds()
+    return timedelta(minutes=15 * round(seconds / 900))
+
+
+_LOG_TIME = re.compile(
+    r"^\[UnityCrossThreadLogger\](\d{1,2}/\d{1,2}/\d{4} \d{1,2}:\d{2}:\d{2}(?: [AP]M)?)"
+)
+
+
+def file_clock_offset(log_path: Path) -> Optional[timedelta]:
+    """A finished log's offset: its last timestamp against the file's
+    modification time (Arena writes until it closes the file)."""
+    from .log_timestamp import parse_log_timestamp
+
+    try:
+        size = log_path.stat().st_size
+        modified = datetime.fromtimestamp(log_path.stat().st_mtime, tz=timezone.utc)
+        with log_path.open("rb") as handle:
+            handle.seek(max(0, size - 2_000_000))
+            tail = handle.read().decode("utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    for line in reversed(tail):
+        match = _LOG_TIME.match(line)
+        if match:
+            parsed = parse_log_timestamp(match.group(1))
+            if parsed is not None:
+                offset = clock_offset(parsed, modified)
+                # Real UTC offsets are within 14 hours; a larger gap means the
+                # file was touched or copied later, which says nothing.
+                return offset if abs(offset) <= MAX_UTC_OFFSET else None
+    return None
+
+
+def _undo_local_shift(value: Optional[str]) -> Optional[str]:
+    """A time stored before migration 38 read Arena's UTC log time as local
+    time and converted it: map it back to the log time, which was UTC."""
+    if not value:
+        return value
+    try:
+        stored = datetime.fromisoformat(value)
+    except ValueError:
+        return value
+    if stored.tzinfo is None:
+        return value
+    log_time = stored.astimezone().replace(tzinfo=None)
+    return log_time.replace(tzinfo=timezone.utc).isoformat()
+
+
+def repair_shifted_draft_times(conn) -> None:
+    """Migration 38: drafts recorded while the client wrote UTC log times were
+    read as local time and stamped late by the UTC offset, so their own games
+    seemed to come before them. Only a draft whose games (matched by deck)
+    prove it started after they did is shifted back, and only when the shift
+    puts it before them; drafts from local-time logs are already right."""
+    from .draft_api import _utc, game_owners
+
+    ensure_draft_schema(conn)
+    first_game: Dict[str, datetime] = {}
+    for owner, _outcome, started in game_owners(conn, deck_only=True).values():
+        played = _utc(started)
+        if played and (owner not in first_game or played < first_game[owner]):
+            first_game[owner] = played
+    for draft_id, game_time in first_game.items():
+        row = conn.execute(
+            "SELECT started_at, updated_at, completed_at, deck_json FROM drafts WHERE id = ?",
+            (draft_id,),
+        ).fetchone()
+        started = _utc(row[0]) if row else None
+        fixed = _utc(_undo_local_shift(row[0])) if row else None
+        if not started or not fixed or started <= game_time or fixed > game_time:
+            continue
+        deck = row[3]
+        if deck:
+            try:
+                payload = json.loads(deck)
+                payload["submitted_at"] = _undo_local_shift(payload.get("submitted_at"))
+                deck = json.dumps(payload)
+            except ValueError:
+                pass
+        conn.execute(
+            "UPDATE drafts SET started_at = ?, updated_at = ?, completed_at = ?, deck_json = ?"
+            " WHERE id = ?",
+            (
+                _undo_local_shift(row[0]),
+                _undo_local_shift(row[1]),
+                _undo_local_shift(row[2]),
+                deck,
+                draft_id,
+            ),
+        )
+        for pack, pick, observed in conn.execute(
+            "SELECT pack_number, pick_number, observed_at FROM draft_picks WHERE draft_id = ?",
+            (draft_id,),
+        ).fetchall():
+            conn.execute(
+                "UPDATE draft_picks SET observed_at = ? WHERE draft_id = ? AND pack_number = ?"
+                " AND pick_number = ?",
+                (_undo_local_shift(observed), draft_id, pack, pick),
+            )
 
 
 def _card_ids(values: Any) -> List[int]:
@@ -127,8 +239,14 @@ def ensure_draft_schema(conn) -> None:
 class DraftCapture:
     """Stateful reader: keep one instance per log stream (live tracker or rescan)."""
 
-    def __init__(self, conn):
+    def __init__(self, conn, *, live: bool = False, offset: Optional[timedelta] = None):
+        """``live``: entries arrive as Arena writes them, so the log clock's
+        offset is measured against the real clock (the smallest gap seen is
+        the true offset; a backlog read at start only makes gaps larger).
+        ``offset``: a known offset for a rescanned file."""
         self.conn = conn
+        self._live = live
+        self._offset = offset
         ensure_draft_schema(conn)
         self._last_time: Optional[str] = None
         # event name -> course id for courses currently in a draft module
@@ -143,7 +261,13 @@ class DraftCapture:
     def consume(self, entry) -> Optional[str]:
         body = entry.body
         if entry.timestamp is not None:
-            self._last_time = _iso(entry.timestamp)
+            if self._live:
+                measured = clock_offset(entry.timestamp, datetime.now(timezone.utc))
+                if abs(measured) <= MAX_UTC_OFFSET and (
+                    self._offset is None or measured < self._offset
+                ):
+                    self._offset = measured
+            self._last_time = _iso(entry.timestamp, self._offset)
         if not is_draft_entry(body):
             return None
         if "Draft.Notify" in body:
@@ -391,6 +515,7 @@ class DraftCapture:
 
 def _scan(capture: DraftCapture, log_path: Path) -> None:
     buffer = LineBuffer()
+    capture._offset = file_clock_offset(log_path)
 
     def feed(entries: Iterable) -> None:
         for entry in entries:
