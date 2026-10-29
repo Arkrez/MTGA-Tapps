@@ -25,15 +25,29 @@ Arena never names a bot draft, so its id is `bot-<CourseId>` when the course
 was seen, else a UUID5 of the event and the first time the tracker saw it. A
 bot status with nothing picked after a draft that has picks starts a new row.
 
-### Tables (migration 36)
+**Final deck:** after the draft, Arena submits the built deck with `==> EventSetDeckV3`
+(`EventName`, `Summary.Name`, `Deck.MainDeck` / `Deck.Sideboard` piles of
+`{cardId, quantity}`), again after every edit between matches. The submission
+goes to the newest draft of that event that started before it; a submission
+older than the stored one never replaces it (rescans replay old ones).
+
+### Tables (migrations 36 and 37)
 
 ```
 drafts(id TEXT PK, kind 'bot'|'player', event_name, course_id,
-       started_at, updated_at, completed_at, card_pool_json)
+       started_at, updated_at, completed_at, card_pool_json,
+       deck_json)        -- 37: {name, main, sideboard, submitted_at}
 draft_picks(draft_id, pack_number, pick_number,      -- both 1-based
             pack_cards_json, picked_json, observed_at,
             PRIMARY KEY (draft_id, pack_number, pick_number))
 ```
+
+**Clock.** Arena's log times carry no zone and clients have written both
+local time and UTC. Live capture measures the offset against the real clock
+(the smallest gap seen, to the quarter hour); a rescan measures it from the
+file's last timestamp and modification time (ignored beyond 14 hours).
+Migration 38 shifts back drafts recorded before this, but only those whose
+deck-matched games prove they were stamped late by the local offset.
 
 Every write is an upsert on that key, so the live tracker and any number of
 rescans of the same log agree. `pack_cards_json` is NULL when the tracker only
@@ -49,7 +63,21 @@ Gameplay reset clears both tables; backup merge unions them by draft id.
 - `GET /api/drafts` → `{"drafts": [{id, kind, event_name, format_label,
   started_at, updated_at, completed_at, picks, packs, colors, first_pick:
   {arena_id, name}}]}`, newest first. `colors` is the pool's two most-picked
-  colors in WUBRG order.
+  colors in WUBRG order. `record` is `{wins, losses, games}` for the
+  games credited to the draft by `game_owners`: the draft of the same event
+  whose final main deck the game's submitted deck covers best (at least 80% of
+  its distinct cards), else the latest draft of the event that started before
+  the game (game rows store naive local time; draft times are UTC).
+- `GET /api/drafts/analytics` → `{summary, colors, formats, cards, pairs:
+  {best, worst}, pair_rules}`. Tallies are `{drafts, wins, losses, games,
+  win_rate}` over credited games. Per card (basics left out): `in_hand`, the
+  tally over the games in which you held it (kept opening hand, drawn, or drawn
+  or played per the game card summary; matched to the draft's own cards by
+  name), so a card that stayed in the library never counts; plus `picked` and
+  `in_deck` (draft counts), `first_picks` and `avg_pick` (pick number within
+  its pack). Pairs are two cards you held in the same game, shown once they
+  span 2 drafts and 4 decided games, at most 2 per identical set of drafts,
+  best and worst 12.
 - `GET /api/draft?id=` → the stream below; 400 without `id`, 404 for an
   unknown draft.
 - `POST /api/drafts/import-log` → rescans `Player-prev.log` then `Player.log`
@@ -64,6 +92,8 @@ Gameplay reset clears both tables; backup merge unions them by draft id.
   "picks": [{"pack": 1, "pick": 1, "pack_cards": [grpId…],
              "picked": [grpId…], "observed_at": "ISO|null"}],
   "pool": [grpId…],                     // Arena's final pool; [] until complete
+  "deck": {"name", "submitted_at",      // null when no submission was seen
+           "main": [{"arena_id", "quantity"}], "sideboard": [...]},
   "cards": {"<grpId>": {"arena_id", "name", "rarity", "mana_cost",
                         "mana_value", "colors", "types", "set_code"}}
 }
@@ -108,11 +138,47 @@ and render a lazy-loaded page that uses `useStepPlayback` and `StepControls`.
   are hidden. Laid out in Arena's mana-value columns (0–1, 2, 3, 4, 5, 6+,
   Lands).
 
+### Card art (`draftImages.ts`, `images.prewarmCardImages`)
+
+Scryfall has no Arena ids for new sets for a while, so per-card lookups
+(Arena id, then exact name, both rate-limited) took 20–30 s for a draft and
+dropped cards on rate limits. The viewer now resolves every card **by name**
+through `POST /cards/collection` (75 per request, batches in parallel, retried
+with backoff). The cards on screen go in a small first batch, so they show in
+about a second; answers persist in `resolvedImageCache` (localStorage), so
+later visits need no lookups. Only cards the batch could not answer use the
+per-card queue. The next picks' images are preloaded; a failed download is
+retried once before the drawn frame. The game replay's `TextureStore` runs the
+same batch before its per-card queue.
+
+### 17lands win rates (`card_ratings.py`, `seventeenLands.ts`)
+
+17lands publishes `https://www.17lands.com/card_ratings/data?expansion=&format=&start_date=`
+keyed by `mtga_id`. The tracker downloads it (`GET /api/card-ratings?expansions=&formats=`,
+up to four of each, formats whitelisted) and keeps each source as
+`card_ratings/<EXP>.<Format>.json` next to the analytics database, refreshed at
+most once a day. When the download fails, the last saved copy is served, so
+replays keep their numbers offline and later. Sources merge in priority order,
+first published rate wins: the draft's own format, then Premier Draft (largest
+sample), for the main set and its Alchemy set (`Y26FRA`).
+
+Only games-in-hand win rate (GIH WR, `ever_drawn_win_rate`) is shown. 17lands
+withholds it until a card has enough games (roughly 500). Such a card stays
+unrated, with a **grey** background, never another statistic in its place. The
+heat map colors rated cards relative to the set: red two standard deviations
+below the mean, amber at it, green two above. **Win rates on/off** is
+remembered per browser.
+
 ### Viewer
 
-`#/replay/draft/<id>?step=&return=` (lazy route). The pack grid highlights the
-pick, a banner reports first look / seen before, the missing strip sits under
-the pack, and the pool panel stacks cards like Arena's. **Hide picks** (H)
+`#/replay/draft/<id>?step=&return=` (lazy route). The pack grid is ordered
+rarest first (Arena's order within a rarity) and highlights the pick, a banner
+reports first look / seen before, the missing strip sits under the pack, and
+the pool panel stacks cards like Arena's. With a submitted deck, a pick that
+made it carries an **In deck** badge, pool copies in the deck are outlined and
+the rest dimmed (first N copies of a card played N times), and **Final deck**
+opens it in Deck Manager's dialog layout. Hovering a card for 450 ms shows a
+large copy beside it, like Arena. **Hide picks** (H)
 holds each pick back until **Reveal** (R). Images use the replay's
 rate-limited Scryfall queue; cards Scryfall lacks get a drawn frame with name,
 cost, type and rarity.

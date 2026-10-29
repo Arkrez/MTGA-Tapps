@@ -806,8 +806,8 @@ describe('App', () => {
     await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('/api/games'))).toBe(true), {
       timeout: 4000,
     });
-    expect(await screen.findByRole('table', { name: 'Games to replay' }, { timeout: 4000 })).toBeInTheDocument();
-    expect(screen.getByText('Boros Mouse')).toBeInTheDocument();
+    expect(await screen.findByRole('list', { name: 'Decks' }, { timeout: 4000 })).toBeInTheDocument();
+    expect(screen.getByTitle("Show Boros Mouse's games")).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Replay Beta' })).toHaveClass('sidebar-replay-active');
     expect(screen.getByRole('link', { name: 'Deck Finder' })).not.toHaveClass('sidebar-deck-finder-active');
     expect(screen.getByRole('link', { name: 'Recent games' })).toBeInTheDocument();

@@ -274,7 +274,7 @@ class TrackerLifecycleMixin:
                 conn = self.analytics.connect()
                 if conn is None:
                     return
-                capture = self._draft_capture = DraftCapture(conn)
+                capture = self._draft_capture = DraftCapture(conn, live=True)
             capture.consume(entry)
         except Exception:
             self._append_parser_diagnostic_log("Draft Replay could not record a draft entry.")
@@ -297,7 +297,12 @@ class TrackerLifecycleMixin:
                         # A failed optional archive must never stop live tracking.
                         self._append_parser_diagnostic_log("Deck Manager could not archive a submitted deck.")
                 # Draft Replay: the substring gate keeps every other entry off this path.
-                if "Draft" in entry.body or "EventJoin" in entry.body or "EventGetCourses" in entry.body:
+                if (
+                    "Draft" in entry.body
+                    or "EventJoin" in entry.body
+                    or "EventGetCourses" in entry.body
+                    or "EventSetDeckV3" in entry.body
+                ):
                     self._capture_draft_entry(entry)
                 routed = (
                     self.parser.route_entry(entry) if hasattr(self.parser, "route_entry") else None

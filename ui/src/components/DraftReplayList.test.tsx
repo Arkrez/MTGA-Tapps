@@ -14,6 +14,7 @@ const DRAFT = {
   packs: 3,
   colors: 'UR',
   first_pick: { arena_id: 106314, name: 'Fulminous Forte' },
+  record: { wins: 7, losses: 1, games: 8 },
 };
 
 describe('DraftReplayList', () => {
@@ -38,16 +39,17 @@ describe('DraftReplayList', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Find past drafts in Arena logs' }));
     expect(await screen.findByText(/Checked Player-prev.log and Player.log: 1 draft found/)).toBeInTheDocument();
-    const table = await screen.findByRole('table', { name: 'Drafts to replay' });
-    const row = within(table).getAllByRole('row')[1];
-    expect(within(row).getByText('Fulminous Forte')).toBeInTheDocument();
-    expect(within(row).getByText('Incomplete')).toBeInTheDocument();
-    expect(within(row).getByRole('link', { name: 'Replay draft' })).toHaveAttribute(
-      'href',
-      `#/replay/draft/bot-c1?return=${encodeURIComponent('#/replay')}`,
+    const tiles = await screen.findByRole('list', { name: 'Drafts' });
+    const tile = within(tiles).getByRole('link', { name: /Quick Draft - FRA/ });
+    expect(within(tile).getByText('First pick: Fulminous Forte')).toBeInTheDocument();
+    expect(within(tile).getByText('Incomplete')).toBeInTheDocument();
+    expect(within(tile).getByText(/41 picks/)).toBeInTheDocument();
+    expect(within(tile).getByText('88% WR')).toHaveAttribute('title', '7–1 (88% of decided games)');
+    expect(within(tile).getByText('7–1')).toBeInTheDocument();
+    expect(tile).toHaveAttribute('href', `#/replay/draft/bot-c1?return=${encodeURIComponent('#/replay')}`);
+    expect(within(tile).getByRole('img', { name: 'Fulminous Forte' })).toHaveAttribute(
+      'src',
+      'https://api.scryfall.com/cards/named?exact=Fulminous%20Forte&format=image&version=art_crop',
     );
-
-    fireEvent.click(within(row).getByText('41'));
-    expect(window.location.hash).toBe(`#/replay/draft/bot-c1?return=${encodeURIComponent('#/replay')}`);
   });
 });

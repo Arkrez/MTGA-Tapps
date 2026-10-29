@@ -38,12 +38,26 @@ export interface DraftInfo {
   completed_at: string | null;
 }
 
+export interface DraftDeckCard {
+  arena_id: number;
+  quantity: number;
+}
+
+export interface DraftDeck {
+  name: string | null;
+  submitted_at: string | null;
+  main: DraftDeckCard[];
+  sideboard: DraftDeckCard[];
+}
+
 export interface DraftStream {
   version: 1;
   draft: DraftInfo;
   picks: DraftPickRow[];
   /** Arena's final card pool (empty until the draft completes). */
   pool: number[];
+  /** The deck last submitted to the draft's event; null when none was seen. */
+  deck?: DraftDeck | null;
   /** Card facts keyed by grpId. */
   cards: Record<string, DraftCard>;
 }
@@ -60,5 +74,54 @@ export interface DraftListRow {
   packs: number;
   /** The pool's two most-picked colors (WUBRG). */
   colors: string;
+  /** Games played with the draft's deck: its event, from the draft until the next draft of that event. */
+  record?: { wins: number; losses: number; games: number };
   first_pick: { arena_id: number; name: string | null } | null;
+}
+
+/** A draft-games tally: drafts counted, games won/lost/played, and the win rate of decided games. */
+export interface DraftTally {
+  drafts: number;
+  wins: number;
+  losses: number;
+  games: number;
+  win_rate: number | null;
+}
+
+export interface DraftCardRef {
+  arena_id: number;
+  name: string;
+  rarity: DraftRarity;
+  colors: string;
+}
+
+export interface DraftCardStats extends DraftCardRef {
+  /**
+   * Games in which you held the card (kept opening hand, drawn or played) and
+   * their results; `drafts` counts the drafts those games came from.
+   */
+  in_hand: DraftTally;
+  /** Drafts in which you took the card. */
+  picked: number;
+  /** Drafts whose final main deck played it. */
+  in_deck: number;
+  /** Times taken Pack 1 Pick 1. */
+  first_picks: number;
+  /** Average pick number within its pack (1 = taken first). */
+  avg_pick: number | null;
+}
+
+/** Two cards, over the games in which you held both. */
+export interface DraftPairStats extends DraftTally {
+  cards: [DraftCardRef, DraftCardRef];
+}
+
+/** `GET /api/drafts/analytics` (docs/DRAFT_REPLAY.md §2). */
+export interface DraftAnalytics {
+  summary: DraftTally;
+  colors: Array<DraftTally & { colors: string }>;
+  formats: Array<DraftTally & { format_label: string }>;
+  cards: DraftCardStats[];
+  pairs: { best: DraftPairStats[]; worst: DraftPairStats[] };
+  pair_rules: { min_drafts: number; min_games: number };
 }

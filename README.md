@@ -247,7 +247,9 @@ name opening a page with your full history against them:
 ## Replay (beta)
 
 Replay is built into the game pages, so you do not have to hunt for a recording.
-Open **Replay** in the sidebar to browse recent games, use **Watch replay** on
+Open **Replay** in the sidebar to watch your last game straight away (it sits
+at the top) or browse recent games (grouped into deck tiles; open one to list
+its games), use **Watch replay** on
 the Live Scoreboard after a match, or use the play icon in Today's Games,
 Recent Games, All Games, and deck or opponent histories. Game Detail has a
 **Watch replay** button and links in its event timeline that jump to that
@@ -279,6 +281,13 @@ pick: the pack in front of you with your pick highlighted, a **Seen before**
 banner when a pack comes back around, the cards that left it since (rarest
 first, your own earlier pick marked), and your deck so far in mana-value
 columns. **Hide picks** lets you test yourself before revealing each pick.
+Packs are shown rarest first, and hovering a card for a moment shows a larger
+copy. Cards that made your final deck are marked, and **Final deck** opens the
+deck you built. With **Win rates on**, each card gets a 17lands games-in-hand
+win rate and a heat-map glow (red to green) relative to the rest of the set;
+cards 17lands has not rated yet are grey. The tracker saves the 17lands data in
+its data folder (refreshed at most daily), so win rates still show later and
+offline.
 Quick Draft, Premier, Traditional and Pick Two drafts are all supported.
 
 The tracker records drafts while it runs. For drafts made while it was not

@@ -152,7 +152,18 @@ Primary code paths:
   Reset clears the tables; backup merge unions them. `ui/src/replay/framework/` is the
   shared step-replay framework (timeline, `useStepPlayback`, `StepControls`, `kinds.ts`
   route registry); the draft page is lazy at `#/replay/draft/<id>`. Wheel detection
-  infers the pod size and matches only at that gap. `docs/DRAFT_REPLAY.md` is the
+  infers the pod size and matches only at that gap. `EventSetDeckV3` submissions
+  fill `drafts.deck_json` (migration 37; latest submission wins) for the In deck
+  marks and the Final deck dialog. Card art resolves through
+  `images.prewarmCardImages` (Scryfall `/cards/collection` by name, batched),
+  which the game replay's `TextureStore` also runs first; 17lands GIH WR for the
+  heat map comes from `card_ratings.py` (`GET /api/card-ratings`: downloads 17lands, caches
+  `card_ratings/*.json` beside the DB, daily refresh, stale copy when offline; GIH WR only,
+  unrated cards grey) via `seventeenLands.ts`. Games are credited to drafts by
+  `draft_api.game_owners` (decklist match first, time window as fallback); `GET
+  /api/drafts/analytics` feeds the Replay page's Draft details (`DraftAnalytics.tsx`).
+  Arena's log clock is measured, never assumed (`draft_capture.clock_offset`);
+  migration 38 repairs drafts stamped late before that. `docs/DRAFT_REPLAY.md` is the
   binding contract; change it first. Tests: `tests/test_draft_capture.py`,
   `ui/src/replay/draft/*.test.ts*`, `ui/src/replay/framework/*.test.ts`.
 - `ui/src/replay/`: the Replay page — pure reducer/layout/playback-clock/image-queue/prefs
@@ -430,6 +441,11 @@ UI changes require vitest, tsc, lint, and a fresh `npm run build` (the dashboard
   run still belongs to the Python interpreter; use `build_macos_app.sh --fast`
   when testing current source with its native app identity. The fast build is
   for local iteration only and must not be used for a release.
+- `scripts/refresh_macos_app.sh` (`--pull`, `--fast`, `--no-launch`) is the local
+  "run my latest code" path: Python 3.12 build env in `build/venv-py312`, reuses the
+  installed overlay when cargo is missing, quits the running app (only after the build
+  succeeds), keeps the replaced app in `build/previous-app/`, relaunches and waits for
+  the dashboard. Never for releases.
 - The macOS BUNDLE and Windows folder each ship one tracker executable; Deck Finder's
   terminal UI is its `--deck-finder` mode. After a build, verify the tracker executable,
   integrated Deck Finder provider list, and terminal mode. Do not expect or add a second
