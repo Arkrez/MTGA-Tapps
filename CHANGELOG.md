@@ -17,9 +17,10 @@
   amber around it, green above). A game counts for the draft whose final deck
   it played (matched by decklist), or else the latest draft of its event.
 - **Draft details** on the Replay page: your overall draft record and win rate
-  by deck colors and by event; every card's win rate when it was in your deck
-  and when you picked it (with times picked, average pick and P1p1s); and the
-  best and worst pairs of cards played together.
+  by deck colors and by event; every card's win rate over the games in which you
+  held it (opening hand, drawn or played; a card left in the library does not
+  count), with times picked, times in your deck, average pick and P1p1s; and
+  the best and worst pairs of cards you held in the same game.
 - Fixed: drafts recorded live were stamped hours late (Arena now writes its
   log times in UTC), so their games were credited to the wrong draft. The
   tracker now measures the log clock, and a one-time repair moves the affected

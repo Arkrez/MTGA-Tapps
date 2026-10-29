@@ -96,16 +96,22 @@ export interface DraftCardRef {
 }
 
 export interface DraftCardStats extends DraftCardRef {
-  /** Drafts in which you took the card, and those drafts' games. */
-  picked: DraftTally;
-  /** Drafts whose final main deck played it, and those drafts' games. */
-  in_deck: DraftTally;
+  /**
+   * Games in which you held the card (kept opening hand, drawn or played) and
+   * their results; `drafts` counts the drafts those games came from.
+   */
+  in_hand: DraftTally;
+  /** Drafts in which you took the card. */
+  picked: number;
+  /** Drafts whose final main deck played it. */
+  in_deck: number;
   /** Times taken Pack 1 Pick 1. */
   first_picks: number;
   /** Average pick number within its pack (1 = taken first). */
   avg_pick: number | null;
 }
 
+/** Two cards, over the games in which you held both. */
 export interface DraftPairStats extends DraftTally {
   cards: [DraftCardRef, DraftCardRef];
 }

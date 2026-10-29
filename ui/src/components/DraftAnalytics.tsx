@@ -37,27 +37,21 @@ const cardColumns: Column<DraftCardStats>[] = [
   { key: 'name', header: 'Card', render: (row) => <CardName card={row} />, sortValue: (row) => row.name },
   { key: 'colors', header: 'Colors', render: (row) => <ColorPips colors={row.colors} size={13} />, sortValue: (row) => row.colors },
   {
-    key: 'in_deck',
-    header: 'WR in deck',
+    key: 'in_hand',
+    header: 'Win rate in hand',
     center: true,
-    render: (row) => <Rate tally={row.in_deck} />,
-    sortValue: (row) => (row.in_deck.wins + row.in_deck.losses ? row.in_deck.win_rate : null),
-  },
-  { key: 'arena_id', header: 'Record in deck', numeric: true, render: (row) => record(row.in_deck), sortValue: (row) => row.in_deck.games },
-  {
-    key: 'picked',
-    header: 'WR when picked',
-    center: true,
-    render: (row) => <Rate tally={row.picked} />,
-    sortValue: (row) => (row.picked.wins + row.picked.losses ? row.picked.win_rate : null),
+    render: (row) => <Rate tally={row.in_hand} />,
+    sortValue: (row) => (row.in_hand.wins + row.in_hand.losses ? row.in_hand.win_rate : null),
   },
   {
-    key: 'rarity',
-    header: 'Picked / in deck',
+    key: 'arena_id',
+    header: 'Record in hand',
     numeric: true,
-    render: (row) => `${row.picked.drafts} / ${row.in_deck.drafts}`,
-    sortValue: (row) => row.picked.drafts,
+    render: (row) => record(row.in_hand),
+    sortValue: (row) => row.in_hand.games,
   },
+  { key: 'picked', header: 'Picked', numeric: true },
+  { key: 'in_deck', header: 'In deck', numeric: true },
   { key: 'avg_pick', header: 'Avg pick', numeric: true, render: (row) => row.avg_pick ?? '—', sortValue: (row) => row.avg_pick },
   { key: 'first_picks', header: 'P1p1', numeric: true },
 ];
@@ -114,7 +108,7 @@ export function DraftAnalytics({ reloadToken = 0 }: { reloadToken?: number }) {
   const cards = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     return (data?.cards ?? []).filter(
-      (card) => card.picked.games >= minGames && (!needle || card.name.toLocaleLowerCase().includes(needle)),
+      (card) => card.in_hand.games >= minGames && (!needle || card.name.toLocaleLowerCase().includes(needle)),
     );
   }, [data, minGames, query]);
 
@@ -148,8 +142,9 @@ export function DraftAnalytics({ reloadToken = 0 }: { reloadToken?: number }) {
   return (
     <Section id="replay-draft-details" title="Draft details" collapsible={false}>
       <p className="replay-list-intro">
-        Your own results: each draft's games are credited to the cards you picked and the cards in its final deck.
-        Small samples swing a lot, so check the number of games before reading much into a rate.
+        Your own results. A card's win rate only counts the games in which you held it (opening hand, drawn or
+        played); a card that stayed in the library says nothing about it. Small samples swing a lot, so check the
+        number of games before reading much into a rate.
       </p>
       <div className="quick-filters draft-stats-tabs" role="tablist" aria-label="Draft details">
         {TABS.map((entry) => (
@@ -235,7 +230,7 @@ export function DraftAnalytics({ reloadToken = 0 }: { reloadToken?: number }) {
               compact
               columns={cardColumns}
               getRowKey={(row) => row.arena_id}
-              initialSort={{ key: 'in_deck', direction: 'desc' }}
+              initialSort={{ key: 'in_hand', direction: 'desc' }}
               pageSize={25}
               rows={cards}
             />
@@ -248,7 +243,7 @@ export function DraftAnalytics({ reloadToken = 0 }: { reloadToken?: number }) {
       {tab === 'pairs' ? (
         <div role="tabpanel" aria-label="Card pairs">
           <p className="replay-list-intro">
-            Two cards in the same final deck, across at least {data.pair_rules.min_drafts} drafts and{' '}
+            Two cards you held in the same game, across at least {data.pair_rules.min_drafts} drafts and{' '}
             {data.pair_rules.min_games} decided games. At most two pairs from the same decks are listed, so one hot
             run does not fill the list.
           </p>

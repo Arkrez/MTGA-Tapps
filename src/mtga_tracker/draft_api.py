@@ -368,13 +368,39 @@ def _rate(tally: Dict[str, int]) -> Optional[float]:
     return tally["wins"] / decided if decided else None
 
 
+def _seen_names(conn: sqlite3.Connection, game_ids: List[str]) -> Dict[str, set]:
+    """Card names you held in each game: kept opening hand, draws, and cards
+    the game summary shows you drew or played (casefolded)."""
+    seen: Dict[str, set] = {}
+    for start in range(0, len(game_ids), 500):
+        chunk = game_ids[start : start + 500]
+        marks = ",".join("?" for _ in chunk)
+        for game_id, name in conn.execute(
+            f"""SELECT o.game_id, c.name FROM game_opening_hand_cards o
+                    JOIN participants p ON p.id = o.participant_id AND p.role = 'player'
+                    JOIN cards c ON c.id = o.card_id WHERE o.game_id IN ({marks})
+                UNION SELECT d.game_id, c.name FROM game_drawn_cards d
+                    JOIN participants p ON p.id = d.participant_id AND p.role = 'player'
+                    JOIN cards c ON c.id = d.card_id WHERE d.game_id IN ({marks})
+                UNION SELECT s.game_id, c.name FROM game_card_summary s
+                    JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
+                    JOIN cards c ON c.id = s.card_id
+                    WHERE s.game_id IN ({marks}) AND (s.played_count > 0 OR s.drawn_count > 0)""",
+            chunk * 3,
+        ):
+            if name:
+                seen.setdefault(game_id, set()).add(str(name).casefold())
+    return seen
+
+
 def draft_analytics(db_path: Path) -> Dict[str, Any]:
     """Your own results across drafts (docs/DRAFT_REPLAY.md §2).
 
-    Games are credited to a draft as on the draft tiles (its event, from the
-    draft until the next draft of that event). A card's "in deck" record sums
-    the drafts whose final main deck played it; "picked" sums the drafts in
-    which you took it. Pairs are two non-basic cards in the same final deck.
+    Games are credited to drafts by ``game_owners`` (decklist match). Deck,
+    color and event records count every credited game. A card's win rate
+    counts only the games in which you held it (kept opening hand, drawn or
+    played), like 17lands' games-in-hand rate: a card that sat in the library
+    says nothing about it. A pair counts the games in which you held both.
     """
     empty = {
         "summary": {**_tally(), "win_rate": None},
@@ -400,7 +426,11 @@ def draft_analytics(db_path: Path) -> Dict[str, Any]:
             " ORDER BY draft_id, pack_number, pick_number"
         ):
             picks.setdefault(draft_id, []).append((pack, pick, _ids(picked)))
-        records = _draft_records(conn)
+        try:
+            owners = game_owners(conn)
+            seen = _seen_names(conn, sorted(owners))
+        except sqlite3.Error:
+            owners, seen = {}, {}
     finally:
         conn.close()
     if not drafts:
@@ -416,12 +446,39 @@ def draft_analytics(db_path: Path) -> Dict[str, Any]:
     def basic(card: int) -> bool:
         return (facts.get(card) or {}).get("rarity") == "basic"
 
+    def name_of(card: int) -> str:
+        return str((facts.get(card) or {}).get("name") or f"Card #{card}")
+
+    records: Dict[str, Dict[str, int]] = {}
+    games_of: Dict[str, List[Tuple[str, str]]] = {}
+    for game_id, (owner, outcome, _started) in owners.items():
+        record = records.setdefault(owner, {"wins": 0, "losses": 0, "games": 0})
+        record["games"] += 1
+        record["wins"] += outcome == "win"
+        record["losses"] += outcome == "loss"
+        games_of.setdefault(owner, []).append((game_id, outcome))
+
+    def held() -> Dict[str, Any]:
+        return {"drafts": set(), "wins": 0, "losses": 0, "games": 0}
+
+    def count(tally: Dict[str, Any], draft_id: str, outcome: str) -> None:
+        tally["drafts"].add(draft_id)
+        tally["games"] += 1
+        tally["wins"] += outcome == "win"
+        tally["losses"] += outcome == "loss"
+
     summary = _tally()
     by_colors: Dict[str, Dict[str, int]] = {}
     by_format: Dict[str, Dict[str, int]] = {}
     cards: Dict[int, Dict[str, Any]] = {}
-    pairs: Dict[Tuple[int, int], Dict[str, int]] = {}
-    pair_drafts: Dict[Tuple[int, int], List[str]] = {}
+    pairs: Dict[Tuple[int, int], Dict[str, Any]] = {}
+
+    def entry(card: int) -> Dict[str, Any]:
+        return cards.setdefault(
+            card,
+            {"in_hand": held(), "picked": 0, "in_deck": 0, "first_picks": 0, "pick_sum": 0},
+        )
+
     for draft_id, kind, event_name, *_rest in drafts:
         record = records.get(draft_id, {"wins": 0, "losses": 0, "games": 0})
         deck = decks.get(draft_id)
@@ -432,66 +489,67 @@ def draft_analytics(db_path: Path) -> Dict[str, Any]:
             colors = _main_colors(played, facts) or "C"
             _add(by_colors.setdefault(colors, _tally()), record)
             _add(by_format.setdefault(_label(event_name, kind), _tally()), record)
-        rows = picks.get(draft_id, [])
-        order = 0
-        picked_here: Dict[int, int] = {}
-        for pack, pick, taken in rows:
+        picked_here = set()
+        for pack, pick, taken in picks.get(draft_id, []):
             for card in taken:
-                order += 1
-                picked_here.setdefault(card, order)
-                entry = cards.setdefault(
-                    card,
-                    {"picked": _tally(), "in_deck": _tally(), "first_picks": 0, "pick_sum": 0},
-                )
-                entry["pick_sum"] += pick
+                picked_here.add(card)
+                entry(card)["pick_sum"] += pick
                 if pack == 1 and pick == 1:
-                    entry["first_picks"] += 1
+                    entry(card)["first_picks"] += 1
         for card in picked_here:
-            _add(cards[card]["picked"], record)
+            entry(card)["picked"] += 1
         for card in played:
-            entry = cards.setdefault(
-                card, {"picked": _tally(), "in_deck": _tally(), "first_picks": 0, "pick_sum": 0}
-            )
-            _add(entry["in_deck"], record)
-        if record["games"]:
-            for i, a in enumerate(played):
-                for b in played[i + 1 :]:
-                    _add(pairs.setdefault((a, b), _tally()), record)
-                    pair_drafts.setdefault((a, b), []).append(draft_id)
+            entry(card)["in_deck"] += 1
+        # Names held in a game map back to this draft's own cards (its pool and deck).
+        by_name = {name_of(c).casefold(): c for c in picked_here | set(main) if not basic(c)}
+        for game_id, outcome in games_of.get(draft_id, []):
+            held_here = sorted({by_name[n] for n in seen.get(game_id, ()) if n in by_name})
+            for card in held_here:
+                count(entry(card)["in_hand"], draft_id, outcome)
+            for i, a in enumerate(held_here):
+                for b in held_here[i + 1 :]:
+                    count(pairs.setdefault((a, b), held()), draft_id, outcome)
 
     def card_ref(card: int) -> Dict[str, Any]:
         fact = facts.get(card) or {}
         return {
             "arena_id": card,
-            "name": fact.get("name") or f"Card #{card}",
+            "name": name_of(card),
             "rarity": fact.get("rarity", "common"),
             "colors": fact.get("colors", ""),
         }
 
-    def with_rate(tally: Dict[str, int]) -> Dict[str, Any]:
-        return {**tally, "win_rate": _rate(tally)}
+    def with_rate(tally: Dict[str, Any]) -> Dict[str, Any]:
+        drafts_count = tally["drafts"] if isinstance(tally["drafts"], int) else len(tally["drafts"])
+        return {**tally, "drafts": drafts_count, "win_rate": _rate(tally)}
 
     card_rows = []
-    for card, entry in cards.items():
+    for card, stats in cards.items():
         if basic(card):
             continue
-        times = entry["picked"]["drafts"]
         card_rows.append(
             {
                 **card_ref(card),
-                "picked": with_rate(entry["picked"]),
-                "in_deck": with_rate(entry["in_deck"]),
-                "first_picks": entry["first_picks"],
+                "in_hand": with_rate(stats["in_hand"]),
+                "picked": stats["picked"],
+                "in_deck": stats["in_deck"],
+                "first_picks": stats["first_picks"],
                 # Average pick number within its pack (1 = taken first).
-                "avg_pick": round(entry["pick_sum"] / times, 1) if times else None,
+                "avg_pick": (
+                    round(stats["pick_sum"] / stats["picked"], 1) if stats["picked"] else None
+                ),
             }
         )
-    card_rows.sort(key=lambda r: (-r["in_deck"]["games"], -r["picked"]["drafts"], r["name"]))
+    card_rows.sort(key=lambda r: (-r["in_hand"]["games"], -r["picked"], r["name"]))
 
     notable = [
-        (tuple(pair_drafts[(a, b)]), {"cards": [card_ref(a), card_ref(b)], **with_rate(tally)})
+        (
+            tuple(sorted(tally["drafts"])),
+            {"cards": [card_ref(a), card_ref(b)], **with_rate(tally)},
+        )
         for (a, b), tally in pairs.items()
-        if tally["drafts"] >= PAIR_MIN_DRAFTS and tally["wins"] + tally["losses"] >= PAIR_MIN_GAMES
+        if len(tally["drafts"]) >= PAIR_MIN_DRAFTS
+        and tally["wins"] + tally["losses"] >= PAIR_MIN_GAMES
     ]
 
     def varied(ranked: List[Tuple[Tuple[str, ...], Dict[str, Any]]]) -> List[Dict[str, Any]]:

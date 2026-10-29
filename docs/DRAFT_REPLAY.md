@@ -70,11 +70,14 @@ Gameplay reset clears both tables; backup merge unions them by draft id.
   the game (game rows store naive local time; draft times are UTC).
 - `GET /api/drafts/analytics` → `{summary, colors, formats, cards, pairs:
   {best, worst}, pair_rules}`. Tallies are `{drafts, wins, losses, games,
-  win_rate}` over credited games. Per card (basics left out): `picked` (drafts
-  you took it in), `in_deck` (drafts whose final main deck played it),
-  `first_picks`, `avg_pick` (pick number within its pack). Pairs are two cards
-  in the same final deck, shown once they span 2 drafts and 4 decided games,
-  at most 2 per identical set of drafts, best and worst 12.
+  win_rate}` over credited games. Per card (basics left out): `in_hand`, the
+  tally over the games in which you held it (kept opening hand, drawn, or drawn
+  or played per the game card summary; matched to the draft's own cards by
+  name), so a card that stayed in the library never counts; plus `picked` and
+  `in_deck` (draft counts), `first_picks` and `avg_pick` (pick number within
+  its pack). Pairs are two cards you held in the same game, shown once they
+  span 2 drafts and 4 decided games, at most 2 per identical set of drafts,
+  best and worst 12.
 - `GET /api/draft?id=` → the stream below; 400 without `id`, 404 for an
   unknown draft.
 - `POST /api/drafts/import-log` → rescans `Player-prev.log` then `Player.log`

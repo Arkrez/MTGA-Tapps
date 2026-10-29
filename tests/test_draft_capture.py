@@ -366,15 +366,19 @@ def test_draft_records_count_the_event_games_until_the_next_draft(conn, tmp_path
     }
 
 
-def test_draft_analytics_credits_games_to_picks_decks_and_pairs(conn, tmp_path, monkeypatch):
-    """Three drafts of one event: A+B together twice (3-1 and 2-0), B alone once (0-2)."""
-    drafts = [
-        ("d1", "2026-10-19T01:00:00+00:00", [10, 11], [[10, 1], [11, 1], [99, 17]]),
-        ("d2", "2026-10-19T05:00:00+00:00", [10, 11, 12], [[10, 1], [11, 1]]),
-        ("d3", "2026-10-19T09:00:00+00:00", [11, 12], [[11, 2]]),
-    ]
-    for draft_id, started, picked, main in drafts:
-        deck = {"name": "Draft Deck", "main": main, "sideboard": [], "submitted_at": started}
+def test_draft_analytics_counts_cards_only_in_games_you_held_them(conn, tmp_path, monkeypatch):
+    """Two drafts of one event with Alpha and Beta in both decks. A card's win
+    rate counts only games where it was in hand (opening hand, drawn, played)."""
+    for draft_id, started, picked in (
+        ("d1", "2026-10-19T01:00:00+00:00", [10, 11, 12]),
+        ("d2", "2026-10-19T05:00:00+00:00", [10, 11]),
+    ):
+        deck = {
+            "name": "Draft Deck",
+            "main": [[10, 1], [11, 1], [99, 17]],
+            "sideboard": [],
+            "submitted_at": started,
+        }
         conn.execute(
             "INSERT INTO drafts (id, kind, event_name, started_at, deck_json)"
             " VALUES (?, 'player', ?, ?, ?)",
@@ -391,19 +395,55 @@ def test_draft_analytics_credits_games_to_picks_decks_and_pairs(conn, tmp_path, 
         "INSERT INTO matches (id, session_id, started_at, event_name) VALUES ('m', 's', '', ?)",
         (PLAYER_EVENT,),
     )
+    for card_id, name in ((1, "Alpha"), (2, "Beta"), (3, "Gamma"), (4, "Forest")):
+        conn.execute(
+            "INSERT INTO cards (id, name, first_seen_at) VALUES (?, ?, '')", (card_id, name)
+        )
 
     def local(iso):
         moment = datetime.fromisoformat(iso).replace(tzinfo=timezone.utc).astimezone()
         return moment.replace(tzinfo=None).isoformat()
 
-    results = [("02", "win"), ("03", "win"), ("03:30", "win"), ("04", "loss")]
-    results += [("06", "win"), ("07", "win"), ("10", "loss"), ("11", "loss")]
-    for n, (hour, outcome) in enumerate(results):
+    # (hour, outcome, cards in opening hand, cards drawn later, cards only played)
+    games = [
+        ("02", "win", [1], [2], []),  # d1: Alpha + Beta held
+        ("03", "win", [1], [], []),  # d1: Alpha only
+        ("04", "loss", [], [4], []),  # d1: neither (Beta stayed in the library)
+        ("06", "win", [], [], [2]),  # d2: Beta seen only as played
+        ("07", "loss", [1], [2], []),  # d2: both held
+    ]
+    for n, (hour, outcome, opening, drawn, played) in enumerate(games):
+        game_id, participant = f"g{n}", f"p{n}"
         conn.execute(
             "INSERT INTO games (id, session_id, match_id, game_number, started_at, outcome)"
             " VALUES (?, 's', 'm', 1, ?, ?)",
-            (f"g{n}", local(f"2026-10-19T{hour if ':' in hour else hour + ':00'}:00"), outcome),
+            (game_id, local(f"2026-10-19T{hour}:00:00"), outcome),
         )
+        conn.execute(
+            "INSERT INTO participants (id, game_id, role) VALUES (?, ?, 'player')",
+            (participant, game_id),
+        )
+        for pos, card_id in enumerate(opening):
+            conn.execute(
+                "INSERT INTO game_opening_hand_cards"
+                " (game_id, participant_id, card_id, display_name, hand_position)"
+                " VALUES (?, ?, ?, 'x', ?)",
+                (game_id, participant, card_id, pos),
+            )
+        for pos, card_id in enumerate(drawn):
+            conn.execute(
+                "INSERT INTO game_drawn_cards"
+                " (game_id, participant_id, card_id, display_name, draw_position)"
+                " VALUES (?, ?, ?, 'x', ?)",
+                (game_id, participant, card_id, pos),
+            )
+        for card_id in played:
+            conn.execute(
+                "INSERT INTO game_card_summary"
+                " (game_id, participant_id, card_id, display_name, played_count, drawn_count)"
+                " VALUES (?, ?, ?, 'x', 1, 0)",
+                (game_id, participant, card_id),
+            )
     conn.commit()
 
     class Cards:
@@ -417,24 +457,35 @@ def test_draft_analytics_credits_games_to_picks_decks_and_pairs(conn, tmp_path, 
     monkeypatch.setattr(draft_api, "_cards", Cards())
     status, data = draft_api.handle_get("/api/drafts/analytics", {}, tmp_path / "tracker.sqlite3")
     assert status == 200
-    assert data["summary"] == {"drafts": 3, "wins": 5, "losses": 3, "games": 8, "win_rate": 0.625}
+    # Deck records still count every game.
+    assert data["summary"] == {"drafts": 2, "wins": 3, "losses": 2, "games": 5, "win_rate": 0.6}
     cards = {c["name"]: c for c in data["cards"]}
     assert "Forest" not in cards  # basics are left out
-    assert cards["Alpha"]["in_deck"] == {
+    assert cards["Alpha"]["in_hand"] == {
         "drafts": 2,
-        "wins": 5,
+        "wins": 2,
         "losses": 1,
-        "games": 6,
-        "win_rate": 5 / 6,
+        "games": 3,
+        "win_rate": 2 / 3,
     }
-    assert cards["Beta"]["in_deck"]["drafts"] == 3 and cards["Beta"]["in_deck"]["wins"] == 5
-    # Gamma was picked twice but never made a deck.
-    assert cards["Gamma"]["picked"]["drafts"] == 2 and cards["Gamma"]["in_deck"]["drafts"] == 0
+    assert cards["Beta"]["in_hand"] == {
+        "drafts": 2,
+        "wins": 2,
+        "losses": 1,
+        "games": 3,
+        "win_rate": 2 / 3,
+    }
+    assert (cards["Alpha"]["picked"], cards["Alpha"]["in_deck"]) == (2, 2)
+    # Gamma was picked but never played: no games, no rate.
+    assert cards["Gamma"]["in_hand"]["games"] == 0 and cards["Gamma"]["in_hand"]["win_rate"] is None
     assert cards["Alpha"]["first_picks"] == 2 and cards["Alpha"]["avg_pick"] == 1.0
+
+    monkeypatch.setattr(draft_api, "PAIR_MIN_GAMES", 2)
+    data = draft_api.draft_analytics(tmp_path / "tracker.sqlite3")
     [pair] = data["pairs"]["best"]
     assert [c["name"] for c in pair["cards"]] == ["Alpha", "Beta"]
-    assert (pair["wins"], pair["losses"], pair["drafts"]) == (5, 1, 2)
-    assert data["formats"][0]["format_label"].startswith("Premier Draft")
+    # Held together in g0 (win) and g4 (loss) only.
+    assert (pair["wins"], pair["losses"], pair["drafts"]) == (1, 1, 2)
 
 
 def test_clock_offset_rounds_to_quarter_hours_and_ignores_implausible_files(tmp_path):
