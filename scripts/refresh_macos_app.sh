@@ -110,9 +110,12 @@ codesign --verify --deep --strict "$INSTALLED"
 if [[ "$LAUNCH" == "1" ]]; then
   step "Starting Tapps Tracker"
   open "$INSTALLED"
-  for _ in $(seq 1 45); do
-    if curl -fs -o /dev/null --max-time 2 "$DASHBOARD_URL/api/version"; then
-      echo "Running $(curl -fsS --max-time 2 "$DASHBOARD_URL/api/version") — dashboard at $DASHBOARD_URL"
+  # While the database is being upgraded the app serves a "starting" page for
+  # every path, so wait for the real JSON answer.
+  for _ in $(seq 1 90); do
+    ANSWER="$(curl -fs --max-time 2 "$DASHBOARD_URL/api/version" || true)"
+    if [[ "$ANSWER" == \{\"version\"* ]]; then
+      echo "Running $ANSWER — dashboard at $DASHBOARD_URL"
       exit 0
     fi
     sleep 1
