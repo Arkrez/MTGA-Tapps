@@ -735,6 +735,9 @@ class AnalyticsStore:
             (34, AnalyticsStore._migrate_v34_native_deck_transfers),
             (35, AnalyticsStore._migrate_v35_deck_collections),
             (36, AnalyticsStore._migrate_v36_drafts),
+            # Same idempotent schema step: adds drafts.deck_json to databases that ran 36.
+            (37, AnalyticsStore._migrate_v36_drafts),
+            (38, AnalyticsStore._migrate_v38_draft_times_utc),
         )
         ran: list = []
         for version, migrate in migrations:
@@ -1520,6 +1523,13 @@ class AnalyticsStore:
         from .draft_capture import ensure_draft_schema
 
         ensure_draft_schema(conn)
+
+    @staticmethod
+    def _migrate_v38_draft_times_utc(conn: sqlite3.Connection) -> None:
+        """Draft times read Arena's UTC log times as local time; shift them back."""
+        from .draft_capture import repair_shifted_draft_times
+
+        repair_shifted_draft_times(conn)
 
     @staticmethod
     def _migrate_v15_purge_welcome_deck_duels(conn: sqlite3.Connection) -> None:

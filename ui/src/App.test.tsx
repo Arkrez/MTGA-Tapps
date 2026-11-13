@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import App from './App';
 import { makeSampleStream } from './replay/fixtures/sampleStream';
-import { cardRouteHash, gameRouteHash, replayRouteHash } from './routes';
+import { cardRouteHash, draftReplayRouteHash, gameRouteHash, replayRouteHash } from './routes';
 
 // No WebGL under jsdom: the replay canvas becomes a plain div and R3F hooks are inert.
 vi.mock('@react-three/fiber', () => ({
@@ -606,7 +606,46 @@ const cardDetail = {
   opponent_impact: { games: 2, plays: 3, wins: 1, losses: 1, win_rate: 50, loss_rate: 50 },
   by_deck: [
     { deck_name: 'Boros Mouse', games_seen: 2, total_played: 3, wins: 1, losses: 1, win_rate: 50 },
+    {
+      deck_name: 'Draft Deck',
+      run: {
+        id: 'draft-1',
+        kind: 'player',
+        label: 'Premier Draft',
+        started_at: '2026-11-01T12:00:00+00:00',
+        rebuilt: false,
+        art: null,
+      },
+      games_seen: 1,
+      total_played: 1,
+      wins: 1,
+      losses: 0,
+      win_rate: 100,
+    },
   ],
+  games: [
+    {
+      game_id: 'game-1',
+      started_at: '2026-11-02T10:00:00',
+      outcome: 'win',
+      format_label: 'Premier Draft',
+      deck_name: 'Draft Deck',
+      opponent_name: 'Rival',
+      seen_by: ['you', 'opponent'],
+      your_played: 1,
+      opponent_played: 1,
+      replay: { state: 'recorded', reason: null },
+      run: {
+        id: 'draft-1',
+        kind: 'player',
+        label: 'Premier Draft',
+        started_at: '2026-11-01T12:00:00+00:00',
+        rebuilt: false,
+        art: null,
+      },
+    },
+  ],
+  games_total: 1,
   opener_impact: { games_in_opener: 1, wins: 0, losses: 1, win_rate: 0, times_drawn: 1 },
 };
 
@@ -806,8 +845,8 @@ describe('App', () => {
     await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('/api/games'))).toBe(true), {
       timeout: 4000,
     });
-    expect(await screen.findByRole('table', { name: 'Games to replay' }, { timeout: 4000 })).toBeInTheDocument();
-    expect(screen.getByText('Boros Mouse')).toBeInTheDocument();
+    expect(await screen.findByRole('list', { name: 'Decks' }, { timeout: 4000 })).toBeInTheDocument();
+    expect(screen.getByTitle("Show Boros Mouse's games")).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Replay Beta' })).toHaveClass('sidebar-replay-active');
     expect(screen.getByRole('link', { name: 'Deck Finder' })).not.toHaveClass('sidebar-deck-finder-active');
     expect(screen.getByRole('link', { name: 'Recent games' })).toBeInTheDocument();
@@ -2030,6 +2069,17 @@ describe('App', () => {
     });
     expect(screen.getByRole('region', { name: 'Opponent card impact' })).toHaveTextContent('Your Loss Rate50%');
     expect(screen.getByRole('link', { name: 'Boros Mouse' })).toHaveAttribute('href', '#/deck/Boros%20Mouse');
+    // A limited deck opens its own run; games link to the game and its replay.
+    const cardHash = '#/card/Mouse%20Mentor';
+    screen.getAllByRole('link', { name: /^Premier Draft · / }).forEach((link) => {
+      expect(link).toHaveAttribute('href', draftReplayRouteHash('draft-1', { returnHash: cardHash }));
+    });
+    const games = screen.getByRole('table', { name: 'Games with this card' });
+    expect(within(games).getByText('Both')).toBeInTheDocument();
+    expect(within(games).getByRole('link', { name: 'Watch replay' })).toHaveAttribute(
+      'href',
+      replayRouteHash('game-1', { returnHash: cardHash }),
+    );
     screen.getAllByRole('link', { name: 'Back to dashboard' }).forEach((link) => {
       expect(link).toHaveAttribute('href', '#overview');
     });

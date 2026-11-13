@@ -1,52 +1,11 @@
 /**
- * One draft card: its Scryfall image through the replay's rate-limited image
- * queue (shared with game replays), or a drawn card frame — name, cost, type
- * and rarity — while loading and for cards Scryfall does not have yet.
+ * One draft card: its image (resolved for the whole draft by
+ * `useDraftImages`), or a drawn card frame — name, cost, type and rarity —
+ * while loading and for cards Scryfall does not have yet. A failed download
+ * is retried once before falling back to the frame.
  */
-import { memo, useEffect, useState } from 'react';
-import { ImageQueue, resolveCardImage, resolvedImageCache, scryfallRateLimiter } from '../images';
-import type { ReplayCard } from '../types';
+import { memo, useState, type ReactNode } from 'react';
 import type { DraftCard } from './types';
-
-const queue = new ImageQueue({ limiter: scryfallRateLimiter });
-
-function asReplayCard(card: DraftCard): ReplayCard {
-  const types = card.types ?? [];
-  return {
-    name: card.name,
-    arena_id: card.arena_id,
-    type_line: types.join(' ') || null,
-    primary_type: types[types.length - 1] ?? null,
-    power: null,
-    toughness: null,
-    mana_cost: card.mana_cost ?? null,
-    color_identity: card.colors ?? null,
-    is_token: false,
-    image_url: null,
-    faces: [],
-  };
-}
-
-function imageKey(card: DraftCard): string {
-  return `arena:${card.arena_id}`;
-}
-
-function useCardImage(card: DraftCard, priority: number): string | null {
-  const key = imageKey(card);
-  const [found, setFound] = useState<{ key: string; url: string | null } | null>(null);
-  useEffect(() => {
-    if (resolvedImageCache.get(key)) return;
-    let live = true;
-    resolveCardImage(key, asReplayCard(card), queue, { priority }).then(
-      (url) => live && setFound({ key, url }),
-      () => undefined,
-    );
-    return () => {
-      live = false;
-    };
-  }, [card, key, priority]);
-  return resolvedImageCache.get(key) ?? (found?.key === key ? found.url : null);
-}
 
 function colorClass(colors: string | undefined): string {
   if (!colors) return 'draft-frame-c';
@@ -54,21 +13,27 @@ function colorClass(colors: string | undefined): string {
   return `draft-frame-${colors.toLowerCase()}`;
 }
 
-interface DraftCardImageProps {
-  card: DraftCard;
-  /** Higher loads first (the current pack before the pool). */
-  priority?: number;
-  className?: string;
+function retryUrl(url: string): string {
+  return `${url}${url.includes('?') ? '&' : '?'}retry=1`;
 }
 
-export const DraftCardImage = memo(function DraftCardImage({ card, priority = 0, className = '' }: DraftCardImageProps) {
-  const url = useCardImage(card, priority);
-  const [failed, setFailed] = useState(false);
+interface DraftCardImageProps {
+  card: DraftCard;
+  url: string | null;
+  className?: string;
+  /** Extra badge drawn over the card (e.g. "In deck"). */
+  badge?: ReactNode;
+}
+
+export const DraftCardImage = memo(function DraftCardImage({ card, url, className = '', badge }: DraftCardImageProps) {
+  const [failures, setFailures] = useState<{ url: string | null; count: number }>({ url: null, count: 0 });
+  const attempts = failures.url === url ? failures.count : 0;
+  const src = url && attempts < 2 ? (attempts === 1 ? retryUrl(url) : url) : null;
   const label = `${card.name} (${card.rarity})`;
   return (
     <div className={`draft-card ${className}`} title={label}>
-      {url && !failed ? (
-        <img src={url} alt={label} loading="lazy" draggable={false} onError={() => setFailed(true)} />
+      {src ? (
+        <img src={src} alt={label} draggable={false} onError={() => setFailures({ url, count: attempts + 1 })} />
       ) : (
         <div className={`draft-frame ${colorClass(card.colors)}`} role="img" aria-label={label}>
           <span className="draft-frame-name">{card.name}</span>
@@ -77,6 +42,7 @@ export const DraftCardImage = memo(function DraftCardImage({ card, priority = 0,
         </div>
       )}
       <span className={`draft-rarity draft-rarity-${card.rarity}`} aria-hidden="true" />
+      {badge}
     </div>
   );
 });

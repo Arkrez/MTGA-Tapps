@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DraftReplayViewer } from './DraftReplayViewer';
+import { DraftReplayViewer, HOVER_PREVIEW_MS } from './DraftReplayViewer';
 import type { DraftCard, DraftStream } from './types';
 
 function card(arena_id: number, name: string, rarity: DraftCard['rarity'], mana_value = 2): DraftCard {
@@ -95,5 +95,73 @@ describe('DraftReplayViewer', () => {
       fireEvent.keyDown(window, { key: 'Home' });
     });
     expect(screen.getByRole('heading', { name: 'Pack 1 · Pick 1' })).toBeInTheDocument();
+  });
+
+  it('orders the pack rarest first', () => {
+    render(<DraftReplayViewer stream={STREAM} step={null} returnHash={null} />);
+    const pack = screen.getByRole('region', { name: 'Pack' });
+    expect(within(pack).getAllByRole('img').map((img) => img.getAttribute('aria-label'))).toEqual([
+      'Moss Dragon (mythic)',
+      'Oak Titan (rare)',
+      'Fern Scout (uncommon)',
+      'Grove Elf (common)',
+    ]);
+  });
+
+  it('marks cards that made the final deck and opens it like Deck Manager', () => {
+    const withDeck: DraftStream = {
+      ...STREAM,
+      deck: {
+        name: 'Draft Deck',
+        submitted_at: '2026-10-19T15:00:00+00:00',
+        main: [
+          { arena_id: 1, quantity: 1 },
+          { arena_id: 4, quantity: 1 },
+        ],
+        sideboard: [{ arena_id: 11, quantity: 1 }],
+      },
+    };
+    render(<DraftReplayViewer stream={withDeck} step="p1p3" returnHash={null} />);
+    const pool = screen.getByRole('complementary', { name: 'Deck so far' });
+    expect(within(pool).getByText(/2 of these made the final deck/)).toBeInTheDocument();
+    expect(within(pool).getByRole('img', { name: 'Oak Titan (rare)' }).closest('.draft-card')).toHaveClass('draft-card-indeck');
+    expect(within(pool).getByRole('img', { name: 'Bark Wolf (common)' }).closest('.draft-card')).toHaveClass('draft-card-cut');
+    const pack = screen.getByRole('region', { name: 'Pack' });
+    expect(within(pack).getByText('In deck')).toBeInTheDocument();
+
+    HTMLDialogElement.prototype.showModal ??= function showModal(this: HTMLDialogElement) {
+      this.setAttribute('open', '');
+    };
+    HTMLDialogElement.prototype.close ??= function close(this: HTMLDialogElement) {
+      this.removeAttribute('open');
+    };
+    fireEvent.click(screen.getByRole('button', { name: 'Final deck' }));
+    const dialog = screen.getByRole('dialog', { hidden: true });
+    expect(within(dialog).getByRole('heading', { name: 'Draft Deck', hidden: true })).toBeInTheDocument();
+    expect(within(dialog).getByRole('region', { name: 'Deck (2)', hidden: true })).toBeInTheDocument();
+    expect(within(dialog).getByRole('region', { name: 'Sideboard (1)', hidden: true })).toBeInTheDocument();
+  });
+
+  it('shows a larger copy of a card after a short hover', () => {
+    vi.useFakeTimers();
+    try {
+      render(<DraftReplayViewer stream={STREAM} step={null} returnHash={null} />);
+      const pack = screen.getByRole('region', { name: 'Pack' });
+      const titan = within(pack).getByRole('img', { name: 'Oak Titan (rare)' });
+      fireEvent.mouseOver(titan);
+      act(() => {
+        vi.advanceTimersByTime(HOVER_PREVIEW_MS - 50);
+      });
+      expect(document.querySelector('.draft-hover-preview')).toBeNull();
+      act(() => {
+        vi.advanceTimersByTime(100);
+      });
+      const preview = document.querySelector('.draft-hover-preview');
+      expect(preview?.querySelector('[aria-label="Oak Titan (rare)"]')).not.toBeNull();
+      fireEvent.mouseOut(titan, { relatedTarget: document.body });
+      expect(document.querySelector('.draft-hover-preview')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

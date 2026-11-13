@@ -39,6 +39,16 @@ scripts/build_macos_app.sh --fast
 scripts/build_macos_installer.sh
 ```
 
+**Update the installed app to your latest code** (rebuilds this checkout, quits
+the running tracker, replaces `/Applications/MTGA Tracker.app`, starts it again;
+don't run it mid-match):
+
+```bash
+scripts/refresh_macos_app.sh          # add --pull to git pull first, --fast to reuse the build env
+```
+
+The replaced app is kept in `build/previous-app/`; your data is not touched.
+
 The app lives in the menu bar: it starts tracking, serves the dashboard locally,
 and opens it in your browser. The tracker's status line at the top of the menu
 shows a green dot while it's running and red when it's stopped. The menu

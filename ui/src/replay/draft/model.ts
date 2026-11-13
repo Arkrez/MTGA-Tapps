@@ -207,3 +207,31 @@ export function summarizePool(stream: DraftStream, pool: readonly number[]): Poo
     colors: [...'WUBRG'].filter((c) => byColor.has(c)).map((color) => ({ color, count: byColor.get(color) ?? 0 })),
   };
 }
+
+/** The packs in Arena's draft view: rarest first, Arena's own order kept within a rarity. */
+export function byRarity(stream: DraftStream, cards: readonly number[]): number[] {
+  return cards
+    .map((arenaId, index) => ({ arenaId, index }))
+    .sort((a, b) => RARITY_ORDER[cardFor(stream, a.arenaId).rarity] - RARITY_ORDER[cardFor(stream, b.arenaId).rarity] || a.index - b.index)
+    .map((entry) => entry.arenaId);
+}
+
+/** Copies of each card in the submitted main deck (empty when no deck was seen). */
+export function mainDeckCounts(stream: DraftStream): Map<number, number> {
+  const out = new Map<number, number>();
+  for (const card of stream.deck?.main ?? []) out.set(card.arena_id, (out.get(card.arena_id) ?? 0) + card.quantity);
+  return out;
+}
+
+/**
+ * Which copies in `cards` made the final deck: the first N copies of a card
+ * the deck plays N of. Index-aligned with `cards`.
+ */
+export function inDeckFlags(cards: readonly number[], deck: ReadonlyMap<number, number>): boolean[] {
+  const left = new Map(deck);
+  return cards.map((arenaId) => {
+    const n = left.get(arenaId) ?? 0;
+    if (n > 0) left.set(arenaId, n - 1);
+    return n > 0;
+  });
+}

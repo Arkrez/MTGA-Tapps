@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildDraftSteps, containsAll, inferPodSize, poolColumn, removeAll, summarizePool } from './model';
+import { buildDraftSteps, byRarity, containsAll, inDeckFlags, inferPodSize, mainDeckCounts, poolColumn, removeAll, summarizePool } from './model';
 import type { DraftCard, DraftStream } from './types';
 
 function card(arena_id: number, rarity: DraftCard['rarity'] = 'common', extra: Partial<DraftCard> = {}): DraftCard {
@@ -108,5 +108,19 @@ describe('draft model', () => {
         { color: 'B', count: 2 },
       ],
     });
+  });
+
+  it('orders a pack rarest first, keeping Arena order within a rarity', () => {
+    const s = stream();
+    expect(byRarity(s, [2, 5, 1, 6, 4, 3])).toEqual([4, 1, 3, 5, 2, 6]);
+  });
+
+  it('marks the copies that made the final deck', () => {
+    const s = stream();
+    s.deck = { name: 'Draft Deck', submitted_at: null, main: [{ arena_id: 1, quantity: 1 }, { arena_id: 12, quantity: 2 }], sideboard: [] };
+    const counts = mainDeckCounts(s);
+    expect(counts).toEqual(new Map([[1, 1], [12, 2]]));
+    expect(inDeckFlags([1, 1, 12, 6, 12, 12], counts)).toEqual([true, false, true, false, true, false]);
+    expect(mainDeckCounts({ ...s, deck: null }).size).toBe(0);
   });
 });

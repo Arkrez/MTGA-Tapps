@@ -2,7 +2,50 @@
 
 ## Unreleased
 
+### Cards
+
+- A card's page lists **Games With This Card** (newest 200, either player):
+  date linking to the game, your deck, opponent, who had it, plays, result and
+  a **Watch replay** button. **Your Decks** splits limited decks by run, so each
+  draft or sealed run is its own row and opens that run instead of one
+  "Draft Deck" row.
+
+### Replay
+
+- Card art loads much faster and no longer goes missing: cards are looked up
+  by name in a few batched requests instead of one or two rate-limited
+  lookups each (new sets have no Arena ids on Scryfall yet), and answers are
+  remembered for later visits.
+- **Recent games** on the Replay page is now a grid of deck tiles with art,
+  record and last-played date; open one to see that deck's games. Drafts are
+  tiles too (first pick's art, colors, picks, status).
+- The last game you played sits at the top of the Replay page with a
+  **Watch replay** button.
+- Deck and draft tiles show their win rate as a colored pill (red below 50%,
+  amber around it, green above). A game counts for the draft whose final deck
+  it played (matched by decklist), or else the latest draft of its event.
+- **Draft details** on the Replay page: your overall draft record and win rate
+  by deck colors and by event; every card's win rate over the games in which you
+  held it (opening hand, drawn or played; a card left in the library does not
+  count), with times picked, times in your deck, average pick and P1p1s; and
+  the best and worst pairs of cards you held in the same game.
+- Fixed: drafts recorded live were stamped hours late (Arena now writes its
+  log times in UTC), so their games were credited to the wrong draft. The
+  tracker now measures the log clock, and a one-time repair moves the affected
+  drafts back.
+
 ### Draft Replay
+
+- **Sealed runs** are tracked like drafts: every sealed course is its own run
+  with its pool, the deck you built and its own record, instead of all sealed
+  games sharing one "Sealed Deck". Open one to see the pool (deck cards
+  outlined) beside the deck list. Runs from before the tracker kept them are
+  rebuilt from your games' decklists.
+- Games are credited to the run whose pool holds their deck, so separate runs
+  of the same event no longer blur together, and **Recent games** shows one
+  tile per draft or sealed run instead of one "Draft Deck" / "Sealed Deck".
+- Tile art for many runs loads from one batched lookup instead of one request
+  per tile, which Scryfall throttled.
 
 - New: replay your drafts pick by pick from the Replay page. Each pick shows the
   pack you saw with your pick highlighted, marks a pack you saw before when it
@@ -13,6 +56,15 @@
 - The tracker records Quick Draft, Premier, Traditional and Pick Two drafts as
   you play. **Find past drafts in Arena logs** recovers drafts from Arena's
   current and previous log.
+- Packs are ordered rarest first, and hovering a card for a moment shows a
+  larger copy, like Arena.
+- Cards that made your final deck are marked (In deck), the rest of the pool is
+  dimmed, and **Final deck** opens the deck you built in Deck Manager's layout.
+- 17lands win rates: each card shows its games-in-hand win rate with a
+  heat-map glow from red to green, relative to the rest of the set; cards
+  17lands has not rated yet are grey (toggle with **Win rates on/off**). The
+  tracker keeps the 17lands data in its data folder and refreshes it at most
+  daily, so win rates still show later and offline.
 - Replays now share a small step-playback framework (timeline, transport bar,
   shortcuts, replay kinds), so more replay types can be added the same way.
 

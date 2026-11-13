@@ -1876,6 +1876,48 @@ def test_card_detail_reports_summary_by_deck_and_opener_impact(tmp_path):
     )
 
 
+def test_card_detail_lists_games_and_splits_limited_decks_by_run(tmp_path, monkeypatch):
+    db_path = _sample_dashboard_db(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            """
+            insert into game_card_summary (
+                game_id, participant_id, card_id, display_name, type_category, played_count
+            )
+            values (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                ("game-1", "player-1", 11, "Mouse Mentor (Creature 2/1)", "Creature", 2),
+                ("game-2", "player-2", 11, "Mouse Mentor (Creature 2/1)", "Creature", 1),
+                ("game-1", "opponent-1", 11, "Mouse Mentor (Creature 2/1)", "Creature", 1),
+            ],
+        )
+    run = {
+        "id": "draft-1",
+        "kind": "player",
+        "label": "Premier Draft",
+        "started_at": "2026-11-01T00:00:00+00:00",
+        "rebuilt": False,
+        "art": None,
+    }
+    from mtga_tracker import draft_api
+
+    monkeypatch.setattr(draft_api, "game_run_tags", lambda conn: {"game-2": run})
+
+    detail = card_detail(db_path, "Mouse Mentor")
+
+    games = {row["game_id"]: row for row in detail["games"]}
+    assert detail["games_total"] == 2 and set(games) == {"game-1", "game-2"}
+    assert games["game-1"]["seen_by"] == ["you", "opponent"]
+    assert (games["game-1"]["your_played"], games["game-1"]["opponent_played"]) == (2, 1)
+    assert games["game-2"]["run"]["id"] == "draft-1" and "run" not in games["game-1"]
+    assert all(row["replay"]["state"] for row in detail["games"])
+    # Game 2 now counts toward its run, not the deck name it shares with game 1.
+    decks = {row.get("run", {}).get("id") or row["deck_name"]: row for row in detail["by_deck"]}
+    assert decks["draft-1"]["games_seen"] == 1 and decks["draft-1"]["total_played"] == 1
+    assert decks["Boros Mouse"]["games_seen"] == 1 and decks["Boros Mouse"]["total_played"] == 2
+
+
 def test_card_detail_rejects_unknown_card(tmp_path):
     db_path = _sample_dashboard_db(tmp_path)
 
@@ -2801,9 +2843,13 @@ def test_all_games_returns_full_history_with_flags(tmp_path):
     assert rows["game-1"]["match_losses"] == 1
     assert "is_flood" in rows["game-1"] and "is_screw" in rows["game-1"]
     assert rows["game-1"]["cards_seen"] == 2
+    # One art tile per deck for the Replay page's deck tiles.
+    assert set(result["deck_visuals"]) == {row["deck_name"] for row in result["games"]}
+    assert result["deck_visuals"]["Boros Mouse"]["source"]
 
     filtered = all_games(db_path, since="2026-06-05")
     assert filtered["total"] == 0
+    assert filtered["deck_visuals"] == {}
 
 
 def test_game_detail_timeline_not_truncated_for_long_games(tmp_path):

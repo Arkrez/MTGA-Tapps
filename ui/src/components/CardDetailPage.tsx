@@ -1,5 +1,14 @@
 import { useEffect, useState } from 'react';
-import { fetchCardDetail, type CardByDeckRow, type CardByRoleRow, type CardDetail, type CardMultiplicityBucket, type SnapshotFilters } from '../api';
+import {
+  fetchCardDetail,
+  type CardByDeckRow,
+  type CardByRoleRow,
+  type CardDetail,
+  type CardGameRow,
+  type CardMultiplicityBucket,
+  type GameRun,
+  type SnapshotFilters,
+} from '../api';
 import { pageTitle } from '../branding';
 import {
   cardPreviewImageUrl,
@@ -7,8 +16,11 @@ import {
   rememberFailedPreviewImage,
 } from '../cardPreview';
 import { formatPercent } from '../dashboardData';
-import { formatCardName, formatNumber } from '../format';
+import { formatCardName, formatDateTime, formatNumber, outcomeLabel, outcomeTone } from '../format';
+import { cardRouteHash, draftReplayRouteHash, gameRouteHash } from '../routes';
+import { Badge } from './Badge';
 import { DeckLink } from './DeckLink';
+import { ReplayLink } from './ReplayLink';
 import { MetricCard } from './MetricCard';
 import { Section } from './Section';
 import { SortableTable, type Column } from './SortableTable';
@@ -25,26 +37,116 @@ function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError';
 }
 
+function runDate(run: GameRun): string {
+  const date = run.started_at ? new Date(run.started_at) : null;
+  return date && !Number.isNaN(date.getTime())
+    ? date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    : '';
+}
 
-const deckColumns: Column<CardByDeckRow>[] = [
-  {
-    key: 'deck_name',
-    header: 'Deck',
-    render: (row) => <DeckLink deckName={row.deck_name} />,
-    sortValue: (row) => row.deck_name,
-  },
-  { key: 'games_seen', header: 'Games Seen', numeric: true },
-  { key: 'total_played', header: 'Played', numeric: true },
-  { key: 'wins', header: 'Wins', numeric: true },
-  { key: 'losses', header: 'Losses', numeric: true },
-  {
-    key: 'win_rate',
-    header: 'Win Rate',
-    render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
-    sortValue: (row) => row.win_rate,
-    numeric: true,
-  },
-];
+function deckSortValue(row: { deck_name: string; run?: GameRun }): string {
+  return row.run ? `${row.run.label} ${row.run.started_at ?? ''}` : row.deck_name;
+}
+
+/** A limited deck links to its own draft or sealed run; any other deck to its deck page. */
+function DeckOrRunLink({
+  deckName,
+  run,
+  returnHash,
+}: {
+  deckName: string;
+  run?: GameRun;
+  returnHash: string;
+}) {
+  if (!run) {
+    return <DeckLink deckName={deckName} />;
+  }
+  const date = runDate(run);
+  return (
+    <a className="deck-link" href={draftReplayRouteHash(run.id, { returnHash })} title={deckName}>
+      {run.label}
+      {date ? ` · ${date}` : ''}
+    </a>
+  );
+}
+
+function deckColumns(returnHash: string): Column<CardByDeckRow>[] {
+  return [
+    {
+      key: 'deck_name',
+      header: 'Deck',
+      render: (row) => <DeckOrRunLink deckName={row.deck_name} returnHash={returnHash} run={row.run} />,
+      sortValue: deckSortValue,
+    },
+    { key: 'games_seen', header: 'Games Seen', numeric: true },
+    { key: 'total_played', header: 'Played', numeric: true },
+    { key: 'wins', header: 'Wins', numeric: true },
+    { key: 'losses', header: 'Losses', numeric: true },
+    {
+      key: 'win_rate',
+      header: 'Win Rate',
+      render: (row) => <WinRateBar losses={row.losses} winRate={row.win_rate} wins={row.wins} />,
+      sortValue: (row) => row.win_rate,
+      numeric: true,
+    },
+  ];
+}
+
+function sideLabel(row: CardGameRow): string {
+  const you = row.seen_by.includes('you');
+  const opponent = row.seen_by.includes('opponent');
+  return you && opponent ? 'Both' : you ? 'You' : opponent ? 'Opponent' : '—';
+}
+
+function gameColumns(returnHash: string): Column<CardGameRow>[] {
+  return [
+    {
+      key: 'started_at',
+      header: 'Started',
+      render: (row) => <a href={gameRouteHash(row.game_id, returnHash)}>{formatDateTime(row.started_at)}</a>,
+      sortValue: (row) => row.started_at,
+    },
+    {
+      key: 'deck_name',
+      header: 'Your Deck',
+      render: (row) => <DeckOrRunLink deckName={row.deck_name} returnHash={returnHash} run={row.run} />,
+      sortValue: deckSortValue,
+    },
+    {
+      key: 'opponent_name',
+      header: 'Opponent',
+      render: (row) => row.opponent_name ?? '—',
+      sortValue: (row) => row.opponent_name ?? '',
+    },
+    {
+      key: 'seen_by',
+      header: 'Had It',
+      render: sideLabel,
+      sortValue: sideLabel,
+    },
+    {
+      key: 'your_played',
+      header: 'Plays',
+      render: (row) => row.your_played + row.opponent_played,
+      sortValue: (row) => row.your_played + row.opponent_played,
+      numeric: true,
+    },
+    {
+      key: 'outcome',
+      header: 'Outcome',
+      render: (row) => <Badge tone={outcomeTone(row.outcome)}>{outcomeLabel(row.outcome)}</Badge>,
+      sortValue: (row) => row.outcome,
+    },
+    {
+      key: 'replay',
+      header: '',
+      sortable: false,
+      render: (row) => (
+        <ReplayLink availability={row.replay} gameId={row.game_id} returnHash={returnHash} variant="icon" />
+      ),
+    },
+  ];
+}
 
 const roleColumns: Column<CardByRoleRow>[] = [
   { key: 'side_label', header: 'Card Played By' },
@@ -216,6 +318,10 @@ export function CardDetailPage({
 
   const { detail, refreshError } = loadState;
   const displayName = formatCardName(detail.card_name);
+  // Back from a game or run lands on this card page (keeping its own back link).
+  const returnHash = window.location.hash.startsWith('#/card/') ? window.location.hash : cardRouteHash(cardName);
+  const cardGames = detail.games ?? [];
+  const gamesTotal = detail.games_total ?? cardGames.length;
   const metrics = [
     { label: 'Games Appeared', value: formatNumber(detail.all_usage.games_seen) },
     { label: 'Total Plays', value: formatNumber(detail.all_usage.total_played) },
@@ -427,14 +533,41 @@ export function CardDetailPage({
         )}
       </Section>
 
-      <Section id="card-decks" title="Your Decks" description="Your results in games where you used this card.">
+      <Section
+        id="card-decks"
+        title="Your Decks"
+        description="Your results in games where you played this card. Each draft or sealed run is its own deck and opens that run."
+      >
         <SortableTable
           caption="Card performance by deck"
-          columns={deckColumns}
+          columns={deckColumns(returnHash)}
           compact
-          getRowKey={(row) => row.deck_name}
+          getRowKey={(row) => row.run?.id ?? row.deck_name}
           rows={detail.by_deck}
         />
+      </Section>
+
+      <Section
+        id="card-games"
+        title="Games With This Card"
+        description={
+          gamesTotal > cardGames.length
+            ? `Newest ${cardGames.length} of ${gamesTotal} games where either player had this card. Open a game or watch its replay.`
+            : 'Every game where either player had this card. Open a game or watch its replay.'
+        }
+      >
+        {cardGames.length > 0 ? (
+          <SortableTable
+            caption="Games with this card"
+            columns={gameColumns(returnHash)}
+            compact
+            getRowKey={(row) => row.game_id}
+            initialSort={{ key: 'started_at', direction: 'desc' }}
+            rows={cardGames}
+          />
+        ) : (
+          <p className="empty-state">No tracked games with this card.</p>
+        )}
       </Section>
     </>
   );

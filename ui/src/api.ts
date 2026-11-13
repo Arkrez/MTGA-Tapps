@@ -1,4 +1,4 @@
-import type { DraftListRow, DraftStream } from './replay/draft/types';
+import type { DraftAnalytics, DraftListRow, DraftStream } from './replay/draft/types';
 import type { ReplayAvailability, ReplayStream } from './replay/types';
 
 export type { ReplayAvailability, ReplayStream } from './replay/types';
@@ -289,7 +289,19 @@ export interface RecentGameRow {
   replay?: ReplayAvailability;
 }
 
+/** The limited run (draft or sealed course) a game belongs to. */
+export interface GameRun {
+  id: string;
+  kind: 'bot' | 'player' | 'sealed';
+  label: string;
+  started_at: string | null;
+  /** Rebuilt from games because the log with the course is gone. */
+  rebuilt: boolean;
+  art: { arena_id: number; name: string | null } | null;
+}
+
 export interface AllGamesRow extends RecentGameRow {
+  run?: GameRun;
   duration_seconds: number | null;
   total_turns: number | null;
   mulligans: number | null;
@@ -301,6 +313,8 @@ export interface AllGamesRow extends RecentGameRow {
 export interface AllGamesResponse {
   games: AllGamesRow[];
   total: number;
+  /** Deck tile art keyed by deck name (Replay page). */
+  deck_visuals?: Record<string, DeckVisual>;
 }
 
 export interface MatchRow {
@@ -1044,6 +1058,8 @@ export interface CardSummary {
 
 export interface CardByDeckRow {
   deck_name: string;
+  /** Limited decks: the draft or sealed run, since every one is called "Draft Deck" / "Sealed Deck". */
+  run?: GameRun;
   games_seen: number;
   total_played: number;
   wins: number;
@@ -1113,6 +1129,21 @@ export interface CardOpponentPlayable {
   pct: number | null;
 }
 
+export interface CardGameRow {
+  game_id: string;
+  started_at: string;
+  outcome: string | null;
+  format_label: string;
+  deck_name: string;
+  opponent_name: string | null;
+  /** Who had the card in this game. */
+  seen_by: ('you' | 'opponent')[];
+  your_played: number;
+  opponent_played: number;
+  replay?: ReplayAvailability;
+  run?: GameRun;
+}
+
 export interface CardDetail {
   card_name: string;
   image_url: string | null;
@@ -1123,6 +1154,9 @@ export interface CardDetail {
   by_role: CardByRoleRow[];
   opponent_impact?: CardOpponentImpact;
   by_deck: CardByDeckRow[];
+  /** Games the card appeared in (either side), newest first; capped, see `games_total`. */
+  games?: CardGameRow[];
+  games_total?: number;
   multiplicity?: CardMultiplicity;
   opponent_multiplicity?: CardMultiplicity;
   opener_impact: CardOpenerImpact;
@@ -1231,6 +1265,23 @@ export async function fetchDraftReplay(draftId: string, signal?: AbortSignal): P
     throw new Error(response.status === 404 ? `No recorded draft for id: ${draftId}` : `Dashboard API returned ${response.status}`);
   }
   return response.json() as Promise<DraftStream>;
+}
+
+export async function fetchDraftAnalytics(signal?: AbortSignal): Promise<DraftAnalytics> {
+  const response = await fetch('/api/drafts/analytics', { signal });
+  if (!response.ok) {
+    throw new Error(`Draft analytics returned ${response.status}`);
+  }
+  const body = (await response.json()) as Partial<DraftAnalytics> | null;
+  const empty = { drafts: 0, wins: 0, losses: 0, games: 0, win_rate: null };
+  return {
+    summary: body?.summary ?? empty,
+    colors: body?.colors ?? [],
+    formats: body?.formats ?? [],
+    cards: body?.cards ?? [],
+    pairs: { best: body?.pairs?.best ?? [], worst: body?.pairs?.worst ?? [] },
+    pair_rules: body?.pair_rules ?? { min_drafts: 2, min_games: 4 },
+  };
 }
 
 export interface DraftImportResult {

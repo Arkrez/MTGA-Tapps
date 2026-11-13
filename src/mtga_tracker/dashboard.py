@@ -4849,6 +4849,106 @@ def _card_opponent_playable(
     }
 
 
+CARD_GAMES_LIMIT = 200
+
+
+def _card_games_and_decks(
+    conn: sqlite3.Connection,
+    name_clause_s: str,
+    where: str,
+    match_params: Tuple[Any, ...],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], int]:
+    """The card page's games (newest first, with replay availability and the
+    limited run each belongs to) and its decks with limited decks split by run.
+
+    Every draft or sealed deck is named "Draft Deck" / "Sealed Deck", so one row
+    per deck name lumps every run together; a limited game's run
+    (``limited_runs``) stands in for its deck and links to that run's page.
+    """
+    rows = _dict_rows(
+        conn.execute(
+            f"""
+            SELECT
+              g.id AS game_id,
+              g.started_at,
+              g.outcome,
+              m.format AS raw_format,
+              m.best_of,
+              COALESCE(SUM(CASE WHEN p.role = 'player' THEN s.played_count END), 0)
+                AS your_played,
+              COALESCE(SUM(CASE WHEN p.role = 'opponent' THEN s.played_count END), 0)
+                AS opponent_played,
+              MAX(p.role = 'player') AS in_your_game,
+              MAX(p.role = 'opponent') AS in_opponent_game,
+              (SELECT COALESCE(pp.deck_name, '(unknown)') FROM participants pp
+                WHERE pp.game_id = g.id AND pp.role = 'player' LIMIT 1) AS deck_name,
+              (SELECT po.display_name FROM participants po
+                WHERE po.game_id = g.id AND po.role = 'opponent' LIMIT 1) AS opponent_name
+            FROM game_card_summary s
+            JOIN participants p ON p.id = s.participant_id
+            JOIN games g ON g.id = s.game_id
+            JOIN matches m ON m.id = g.match_id
+            WHERE {name_clause_s} AND {where}
+            GROUP BY g.id
+            ORDER BY g.started_at DESC, g.id DESC
+            """,
+            match_params,
+        )
+    )
+    try:
+        from .draft_api import game_run_tags
+
+        run_tags = game_run_tags(conn)
+    except Exception:  # noqa: BLE001 - linking runs is optional
+        run_tags = {}
+
+    # Decks: one row per deck name, except a limited game counts toward its run.
+    decks: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        if not row["your_played"]:
+            continue
+        run = run_tags.get(str(row["game_id"]))
+        entry = decks.setdefault(
+            run["id"] if run else "deck:" + str(row["deck_name"]),
+            {
+                "deck_name": row["deck_name"],
+                **({"run": run} if run else {}),
+                "games_seen": 0,
+                "total_played": 0,
+                "wins": 0,
+                "losses": 0,
+            },
+        )
+        entry["games_seen"] += 1
+        entry["total_played"] += int(row["your_played"] or 0)
+        entry["wins"] += row["outcome"] == "win"
+        entry["losses"] += row["outcome"] == "loss"
+    for entry in decks.values():
+        decided = entry["wins"] + entry["losses"]
+        entry["win_rate"] = round(100.0 * entry["wins"] / decided, 1) if decided else None
+    by_deck = sorted(
+        decks.values(),
+        key=lambda row: (-row["games_seen"], -(row["win_rate"] or 0), str(row["deck_name"])),
+    )[:50]
+
+    games = rows[:CARD_GAMES_LIMIT]
+    _attach_replay_availability(conn, games)
+    for row in games:
+        played_by = []
+        if row.pop("in_your_game"):
+            played_by.append("you")
+        if row.pop("in_opponent_game"):
+            played_by.append("opponent")
+        row["seen_by"] = played_by
+        row["format_label"] = format_label(
+            row.pop("raw_format"), default_best_of=int(row.pop("best_of") or 1)
+        )
+        run = run_tags.get(str(row["game_id"]))
+        if run:
+            row["run"] = run
+    return games, by_deck, len(rows)
+
+
 def card_detail(
     db_path: Path = DEFAULT_DB_PATH,
     card_name: str = "",
@@ -4934,28 +5034,6 @@ def card_detail(
                 match_params,
             )
         )
-        by_deck = _dict_rows(
-            conn.execute(
-                f"""
-                SELECT
-                  COALESCE(p.deck_name, '(unknown)') AS deck_name,
-                  COUNT(DISTINCT g.id) AS games_seen,
-                  COALESCE(SUM(s.played_count), 0) AS total_played,
-                  SUM(g.outcome = 'win') AS wins,
-                  SUM(g.outcome = 'loss') AS losses,
-                  ROUND(100.0 * SUM(g.outcome = 'win') / NULLIF(SUM(g.outcome IN ('win', 'loss')), 0), 1) AS win_rate
-                FROM game_card_summary s
-                JOIN participants p ON p.id = s.participant_id AND p.role = 'player'
-                JOIN games g ON g.id = s.game_id
-                WHERE {name_clause_s}
-                  AND s.played_count > 0 AND {where}
-                GROUP BY p.deck_name
-                ORDER BY games_seen DESC, win_rate DESC, deck_name
-                LIMIT 50
-                """,
-                match_params,
-            )
-        )
         opener = conn.execute(
             f"""
             SELECT
@@ -4983,6 +5061,9 @@ def card_detail(
         multiplicity = _card_multiplicity(conn, variants)
         opponent_multiplicity = _card_opponent_multiplicity(conn, variants)
         opponent_playable = _card_opponent_playable(conn, variants, where, list(filter_params))
+        card_games, by_deck, card_games_total = _card_games_and_decks(
+            conn, name_clause_s, where, match_params
+        )
 
     opponent_usage = next((row for row in by_role if row["role"] == "opponent"), None)
     opponent_games = int(opponent_usage["games_seen"] or 0) if opponent_usage else 0
@@ -5033,6 +5114,8 @@ def card_detail(
         },
         "opponent_playable": opponent_playable,
         "by_deck": by_deck,
+        "games": card_games,
+        "games_total": card_games_total,
         "multiplicity": multiplicity,
         "opponent_multiplicity": opponent_multiplicity,
         "opener_impact": {
@@ -5184,7 +5267,22 @@ def all_games(
             conn, (row.get("player_participant_id") for row in rows)
         )
         _attach_replay_availability(conn, rows)
+        known_visuals = _deck_visuals(conn)
+        try:
+            from .draft_api import game_run_tags
 
+            run_tags = game_run_tags(conn)
+        except Exception:  # noqa: BLE001 - grouping by run is optional
+            run_tags = {}
+        for row in rows:
+            if row.get("game_id") in run_tags:
+                row["run"] = run_tags[row["game_id"]]
+
+    # One art tile per deck (the Replay page groups games into deck tiles).
+    deck_visuals = {
+        name: known_visuals.get(name, _empty_deck_visual(name))
+        for name in {str(row.get("deck_name") or "") for row in rows}
+    }
     for row in rows:
         participant_id = row.pop("player_participant_id", None)
         row["deck_colors"] = game_deck_colors.get(str(participant_id)) or deck_color_map.get(
@@ -5213,7 +5311,7 @@ def all_games(
             row["opponent_commander_colors"] = normalize_colors(
                 str(row.get("opponent_commander_colors") or "")
             )
-    return {"games": rows, "total": len(rows)}
+    return {"games": rows, "total": len(rows), "deck_visuals": deck_visuals}
 
 
 def game_annotation(db_path: Path = DEFAULT_DB_PATH, game_id: str = "") -> Dict[str, Any]:
@@ -6260,7 +6358,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     {"Cache-Control": "no-store"},
                 )
                 return
-        if request_path in ("/api/drafts", "/api/draft"):
+        if request_path == "/api/card-ratings":
+            from . import card_ratings
+
+            try:
+                status, body = card_ratings.handle_get(parse_qs(parsed.query), self.db_path)
+            except Exception as exc:  # noqa: BLE001 - report, never crash the server
+                status, body = 500, {"error": str(exc)}
+            _send_bytes(self, status, json.dumps(body).encode("utf-8"), "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            return
+        if request_path in ("/api/drafts", "/api/draft", "/api/drafts/analytics"):
             from . import draft_api
 
             try:
