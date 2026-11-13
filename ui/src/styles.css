@@ -7153,3 +7153,8 @@ a.replay-deck-tile {
 .draft-stats-split table {
   min-width: 0;
 }
+
+.replay-tile-run {
+  color: var(--replay) !important;
+  font-weight: 600;
+}

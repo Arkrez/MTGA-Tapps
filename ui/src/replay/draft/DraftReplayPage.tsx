@@ -8,6 +8,7 @@ import { pageTitle } from '../../branding';
 import { REPLAY_ROUTE_HASH } from '../../routes';
 import { useDocumentTitle } from '../hooks/useViewport';
 import { DraftReplayViewer } from './DraftReplayViewer';
+import { LimitedRunView } from './LimitedRunView';
 import type { DraftStream } from './types';
 import '../replay.css';
 import '../replay-controls.css';
@@ -38,6 +39,8 @@ export function DraftReplayPage({ draftId, step, returnHash }: DraftReplayPagePr
   }, [draftId]);
 
   if (load.status === 'ready') {
+    // Sealed runs, and runs rebuilt from games, have no picks to step through.
+    if (!load.stream.picks.length) return <LimitedRunView stream={load.stream} returnHash={returnHash} />;
     return <DraftReplayViewer stream={load.stream} step={step} returnHash={returnHash} />;
   }
   return (

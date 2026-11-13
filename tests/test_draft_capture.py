@@ -583,7 +583,7 @@ def test_games_go_to_the_draft_whose_deck_they_played_whatever_the_clocks_say(
                 (draft_id, PLAYER_EVENT, started, started, json.dumps(deck)),
             )
         # Local (PDT) game times: 17:13 on the 23rd is 00:13 UTC on the 24th.
-        _deck_game(conn, "a", "2026-10-23T17:13:00", "win", [1, 2, 3, 4, 5, 90])
+        _deck_game(conn, "a", "2026-10-23T17:13:00", "win", [1, 2, 3, 4, 5])
         _deck_game(conn, "b", "2026-10-23T17:40:00", "loss", [1, 2, 3, 4])
         _deck_game(conn, "c", "2026-10-24T19:00:00", "win", [6, 7, 8, 9, 10])
         conn.commit()

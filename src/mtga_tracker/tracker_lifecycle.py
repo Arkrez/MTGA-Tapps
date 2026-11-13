@@ -302,6 +302,7 @@ class TrackerLifecycleMixin:
                     or "EventJoin" in entry.body
                     or "EventGetCourses" in entry.body
                     or "EventSetDeckV3" in entry.body
+                    or "EventClaimPrize" in entry.body
                 ):
                     self._capture_draft_entry(entry)
                 routed = (

@@ -162,6 +162,12 @@ Primary code paths:
   unrated cards grey) via `seventeenLands.ts`. Games are credited to drafts by
   `draft_api.game_owners` (decklist match first, time window as fallback); `GET
   /api/drafts/analytics` feeds the Replay page's Draft details (`DraftAnalytics.tsx`).
+  Runs (drafts, sealed courses from `EventJoin`/`EventGetCoursesV2` `CardPool`,
+  and runs rebuilt from game decklists) live in `limited_runs.py`; games are
+  credited to the run whose pool holds their deck, and `/api/games` tags limited
+  games with their run so Recent games tiles group by run, not by the shared
+  "Draft Deck"/"Sealed Deck" name. Tile art for many cards goes through
+  `replay/useCardArt.ts` (one batched lookup, CDN art crops).
   Arena's log clock is measured, never assumed (`draft_capture.clock_offset`);
   migration 38 repairs drafts stamped late before that. `docs/DRAFT_REPLAY.md` is the
   binding contract; change it first. Tests: `tests/test_draft_capture.py`,

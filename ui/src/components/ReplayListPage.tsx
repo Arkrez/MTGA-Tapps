@@ -9,6 +9,7 @@ import { DraftReplayList } from './DraftReplayList';
 import { ColorPips } from './ColorPips';
 import { DeckVisual } from './DeckVisual';
 import { WinRatePill } from './WinRatePill';
+import { useCardArt } from '../replay/useCardArt';
 import { FormatQuickFilters } from './FormatQuickFilters';
 import { replayState, replayStateLabel, replayStateTitle } from '../replayAvailability';
 import { ReplayLink } from './ReplayLink';
@@ -30,7 +31,12 @@ function opponentLabel(row: AllGamesRow): string {
 }
 
 interface DeckTile {
+  /** Deck name, or the run for limited games (every limited deck shares one name). */
+  key: string;
   name: string;
+  /** For a limited run: its event and start date. */
+  subtitle: string | null;
+  art: DeckVisualData | null;
   games: number;
   wins: number;
   losses: number;
@@ -39,14 +45,43 @@ interface DeckTile {
   replayable: number;
 }
 
-/** One tile per deck, most recently played first. `rows` must be newest first. */
-function deckTiles(rows: readonly AllGamesRow[]): DeckTile[] {
+function tileKey(row: AllGamesRow): string {
+  return row.run ? `run:${row.run.id}` : row.deck_name;
+}
+
+type ArtLookup = (name: string | null | undefined) => string | null;
+
+/** Art for a limited run's tile: its first pick, or its rarest deck card (a batch-resolved CDN crop). */
+function runArt(row: AllGamesRow, art: ArtLookup): DeckVisualData | null {
+  const name = row.run?.art?.name;
+  if (!name) return null;
+  return { card_id: row.run?.art?.arena_id ?? null, card_name: name, type_category: 'Other', image_url: art(name), source: 'local_metadata' };
+}
+
+/**
+ * One tile per deck, most recently played first; limited games get one tile
+ * per run (draft or sealed course), since every limited deck is named alike.
+ * `rows` must be newest first.
+ */
+function deckTiles(rows: readonly AllGamesRow[], art: ArtLookup): DeckTile[] {
   const tiles = new Map<string, DeckTile>();
   for (const row of rows) {
-    let tile = tiles.get(row.deck_name);
+    const key = tileKey(row);
+    let tile = tiles.get(key);
     if (!tile) {
-      tile = { name: row.deck_name, games: 0, wins: 0, losses: 0, lastPlayed: row.started_at, colors: row.deck_colors ?? '', replayable: 0 };
-      tiles.set(row.deck_name, tile);
+      tile = {
+        key,
+        name: row.deck_name,
+        subtitle: row.run ? `${row.run.label}${row.run.started_at ? ` · ${formatDateTime(row.run.started_at)}` : ''}` : null,
+        art: runArt(row, art),
+        games: 0,
+        wins: 0,
+        losses: 0,
+        lastPlayed: row.started_at,
+        colors: row.deck_colors ?? '',
+        replayable: 0,
+      };
+      tiles.set(key, tile);
     }
     tile.games += 1;
     if (row.outcome === 'win') tile.wins += 1;
@@ -110,6 +145,7 @@ export function ReplayListPage() {
   const [loadState, setLoadState] = useState<LoadState>({ status: 'loading' });
   const [quickFilter, setQuickFilter] = useState('all');
   const [deckQuery, setDeckQuery] = useState('');
+  /** Selected tile key (deck name, or `run:<id>` for a limited run). */
   const [selectedDeck, setSelectedDeck] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(REPLAY_LIST_PAGE_SIZE);
   const [retryToken, setRetryToken] = useState(0);
@@ -140,15 +176,17 @@ export function ReplayListPage() {
       .filter((row) => !needle || row.deck_name.toLocaleLowerCase().includes(needle))
       .sort((a, b) => (b.started_at ?? '').localeCompare(a.started_at ?? ''));
   }, [deckQuery, games, quickFilter]);
-  const tiles = useMemo(() => deckTiles(filtered), [filtered]);
-  const allTiles = useMemo(() => deckTiles(games), [games]);
+  const artNames = useMemo(() => games.map((row) => row.run?.art?.name), [games]);
+  const art = useCardArt(artNames);
+  const tiles = useMemo(() => deckTiles(filtered, art), [art, filtered]);
+  const allTiles = useMemo(() => deckTiles(games, art), [art, games]);
   const deckGames = useMemo(
-    () => (selectedDeck === null ? [] : filtered.filter((row) => row.deck_name === selectedDeck)),
+    () => (selectedDeck === null ? [] : filtered.filter((row) => tileKey(row) === selectedDeck)),
     [filtered, selectedDeck],
   );
   const shown = deckGames.slice(0, visibleCount);
   const visuals = loadState.status === 'loaded' ? loadState.visuals : {};
-  const selectedTile = tiles.find((tile) => tile.name === selectedDeck) ?? null;
+  const selectedTile = tiles.find((tile) => tile.key === selectedDeck) ?? null;
   const latest = useMemo(
     () => games.reduce<AllGamesRow | null>((best, row) => (!best || (row.started_at ?? '') > (best.started_at ?? '') ? row : best), null),
     [games],
@@ -208,8 +246,8 @@ export function ReplayListPage() {
               {latest ? (
                 <LatestReplay
                   row={latest}
-                  visual={visuals[latest.deck_name] ?? NO_ART}
-                  deck={allTiles.find((tile) => tile.name === latest.deck_name) ?? null}
+                  visual={runArt(latest, art) ?? visuals[latest.deck_name] ?? NO_ART}
+                  deck={allTiles.find((tile) => tile.key === tileKey(latest)) ?? null}
                 />
               ) : null}
               <FormatQuickFilters
@@ -236,19 +274,20 @@ export function ReplayListPage() {
               ) : selectedDeck === null ? (
                 <div className="replay-deck-tiles" role="list" aria-label="Decks">
                   {tiles.map((tile) => (
-                    <div role="listitem" key={tile.name}>
+                    <div role="listitem" key={tile.key}>
                       <button
                         type="button"
                         className="deck-manager-tile replay-deck-tile"
-                        onClick={() => chooseDeck(tile.name)}
-                        title={`Show ${tile.name}'s games`}
+                        onClick={() => chooseDeck(tile.key)}
+                        title={`Show ${tile.subtitle ? `${tile.name} (${tile.subtitle})` : tile.name}'s games`}
                       >
                         <span className="deck-manager-tile-art">
-                          <DeckVisual deckName={tile.name} visual={visuals[tile.name] ?? NO_ART} />
+                          <DeckVisual deckName={tile.name} visual={tile.art ?? visuals[tile.name] ?? NO_ART} />
                           <ColorPips colors={tile.colors} size={14} />
                         </span>
                         <span className="deck-manager-tile-text">
                           <strong>{tile.name}</strong>
+                          {tile.subtitle ? <small className="replay-tile-run">{tile.subtitle}</small> : null}
                           <small className="replay-tile-record">
                             <WinRatePill wins={tile.wins} losses={tile.losses} />
                             {tile.games} game{tile.games === 1 ? '' : 's'} · {tile.wins}–{tile.losses}
@@ -268,7 +307,10 @@ export function ReplayListPage() {
                   <button type="button" className="replay-deck-back" onClick={() => chooseDeck(null)}>
                     ← All decks
                   </button>
-                  <h3>{selectedDeck}</h3>
+                  <h3>
+                    {selectedTile?.name ?? selectedDeck}
+                    {selectedTile?.subtitle ? <span className="replay-vs"> · {selectedTile.subtitle}</span> : null}
+                  </h3>
                   {selectedTile ? (
                     <span className="replay-meta">
                       <ColorPips colors={selectedTile.colors} size={14} />{' '}

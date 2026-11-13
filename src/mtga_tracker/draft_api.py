@@ -11,11 +11,12 @@ import json
 import sqlite3
 import threading
 from collections import Counter
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .format_normalizer import format_label
+from .limited_runs import load_runs
+from .limited_runs import parse_deck as _deck
 
 STREAM_VERSION = 1
 
@@ -73,179 +74,116 @@ def _main_colors(picked: List[int], facts: Dict[int, Dict[str, Any]]) -> str:
     return "".join(c for c in "WUBRG" if c in top)
 
 
-def _deck(raw: Optional[str]) -> Optional[Dict[str, Any]]:
-    """The submitted deck as ``{name, submitted_at, main, sideboard}`` piles of
-    ``{arena_id, quantity}``; None when no deck was submitted."""
-    if not raw:
-        return None
-    try:
-        value = json.loads(raw)
-    except ValueError:
-        return None
-
-    def pile(name: str) -> List[Dict[str, int]]:
-        return [
-            {"arena_id": int(card), "quantity": int(quantity)}
-            for card, quantity in value.get(name) or []
-        ]
-
-    return {
-        "name": value.get("name"),
-        "submitted_at": value.get("submitted_at"),
-        "main": pile("main"),
-        "sideboard": pile("sideboard"),
-    }
-
-
-def _utc(value: Optional[str]) -> Optional[datetime]:
-    """An ISO time as aware UTC. Game rows store naive local time; drafts store UTC."""
-    if not value:
-        return None
-    try:
-        moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if moment.tzinfo is None:
-        moment = moment.astimezone()
-    return moment.astimezone(timezone.utc)
-
-
-#: Share of a draft's final main deck (by distinct card) that a game's submitted
-#: deck must contain to count as that draft's game.
-DECK_MATCH = 0.8
-
-
 def game_owners(
     conn: sqlite3.Connection, *, deck_only: bool = False
 ) -> Dict[str, Tuple[str, str, Optional[str]]]:
-    """Which draft each game of a draft event was played with:
-    ``{game_id: (draft_id, outcome, started_at)}``.
-
-    The game's submitted deck is matched against each draft's final deck of the
-    same event (the best match covering at least ``DECK_MATCH`` of it wins), so
-    clocks do not matter. Games no deck matches fall back to time: the latest
-    draft of the event that started before the game.
-    """
-    columns = {row[1] for row in conn.execute("PRAGMA table_info(drafts)")}
-    deck_column = "deck_json" if "deck_json" in columns else "NULL"
-    drafts = conn.execute(
-        f"SELECT id, event_name, started_at, {deck_column} FROM drafts WHERE event_name IS NOT NULL"
-    ).fetchall()
-    events = sorted({row[1] for row in drafts})
-    if not events:
-        return {}
-    marks = ",".join("?" for _ in events)
-    try:
-        games = conn.execute(
-            f"""SELECT g.id, COALESCE(m.event_name, m.queue), g.started_at, g.outcome
-                FROM games g JOIN matches m ON m.id = g.match_id
-                WHERE COALESCE(m.event_name, m.queue) IN ({marks})""",
-            events,
-        ).fetchall()
-        game_cards: Dict[str, set] = {}
-        for game_id, arena_id in conn.execute(
-            f"""SELECT gdc.game_id, gdc.arena_id FROM game_deck_cards gdc
-                JOIN participants p ON p.id = gdc.participant_id
-                JOIN games g ON g.id = gdc.game_id
-                JOIN matches m ON m.id = g.match_id
-                WHERE p.role = 'player' AND gdc.deck_zone = 'deck'
-                  AND gdc.arena_id IS NOT NULL
-                  AND COALESCE(m.event_name, m.queue) IN ({marks})""",
-            events,
-        ):
-            game_cards.setdefault(game_id, set()).add(int(arena_id))
-    except sqlite3.Error:
-        return {}
-    decks: Dict[str, List[Tuple[str, set]]] = {}
-    windows: Dict[str, List[Tuple[datetime, str]]] = {}
-    for draft_id, event, started_at, deck_json in drafts:
-        deck = _deck(deck_json)
-        if deck and deck["main"]:
-            decks.setdefault(event, []).append(
-                (draft_id, {card["arena_id"] for card in deck["main"]})
-            )
-        start = _utc(started_at)
-        if start:
-            windows.setdefault(event, []).append((start, draft_id))
-    for spans in windows.values():
-        spans.sort()
-    owners: Dict[str, Tuple[str, str, Optional[str]]] = {}
-    for game_id, event, started_at, outcome in games:
-        owner = None
-        cards = game_cards.get(game_id)
-        if cards:
-            scored = [
-                (len(cards & main) / len(main), draft_id) for draft_id, main in decks.get(event, [])
-            ]
-            best = max(scored, default=(0.0, None))
-            if best[0] >= DECK_MATCH:
-                owner = best[1]
-        if owner is None and not deck_only:
-            played = _utc(started_at)
-            for start, draft_id in windows.get(event, []):
-                if played and start <= played:
-                    owner = draft_id
-        if owner is not None:
-            owners[game_id] = (owner, outcome, started_at)
+    """Which run each limited game was played in: ``{game_id: (run_id, outcome,
+    started_at)}`` (see limited_runs). ``deck_only`` credits games to captured
+    runs by pool alone."""
+    owners = {}
+    for run in load_runs(conn, captured_only=deck_only):
+        for game in run.games:
+            owners[game.id] = (run.id, game.outcome, game.started_at)
     return owners
 
 
-def _draft_records(conn: sqlite3.Connection) -> Dict[str, Dict[str, int]]:
-    """Wins and losses per draft, from the games ``game_owners`` credits to it."""
+def _rarest(cards: List[int], facts: Dict[int, Dict[str, Any]]) -> Optional[int]:
+    """The card to show for a run without a first pick: its rarest, costliest card."""
+    order = {"mythic": 0, "rare": 1, "uncommon": 2, "common": 3, "basic": 4}
+    ranked = sorted(
+        (c for c in cards if (facts.get(c) or {}).get("rarity") != "basic"),
+        key=lambda c: (
+            order.get((facts.get(c) or {}).get("rarity", "common"), 3),
+            -((facts.get(c) or {}).get("mana_value") or 0),
+            c,
+        ),
+    )
+    return ranked[0] if ranked else None
+
+
+def game_run_tags(conn: sqlite3.Connection) -> Dict[str, Dict[str, Any]]:
+    """For /api/games: each limited game's run, so Recent games groups by run
+    instead of by the shared "Draft Deck" / "Sealed Deck" name."""
     try:
-        owners = game_owners(conn)
+        runs = load_runs(conn)
     except sqlite3.Error:
         return {}
-    records: Dict[str, Dict[str, int]] = {}
-    for owner, outcome, _started in owners.values():
-        record = records.setdefault(owner, {"wins": 0, "losses": 0, "games": 0})
-        record["games"] += 1
-        if outcome == "win":
-            record["wins"] += 1
-        elif outcome == "loss":
-            record["losses"] += 1
-    return records
+    every_card = set()
+    for run in runs:
+        if run.games:
+            every_card.update(card["arena_id"] for card in (run.deck or {}).get("main", []))
+            for _, _, taken in run.picks[:1]:
+                every_card.update(taken)
+    facts = _card_db().draft_card_facts(sorted(every_card)) if every_card else {}
+    tags: Dict[str, Dict[str, Any]] = {}
+    for run in runs:
+        if not run.games:
+            continue
+        first = next((cards[0] for _, _, cards in run.picks if cards), None)
+        main = [card["arena_id"] for card in (run.deck or {}).get("main", [])]
+        shown = first or _rarest(main, facts)
+        tag = {
+            "id": run.id,
+            "kind": run.kind,
+            "label": _label(run.event_name, run.kind),
+            "started_at": run.started_at,
+            "rebuilt": run.rebuilt,
+            "art": (
+                {"arena_id": shown, "name": (facts.get(shown) or {}).get("name")} if shown else None
+            ),
+        }
+        for game in run.games:
+            tags[game.id] = tag
+    return tags
 
 
 def list_drafts(db_path: Path) -> Dict[str, Any]:
+    """Every limited run (drafts, sealed courses, runs rebuilt from games), newest first."""
     conn = _read_conn(db_path)
     if conn is None:
         return {"drafts": []}
     try:
-        drafts = conn.execute("""SELECT id, kind, event_name, started_at, updated_at, completed_at
-               FROM drafts ORDER BY COALESCE(started_at, updated_at) DESC""").fetchall()
-        picks: Dict[str, List[Tuple[int, int, List[int]]]] = {}
-        for draft_id, pack, pick, picked in conn.execute(
-            "SELECT draft_id, pack_number, pick_number, picked_json FROM draft_picks"
-            " ORDER BY draft_id, pack_number, pick_number"
-        ):
-            picks.setdefault(draft_id, []).append((pack, pick, _ids(picked)))
-        records = _draft_records(conn)
+        runs = load_runs(conn)
+    except sqlite3.Error:
+        runs = []
     finally:
         conn.close()
-    every_card = [card for rows in picks.values() for _, _, cards in rows for card in cards]
-    facts = _card_db().draft_card_facts(every_card)
+    every_card = set()
+    for run in runs:
+        every_card.update(run.cards())
+    facts = _card_db().draft_card_facts(sorted(every_card))
     out = []
-    for draft_id, kind, event_name, started_at, updated_at, completed_at in drafts:
-        rows = picks.get(draft_id, [])
-        picked = [card for _, _, cards in rows for card in cards]
-        first = next((cards[0] for _, _, cards in rows if cards), None)
+    for run in sorted(runs, key=lambda r: r.started_at or r.updated_at or "", reverse=True):
+        picked = [card for _, _, cards in run.picks for card in cards]
+        main = [card["arena_id"] for card in (run.deck or {}).get("main", [])]
+        first = next((cards[0] for _, _, cards in run.picks if cards), None)
+        shown = first or _rarest(main or sorted(run.cards()), facts)
         out.append(
             {
-                "id": draft_id,
-                "kind": kind,
-                "event_name": event_name,
-                "format_label": _label(event_name, kind),
-                "started_at": started_at,
-                "updated_at": updated_at,
-                "completed_at": completed_at,
-                "picks": len(rows),
-                "packs": len({pack for pack, _, _ in rows}),
-                "colors": _main_colors(picked, facts),
-                "record": records.get(draft_id, {"wins": 0, "losses": 0, "games": 0}),
+                "id": run.id,
+                "kind": run.kind,
+                "event_name": run.event_name,
+                "format_label": _label(run.event_name, run.kind),
+                "started_at": run.started_at,
+                "updated_at": run.updated_at,
+                "completed_at": run.completed_at,
+                "picks": len(run.picks),
+                "packs": len({pack for pack, _, _ in run.picks}),
+                "pool_size": len(run.pool) or len(set(picked)),
+                "rebuilt": run.rebuilt,
+                "colors": _main_colors(
+                    [c for c in main if (facts.get(c) or {}).get("rarity") != "basic"] or picked,
+                    facts,
+                ),
+                "record": run.record,
                 "first_pick": (
                     {"arena_id": first, "name": (facts.get(first) or {}).get("name")}
                     if first
+                    else None
+                ),
+                "top_card": (
+                    {"arena_id": shown, "name": (facts.get(shown) or {}).get("name")}
+                    if shown
                     else None
                 ),
             }
@@ -266,7 +204,12 @@ def draft_stream(db_path: Path, draft_id: str) -> Dict[str, Any]:
                       card_pool_json, {deck_column} FROM drafts WHERE id = ?""",
             (draft_id,),
         ).fetchone()
-        if draft is None:
+        try:
+            run = next((r for r in load_runs(conn) if r.id == draft_id), None)
+        except sqlite3.Error:
+            run = None
+        rebuilt = run if run is not None and run.rebuilt else None
+        if draft is None and rebuilt is None:
             raise LookupError(f"Unknown draft: {draft_id}")
         rows = conn.execute(
             """SELECT pack_number, pick_number, pack_cards_json, picked_json, observed_at
@@ -275,10 +218,23 @@ def draft_stream(db_path: Path, draft_id: str) -> Dict[str, Any]:
         ).fetchall()
     finally:
         conn.close()
-    _, kind, event_name, course_id, started_at, updated_at, completed_at, pool_json, deck_json = (
-        draft
-    )
-    deck = _deck(deck_json)
+    if rebuilt is not None:
+        kind, event_name, course_id = rebuilt.kind, rebuilt.event_name, None
+        started_at, updated_at, completed_at = rebuilt.started_at, rebuilt.updated_at, None
+        pool_json, deck = json.dumps(rebuilt.pool), rebuilt.deck
+    else:
+        (
+            _,
+            kind,
+            event_name,
+            course_id,
+            started_at,
+            updated_at,
+            completed_at,
+            pool_json,
+            deck_json,
+        ) = draft
+        deck = _deck(deck_json)
     picks = [
         {
             "pack": pack,
@@ -315,6 +271,8 @@ def draft_stream(db_path: Path, draft_id: str) -> Dict[str, Any]:
             "started_at": started_at,
             "updated_at": updated_at,
             "completed_at": completed_at,
+            "rebuilt": rebuilt is not None,
+            "record": run.record if run else {"wins": 0, "losses": 0, "games": 0},
         },
         "picks": picks,
         "pool": pool,
@@ -414,33 +372,18 @@ def draft_analytics(db_path: Path) -> Dict[str, Any]:
     if conn is None:
         return empty
     try:
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(drafts)")}
-        deck_column = "deck_json" if "deck_json" in columns else "NULL"
-        drafts = conn.execute(
-            f"""SELECT id, kind, event_name, started_at, updated_at, completed_at, {deck_column}
-                FROM drafts ORDER BY COALESCE(started_at, updated_at)"""
-        ).fetchall()
-        picks: Dict[str, List[Tuple[int, int, List[int]]]] = {}
-        for draft_id, pack, pick, picked in conn.execute(
-            "SELECT draft_id, pack_number, pick_number, picked_json FROM draft_picks"
-            " ORDER BY draft_id, pack_number, pick_number"
-        ):
-            picks.setdefault(draft_id, []).append((pack, pick, _ids(picked)))
-        try:
-            owners = game_owners(conn)
-            seen = _seen_names(conn, sorted(owners))
-        except sqlite3.Error:
-            owners, seen = {}, {}
+        runs = load_runs(conn)
+        seen = _seen_names(conn, sorted(game.id for run in runs for game in run.games))
+    except sqlite3.Error:
+        runs, seen = [], {}
     finally:
         conn.close()
-    if not drafts:
+    if not runs:
         return empty
 
-    decks = {row[0]: _deck(row[6]) for row in drafts}
-    every_card = {c for rows in picks.values() for _, _, cards in rows for c in cards}
-    for deck in decks.values():
-        if deck:
-            every_card.update(card["arena_id"] for card in deck["main"])
+    every_card = set()
+    for run in runs:
+        every_card.update(run.cards())
     facts = _card_db().draft_card_facts(sorted(every_card))
 
     def basic(card: int) -> bool:
@@ -448,15 +391,6 @@ def draft_analytics(db_path: Path) -> Dict[str, Any]:
 
     def name_of(card: int) -> str:
         return str((facts.get(card) or {}).get("name") or f"Card #{card}")
-
-    records: Dict[str, Dict[str, int]] = {}
-    games_of: Dict[str, List[Tuple[str, str]]] = {}
-    for game_id, (owner, outcome, _started) in owners.items():
-        record = records.setdefault(owner, {"wins": 0, "losses": 0, "games": 0})
-        record["games"] += 1
-        record["wins"] += outcome == "win"
-        record["losses"] += outcome == "loss"
-        games_of.setdefault(owner, []).append((game_id, outcome))
 
     def held() -> Dict[str, Any]:
         return {"drafts": set(), "wins": 0, "losses": 0, "games": 0}
@@ -479,18 +413,17 @@ def draft_analytics(db_path: Path) -> Dict[str, Any]:
             {"in_hand": held(), "picked": 0, "in_deck": 0, "first_picks": 0, "pick_sum": 0},
         )
 
-    for draft_id, kind, event_name, *_rest in drafts:
-        record = records.get(draft_id, {"wins": 0, "losses": 0, "games": 0})
-        deck = decks.get(draft_id)
-        main = sorted({c["arena_id"] for c in deck["main"]} if deck else set())
+    for run in runs:
+        record = run.record
+        main = sorted({c["arena_id"] for c in run.deck["main"]} if run.deck else set())
         played = [c for c in main if not basic(c)]
         if record["games"]:
             _add(summary, record)
             colors = _main_colors(played, facts) or "C"
             _add(by_colors.setdefault(colors, _tally()), record)
-            _add(by_format.setdefault(_label(event_name, kind), _tally()), record)
+            _add(by_format.setdefault(_label(run.event_name, run.kind), _tally()), record)
         picked_here = set()
-        for pack, pick, taken in picks.get(draft_id, []):
+        for pack, pick, taken in run.picks:
             for card in taken:
                 picked_here.add(card)
                 entry(card)["pick_sum"] += pick
@@ -500,15 +433,15 @@ def draft_analytics(db_path: Path) -> Dict[str, Any]:
             entry(card)["picked"] += 1
         for card in played:
             entry(card)["in_deck"] += 1
-        # Names held in a game map back to this draft's own cards (its pool and deck).
-        by_name = {name_of(c).casefold(): c for c in picked_here | set(main) if not basic(c)}
-        for game_id, outcome in games_of.get(draft_id, []):
-            held_here = sorted({by_name[n] for n in seen.get(game_id, ()) if n in by_name})
+        # Names held in a game map back to this run's own cards (its pool and deck).
+        by_name = {name_of(c).casefold(): c for c in run.cards() if not basic(c)}
+        for game in run.games:
+            held_here = sorted({by_name[n] for n in seen.get(game.id, ()) if n in by_name})
             for card in held_here:
-                count(entry(card)["in_hand"], draft_id, outcome)
+                count(entry(card)["in_hand"], run.id, game.outcome)
             for i, a in enumerate(held_here):
                 for b in held_here[i + 1 :]:
-                    count(pairs.setdefault((a, b), held()), draft_id, outcome)
+                    count(pairs.setdefault((a, b), held()), run.id, game.outcome)
 
     def card_ref(card: int) -> Dict[str, Any]:
         fact = facts.get(card) or {}

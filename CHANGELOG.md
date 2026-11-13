@@ -28,6 +28,17 @@
 
 ### Draft Replay
 
+- **Sealed runs** are tracked like drafts: every sealed course is its own run
+  with its pool, the deck you built and its own record, instead of all sealed
+  games sharing one "Sealed Deck". Open one to see the pool (deck cards
+  outlined) beside the deck list. Runs from before the tracker kept them are
+  rebuilt from your games' decklists.
+- Games are credited to the run whose pool holds their deck, so separate runs
+  of the same event no longer blur together, and **Recent games** shows one
+  tile per draft or sealed run instead of one "Draft Deck" / "Sealed Deck".
+- Tile art for many runs loads from one batched lookup instead of one request
+  per tile, which Scryfall throttled.
+
 - New: replay your drafts pick by pick from the Replay page. Each pick shows the
   pack you saw with your pick highlighted, marks a pack you saw before when it
   wheels, and lists the cards that left it since, rarest first, with your own

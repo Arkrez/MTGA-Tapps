@@ -496,3 +496,28 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* A run without picks: pool on the left, deck list on the right. */
+.limited-run .draft-stage {
+  grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr);
+}
+
+.limited-run-pool .draft-pool-column {
+  flex-basis: clamp(76px, 6.5vw, 110px);
+}
+
+.limited-run-deck {
+  min-height: 0;
+  overflow: auto;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.limited-run-record {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+

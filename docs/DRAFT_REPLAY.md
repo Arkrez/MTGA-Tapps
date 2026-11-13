@@ -58,8 +58,31 @@ containing `Draft`, `EventJoin` or `EventGetCourses` to one long-lived
 `DraftCapture`; a failure logs one diagnostics line and never stops tracking.
 Gameplay reset clears both tables; backup merge unions them by draft id.
 
+### Runs (`limited_runs.py`)
+
+A **run** is one entry into a limited event: a draft (its picks), a sealed
+course (`kind = sealed`, id `sealed-<CourseId>`: `EventJoin` hands over the
+84-card `CardPool`, `EventGetCoursesV2` lists the course at each login, and
+`EventClaimPrize` / a `Complete` module closes it), or a run **rebuilt** from
+games (id `games-<first game id>`) when the log with the course is gone.
+Games are credited by deck, never by name: a game joins the captured run of
+its event whose pool (picks or sealed pool, plus the submitted deck) holds 90%
+of its non-basic main deck; the rest group into rebuilt runs while consecutive
+decks keep drawing 70% on cards already seen in the run; games without a
+decklist fall back to the latest run of the event that started before them. A
+run first seen at a later login moves its start back to its first game.
+Rebuilt sealed runs take their pool from the submissions' sideboards (Arena
+submits the rest of the pool there).
+
 ## 2. Serving
 
+- `GET /api/drafts` lists every run (drafts, sealed, rebuilt), with
+  `pool_size`, `rebuilt` and `top_card` (the rarest deck card, shown for runs
+  without a first pick) besides the fields below; `GET /api/draft?id=` serves a
+  run without picks with `picks: []`, its pool and deck, and `draft.record`, and
+  the viewer shows those as a pool-and-deck page. `/api/games` rows of limited
+  games carry `run: {id, kind, label, started_at, rebuilt, art}` so Recent games
+  groups them by run.
 - `GET /api/drafts` → `{"drafts": [{id, kind, event_name, format_label,
   started_at, updated_at, completed_at, picks, packs, colors, first_pick:
   {arena_id, name}}]}`, newest first. `colors` is the pool's two most-picked

@@ -43,6 +43,37 @@ function Section({ stream, title, cards, returnHash }: { stream: DraftStream; ti
   );
 }
 
+/** Deck Manager's deck body: summary line, then the deck and sideboard lists. */
+export function DeckDetailBody({ stream, deck, returnHash }: { stream: DraftStream; deck: DraftDeck; returnHash: string }) {
+  const colors = [...new Set(deck.main.flatMap((card) => [...(cardFor(stream, card.arena_id).colors ?? '')]))].join('');
+  const summary = [
+    stream.draft.format_label,
+    `${count(deck.main)} cards`,
+    deck.sideboard.length ? `${count(deck.sideboard)} sideboard` : null,
+    deck.submitted_at ? `submitted ${formatDateTime(deck.submitted_at)}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  return (
+    <div className="deck-detail">
+      <div className="deck-detail-summary">
+        <p>
+          <ColorPips colors={colors} size={16} />
+          {summary}
+        </p>
+      </div>
+      <div className={`deck-detail-lists${deck.sideboard.length ? '' : ' deck-detail-lists-single'}`}>
+        <Section stream={stream} title="Deck" cards={deck.main} returnHash={returnHash} />
+        {deck.sideboard.length ? (
+          <div className="deck-detail-side">
+            <Section stream={stream} title="Sideboard" cards={deck.sideboard} returnHash={returnHash} />
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export function FinalDeckDialog({
   stream,
   deck,
@@ -56,33 +87,9 @@ export function FinalDeckDialog({
   returnFocus: HTMLElement | null;
   onClose: () => void;
 }) {
-  const colors = [...new Set(deck.main.flatMap((card) => [...(cardFor(stream, card.arena_id).colors ?? '')]))].join('');
-  const summary = [
-    stream.draft.format_label,
-    `${count(deck.main)} cards`,
-    deck.sideboard.length ? `${count(deck.sideboard)} sideboard` : null,
-    deck.submitted_at ? `submitted ${formatDateTime(deck.submitted_at)}` : null,
-  ]
-    .filter(Boolean)
-    .join(' · ');
   return (
     <DeckModal title={deck.name || 'Draft deck'} busy={false} onClose={onClose} returnFocus={returnFocus} wide>
-      <div className="deck-detail">
-        <div className="deck-detail-summary">
-          <p>
-            <ColorPips colors={colors} size={16} />
-            {summary}
-          </p>
-        </div>
-        <div className={`deck-detail-lists${deck.sideboard.length ? '' : ' deck-detail-lists-single'}`}>
-          <Section stream={stream} title="Deck" cards={deck.main} returnHash={returnHash} />
-          {deck.sideboard.length ? (
-            <div className="deck-detail-side">
-              <Section stream={stream} title="Sideboard" cards={deck.sideboard} returnHash={returnHash} />
-            </div>
-          ) : null}
-        </div>
-      </div>
+      <DeckDetailBody stream={stream} deck={deck} returnHash={returnHash} />
     </DeckModal>
   );
 }

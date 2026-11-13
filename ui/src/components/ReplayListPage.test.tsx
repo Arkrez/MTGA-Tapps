@@ -42,7 +42,7 @@ async function openDeck(name: string) {
 function tileNames() {
   return within(screen.getByRole('list', { name: 'Decks' }))
     .getAllByRole('button')
-    .map((tile) => tile.querySelector('strong')?.textContent);
+    .map((tile) => tile.querySelector('.deck-manager-tile-text strong')?.textContent);
 }
 
 function bodyRows() {
@@ -72,7 +72,7 @@ describe('ReplayListPage', () => {
     const decks = await screen.findByRole('list', { name: 'Decks' });
     expect(fetchMock).toHaveBeenCalledWith('/api/games', expect.anything());
     const tiles = within(decks).getAllByRole('button');
-    expect(tiles.map((tile) => tile.querySelector('strong')?.textContent)).toEqual(['Dimir Control', 'Boros Mouse']);
+    expect(tiles.map((tile) => tile.querySelector('.deck-manager-tile-text strong')?.textContent)).toEqual(['Dimir Control', 'Boros Mouse']);
     expect(within(tiles[0]).getByText(/2 games · 1–1/)).toBeInTheDocument();
     expect(within(tiles[0]).getByText('50% WR')).toBeInTheDocument();
     expect(within(tiles[1]).getByText('100% WR')).toBeInTheDocument();
@@ -91,6 +91,25 @@ describe('ReplayListPage', () => {
       'href',
       '#/replay/game-5?return=%23%2Freplay',
     );
+  });
+
+  it('gives each limited run its own tile even though the decks share a name', async () => {
+    const run = (id: string, label: string) => ({ id, kind: 'sealed', label, started_at: '2026-11-10T20:02:00+00:00', rebuilt: false, art: { arena_id: 9, name: 'Scotty, Miracle Worker' } });
+    stubGames([
+      row(1, { deck_name: 'Sealed Deck', run: run('sealed-a', 'Sealed - TRK') }),
+      row(2, { deck_name: 'Sealed Deck', run: run('sealed-a', 'Sealed - TRK') }),
+      row(3, { deck_name: 'Sealed Deck', run: run('sealed-b', 'Sealed - TRK') }),
+    ]);
+    render(<ReplayListPage />);
+    await screen.findByRole('list', { name: 'Decks' });
+    expect(tileNames()).toEqual(['Sealed Deck', 'Sealed Deck']);
+    const tiles = within(screen.getByRole('list', { name: 'Decks' })).getAllByRole('button');
+    expect(within(tiles[0]).getByText(/1 game · 0–1/)).toBeInTheDocument();
+    expect(within(tiles[1]).getByText(/2 games · 2–0/)).toBeInTheDocument();
+    expect(within(tiles[0]).getByText(/^Sealed - TRK · /)).toBeInTheDocument();
+
+    fireEvent.click(tiles[1]);
+    expect(bodyRows().map((tr) => tr.getAttribute('data-game-id'))).toEqual(['game-2', 'game-1']);
   });
 
   it('opens a deck to list its games newest first, and goes back to all decks', async () => {

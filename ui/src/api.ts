@@ -289,7 +289,19 @@ export interface RecentGameRow {
   replay?: ReplayAvailability;
 }
 
+/** The limited run (draft or sealed course) a game belongs to. */
+export interface GameRun {
+  id: string;
+  kind: 'bot' | 'player' | 'sealed';
+  label: string;
+  started_at: string | null;
+  /** Rebuilt from games because the log with the course is gone. */
+  rebuilt: boolean;
+  art: { arena_id: number; name: string | null } | null;
+}
+
 export interface AllGamesRow extends RecentGameRow {
+  run?: GameRun;
   duration_seconds: number | null;
   total_turns: number | null;
   mulligans: number | null;

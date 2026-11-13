@@ -5185,6 +5185,15 @@ def all_games(
         )
         _attach_replay_availability(conn, rows)
         known_visuals = _deck_visuals(conn)
+        try:
+            from .draft_api import game_run_tags
+
+            run_tags = game_run_tags(conn)
+        except Exception:  # noqa: BLE001 - grouping by run is optional
+            run_tags = {}
+        for row in rows:
+            if row.get("game_id") in run_tags:
+                row["run"] = run_tags[row["game_id"]]
 
     # One art tile per deck (the Replay page groups games into deck tiles).
     deck_visuals = {

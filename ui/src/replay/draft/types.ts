@@ -29,13 +29,18 @@ export interface DraftPickRow {
 
 export interface DraftInfo {
   id: string;
-  kind: 'bot' | 'player';
+  /** Drafts are `bot` or `player`; a sealed course is `sealed`. */
+  kind: 'bot' | 'player' | 'sealed';
   event_name: string | null;
   format_label: string;
   course_id?: string | null;
   started_at: string | null;
   updated_at: string | null;
   completed_at: string | null;
+  /** Rebuilt from games because the log with the course is gone (no picks, no full pool). */
+  rebuilt?: boolean;
+  /** Games credited to this run. */
+  record?: { wins: number; losses: number; games: number };
 }
 
 export interface DraftDeckCard {
@@ -64,7 +69,7 @@ export interface DraftStream {
 
 export interface DraftListRow {
   id: string;
-  kind: 'bot' | 'player';
+  kind: 'bot' | 'player' | 'sealed';
   event_name: string | null;
   format_label: string;
   started_at: string | null;
@@ -77,6 +82,12 @@ export interface DraftListRow {
   /** Games played with the draft's deck: its event, from the draft until the next draft of that event. */
   record?: { wins: number; losses: number; games: number };
   first_pick: { arena_id: number; name: string | null } | null;
+  /** Card pool size (sealed pool, or distinct cards picked). */
+  pool_size?: number;
+  /** Rebuilt from games because the log with the course is gone. */
+  rebuilt?: boolean;
+  /** The card a run without picks is shown with: its rarest, costliest deck card. */
+  top_card?: { arena_id: number; name: string | null } | null;
 }
 
 /** A draft-games tally: drafts counted, games won/lost/played, and the win rate of decided games. */

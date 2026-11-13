@@ -39,11 +39,23 @@ DRAFT_MARKERS = (
     "EventJoin",
     "EventGetCoursesV2",
     "EventSetDeckV3",
+    "EventClaimPrize",
 )
 
 _RESPONSE = re.compile(r"<==\s+(\w+)\(")
 _REQUEST = re.compile(r"==>\s+(\w+)\s")
 _DRAFT_MODULES = {"BotDraft", "PlayerDraft"}
+#: Course modules after the last match of a run.
+_DONE_MODULES = {"ClaimPrize", "Complete"}
+
+
+def is_sealed_event(event: Optional[str]) -> bool:
+    return isinstance(event, str) and "sealed" in event.casefold()
+
+
+def sealed_run_id(course_id: str) -> str:
+    """A sealed run is one Arena course: its pool and deck belong to that course."""
+    return f"sealed-{course_id}"
 
 
 def is_draft_entry(body: str) -> bool:
@@ -131,7 +143,8 @@ def repair_shifted_draft_times(conn) -> None:
     seemed to come before them. Only a draft whose games (matched by deck)
     prove it started after they did is shifted back, and only when the shift
     puts it before them; drafts from local-time logs are already right."""
-    from .draft_api import _utc, game_owners
+    from .draft_api import game_owners
+    from .limited_runs import to_utc as _utc
 
     ensure_draft_schema(conn)
     first_game: Dict[str, datetime] = {}
@@ -285,8 +298,12 @@ class DraftCapture:
     def _response(self, name: str, data: Any) -> Optional[str]:
         if not isinstance(data, dict):
             return None
-        if name in ("EventJoin", "EventGetCoursesV2"):
-            courses = data.get("Courses") if name == "EventGetCoursesV2" else [data.get("Course")]
+        if name in ("EventJoin", "EventGetCoursesV2", "EventClaimPrize"):
+            if name == "EventGetCoursesV2":
+                courses = data.get("Courses")
+            else:
+                # EventJoin answers with the course itself for sealed events.
+                courses = [data.get("Course") or data]
             for course in courses or []:
                 self._note_course(course)
             return None
@@ -384,6 +401,26 @@ class DraftCapture:
             self._courses[event] = course_id
             if course.get("CurrentModule") == "PlayerDraft":
                 self._player_event = event
+        if is_sealed_event(event):
+            self._sealed_course(event, course_id, course)
+
+    def _sealed_course(self, event: str, course_id: str, course: Dict[str, Any]) -> None:
+        """A sealed run: Arena hands over the pool when you join, then lists the
+        course (pool included) at every login until its prize is claimed."""
+        pool = _card_ids(course.get("CardPool"))
+        run_id = sealed_run_id(course_id)
+        known = self.conn.execute("SELECT 1 FROM drafts WHERE id = ?", (run_id,)).fetchone()
+        if not pool and not known:
+            return
+        self._ensure_draft(run_id, "sealed", event, course_id)
+        if pool:
+            self.conn.execute(
+                "UPDATE drafts SET card_pool_json = COALESCE(card_pool_json, ?) WHERE id = ?",
+                (json.dumps(pool), run_id),
+            )
+        if course.get("CurrentModule") in _DONE_MODULES:
+            self._finish(run_id, [])
+        self.conn.commit()
 
     def _bot_status(self, payload: Any) -> Optional[str]:
         if not isinstance(payload, dict):

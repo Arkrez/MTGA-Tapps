@@ -26,6 +26,14 @@ describe('DraftReplayList', () => {
   it('lists drafts and rescans the Arena logs on request', async () => {
     let drafts: unknown[] = [];
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === 'https://api.scryfall.com/cards/collection') {
+        const { identifiers } = JSON.parse(String(init?.body)) as { identifiers: Array<{ name: string }> };
+        const data = identifiers.map(({ name }) => ({
+          name: 'Fulminous Forte',
+          image_uris: { normal: `https://cards.scryfall.io/normal/front/f/f/${name.replace(/ /g, '-')}.jpg` },
+        }));
+        return new Response(JSON.stringify({ data, not_found: [] }), { status: 200 });
+      }
       if (url === '/api/drafts/import-log') {
         expect(init?.method).toBe('POST');
         drafts = [DRAFT];
@@ -39,7 +47,7 @@ describe('DraftReplayList', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Find past drafts in Arena logs' }));
     expect(await screen.findByText(/Checked Player-prev.log and Player.log: 1 draft found/)).toBeInTheDocument();
-    const tiles = await screen.findByRole('list', { name: 'Drafts' });
+    const tiles = await screen.findByRole('list', { name: 'Drafts and sealed runs' });
     const tile = within(tiles).getByRole('link', { name: /Quick Draft - FRA/ });
     expect(within(tile).getByText('First pick: Fulminous Forte')).toBeInTheDocument();
     expect(within(tile).getByText('Incomplete')).toBeInTheDocument();
@@ -47,9 +55,37 @@ describe('DraftReplayList', () => {
     expect(within(tile).getByText('88% WR')).toHaveAttribute('title', '7–1 (88% of decided games)');
     expect(within(tile).getByText('7–1')).toBeInTheDocument();
     expect(tile).toHaveAttribute('href', `#/replay/draft/bot-c1?return=${encodeURIComponent('#/replay')}`);
-    expect(within(tile).getByRole('img', { name: 'Fulminous Forte' })).toHaveAttribute(
+    // Tile art comes from one batched Scryfall lookup, then the CDN's art crop.
+    expect(await within(tile).findByRole('img', { name: 'Fulminous Forte' })).toHaveAttribute(
       'src',
-      'https://api.scryfall.com/cards/named?exact=Fulminous%20Forte&format=image&version=art_crop',
+      'https://cards.scryfall.io/art_crop/front/f/f/fulminous-forte.jpg',
     );
+  });
+
+  it('shows sealed and rebuilt runs with their own records', async () => {
+    const sealed = {
+      ...DRAFT,
+      id: 'sealed-c9',
+      kind: 'sealed',
+      format_label: 'Sealed - TRK',
+      picks: 0,
+      packs: 0,
+      first_pick: null,
+      top_card: { arena_id: 7, name: 'Jadzia Dax, Living Legacy' },
+      pool_size: 84,
+      completed_at: '2026-11-12T06:00:00+00:00',
+      record: { wins: 3, losses: 3, games: 6 },
+    };
+    const rebuilt = { ...sealed, id: 'games-g1', rebuilt: true, completed_at: null, record: { wins: 0, losses: 2, games: 2 } };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ drafts: [sealed, rebuilt] }), { status: 200 })));
+    render(<DraftReplayList />);
+    const tiles = await screen.findByRole('list', { name: 'Drafts and sealed runs' });
+    const [first, second] = within(tiles).getAllByRole('link');
+    expect(within(first).getByText('Best card: Jadzia Dax, Living Legacy')).toBeInTheDocument();
+    expect(within(first).getByText(/Sealed pool · 84 cards/)).toBeInTheDocument();
+    expect(within(first).getByText('3–3')).toBeInTheDocument();
+    expect(within(second).getByText(/Rebuilt from games/)).toBeInTheDocument();
+    expect(within(second).getByText('0–2')).toBeInTheDocument();
+    expect(second).toHaveAttribute('href', `#/replay/draft/games-g1?return=${encodeURIComponent('#/replay')}`);
   });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { fetchDrafts, importDraftsFromLog } from '../api';
 import { formatDateTime } from '../format';
 import type { DraftListRow } from '../replay/draft/types';
@@ -9,6 +9,7 @@ import { ColorPips } from './ColorPips';
 import { DeckVisual } from './DeckVisual';
 import { Section } from './Section';
 import { WinRatePill } from './WinRatePill';
+import { useCardArt } from '../replay/useCardArt';
 
 type LoadState =
   | { status: 'loading' }
@@ -16,19 +17,23 @@ type LoadState =
   | { status: 'error'; message: string };
 
 /** Tile art: the first pick's art crop (by name first: new sets reach Scryfall before their Arena ids). */
-function firstPickArt(row: DraftListRow): DeckVisualData {
-  const name = row.first_pick?.name && !row.first_pick.name.startsWith('Card #') ? row.first_pick.name : null;
-  const byName = name
-    ? `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}&format=image&version=art_crop`
-    : null;
-  const byId = row.first_pick ? `https://api.scryfall.com/cards/arena/${row.first_pick.arena_id}?format=image&version=art_crop` : null;
+function tileCard(row: DraftListRow) {
+  const shown = row.first_pick ?? row.top_card ?? null;
+  return shown?.name && !shown.name.startsWith('Card #') ? shown : null;
+}
+
+/**
+ * Tile art: a draft's first pick, or a sealed run's rarest deck card, as a CDN
+ * art crop resolved in one batch for the whole list (see useCardArt).
+ */
+function firstPickArt(row: DraftListRow, artUrl: string | null): DeckVisualData {
+  const shown = tileCard(row);
   return {
-    card_id: row.first_pick?.arena_id ?? null,
-    card_name: name,
+    card_id: shown?.arena_id ?? null,
+    card_name: shown?.name ?? null,
     type_category: 'Other',
     source: 'local_metadata',
-    image_url: byName ?? byId,
-    image_fallback_url: byName ? byId : null,
+    image_url: artUrl,
   };
 }
 
@@ -72,12 +77,14 @@ export function DraftReplayList() {
     }
   }
 
-  const drafts = load.status === 'loaded' ? load.drafts : [];
+  const drafts = useMemo(() => (load.status === 'loaded' ? load.drafts : []), [load]);
+  const artNames = useMemo(() => drafts.map((row) => tileCard(row)?.name), [drafts]);
+  const art = useCardArt(artNames);
   return (
-    <Section id="replay-drafts" title="Drafts" collapsible={false}>
+    <Section id="replay-drafts" title="Drafts & sealed" collapsible={false}>
       <p className="replay-list-intro">
-        Step through a draft pick by pick: every pack you saw, what you took, which cards were gone when a pack came
-        back around, and your deck as it came together.
+        Every draft and sealed run with its own record. Step through a draft pick by pick, or open a sealed run to see
+        its pool and the deck you built. Runs from before the tracker kept them are rebuilt from your games.
       </p>
       <div className="draft-list-actions">
         <button type="button" className="retry-button" onClick={runImport} disabled={importState.status === 'running'}>
@@ -102,7 +109,7 @@ export function DraftReplayList() {
           No drafts recorded yet. Draft with the tracker running, or look for earlier drafts in Arena's logs above.
         </p>
       ) : (
-        <div className="replay-deck-tiles" role="list" aria-label="Drafts">
+        <div className="replay-deck-tiles" role="list" aria-label="Drafts and sealed runs">
           {drafts.map((row) => (
             <div role="listitem" key={row.id}>
               <a
@@ -111,7 +118,7 @@ export function DraftReplayList() {
                 title={`Replay draft: ${row.format_label}`}
               >
                 <span className="deck-manager-tile-art">
-                  <DeckVisual deckName={row.format_label} visual={firstPickArt(row)} />
+                  <DeckVisual deckName={row.format_label} visual={firstPickArt(row, art(tileCard(row)?.name))} />
                   <ColorPips colors={row.colors} size={14} />
                 </span>
                 <span className="deck-manager-tile-text">
@@ -124,11 +131,29 @@ export function DraftReplayList() {
                     {row.record?.games ? `${row.record.wins}–${row.record.losses}` : 'No games yet'}
                   </small>
                   <small>{row.started_at ? formatDateTime(row.started_at) : 'Date unknown'}</small>
-                  <small>First pick: {row.first_pick?.name ?? '—'}</small>
-                  <small className="replay-draft-tile-status">
-                    {row.picks} picks
-                    <Badge tone={row.completed_at ? 'win' : 'neutral'}>{row.completed_at ? 'Complete' : 'Incomplete'}</Badge>
-                  </small>
+                  {row.picks ? (
+                    <>
+                      <small>First pick: {row.first_pick?.name ?? '—'}</small>
+                      <small className="replay-draft-tile-status">
+                        {row.picks} picks
+                        <Badge tone={row.completed_at ? 'win' : 'neutral'}>{row.completed_at ? 'Complete' : 'Incomplete'}</Badge>
+                      </small>
+                    </>
+                  ) : (
+                    <>
+                      <small>Best card: {row.top_card?.name ?? '—'}</small>
+                      <small className="replay-draft-tile-status">
+                        {row.rebuilt
+                          ? 'Rebuilt from games'
+                          : row.pool_size
+                            ? `${row.kind === 'sealed' ? 'Sealed pool' : 'Pool'} · ${row.pool_size} cards`
+                            : 'No picks recorded'}
+                        {row.rebuilt ? null : (
+                          <Badge tone={row.completed_at ? 'win' : 'neutral'}>{row.completed_at ? 'Complete' : 'In progress'}</Badge>
+                        )}
+                      </small>
+                    </>
+                  )}
                 </span>
               </a>
             </div>
