@@ -82,7 +82,10 @@ submits the rest of the pool there).
   run without picks with `picks: []`, its pool and deck, and `draft.record`, and
   the viewer shows those as a pool-and-deck page. `/api/games` rows of limited
   games carry `run: {id, kind, label, started_at, rebuilt, art}` so Recent games
-  groups them by run.
+  groups them by run. `/api/card` uses the same tags: its `by_deck` rows for
+  limited games are per run (with `run`), and its `games` list (newest 200 of
+  `games_total`, with `seen_by`, `replay` and `run`) links games and runs from
+  the card page.
 - `GET /api/drafts` → `{"drafts": [{id, kind, event_name, format_label,
   started_at, updated_at, completed_at, picks, packs, colors, first_pick:
   {arena_id, name}}]}`, newest first. `colors` is the pool's two most-picked

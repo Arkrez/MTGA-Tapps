@@ -1058,6 +1058,8 @@ export interface CardSummary {
 
 export interface CardByDeckRow {
   deck_name: string;
+  /** Limited decks: the draft or sealed run, since every one is called "Draft Deck" / "Sealed Deck". */
+  run?: GameRun;
   games_seen: number;
   total_played: number;
   wins: number;
@@ -1127,6 +1129,21 @@ export interface CardOpponentPlayable {
   pct: number | null;
 }
 
+export interface CardGameRow {
+  game_id: string;
+  started_at: string;
+  outcome: string | null;
+  format_label: string;
+  deck_name: string;
+  opponent_name: string | null;
+  /** Who had the card in this game. */
+  seen_by: ('you' | 'opponent')[];
+  your_played: number;
+  opponent_played: number;
+  replay?: ReplayAvailability;
+  run?: GameRun;
+}
+
 export interface CardDetail {
   card_name: string;
   image_url: string | null;
@@ -1137,6 +1154,9 @@ export interface CardDetail {
   by_role: CardByRoleRow[];
   opponent_impact?: CardOpponentImpact;
   by_deck: CardByDeckRow[];
+  /** Games the card appeared in (either side), newest first; capped, see `games_total`. */
+  games?: CardGameRow[];
+  games_total?: number;
   multiplicity?: CardMultiplicity;
   opponent_multiplicity?: CardMultiplicity;
   opener_impact: CardOpenerImpact;

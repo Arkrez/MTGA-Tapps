@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Cards
+
+- A card's page lists **Games With This Card** (newest 200, either player):
+  date linking to the game, your deck, opponent, who had it, plays, result and
+  a **Watch replay** button. **Your Decks** splits limited decks by run, so each
+  draft or sealed run is its own row and opens that run instead of one
+  "Draft Deck" row.
+
 ### Replay
 
 - Card art loads much faster and no longer goes missing: cards are looked up
